@@ -67,7 +67,93 @@ func installedModelsDirectory() throws -> URL {
     return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("\(prefix).\(name)/models", isDirectory: true)
 }
+/// Fails when the pinned values in scripts/fetch-models.sh drift from ModelManifest.current.
+/// Runs on every EmbedChecks run, before any model-dependent stage.
+func checkManifestSync() throws {
+    let scriptPath = FileManager.default.currentDirectoryPath + "/scripts/fetch-models.sh"
+    guard FileManager.default.fileExists(atPath: scriptPath) else {
+        throw EmbeddingError.invalid("scripts/fetch-models.sh not found; run EmbedChecks from the repository root")
+    }
+    let text = try String(contentsOfFile: scriptPath, encoding: .utf8)
+    let lines = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+    var values: [String: String] = [:]
+    for line in lines {
+        guard let equals = line.firstIndex(of: "=") else { continue }
+        let key = String(line[..<equals])
+        guard !key.isEmpty, key.allSatisfy({ $0.isUppercase || $0 == "_" || $0.isNumber }) else { continue }
+        values[key] = String(line[line.index(after: equals)...]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+    }
+    let manifest = ModelManifest.current
+    var mismatches: [String] = []
+    func expect(_ field: String, _ manifestValue: String, _ scriptValue: String?) {
+        if manifestValue != scriptValue {
+            mismatches.append("\(field): manifest=\(manifestValue) script=\(scriptValue ?? "<missing>")")
+        }
+    }
+
+    let revision = values["HF_REV"]
+    expect("huggingFaceRevision (HF_REV)", manifest.huggingFaceRevision, revision)
+    let base = values["HF_BASE"].map { $0.replacingOccurrences(of: "$HF_REV", with: revision ?? "") }
+    expect("HF_BASE", "https://huggingface.co/\(manifest.huggingFaceRepo)/resolve/\(manifest.huggingFaceRevision)", base)
+    let ortVersion = values["ORT_VERSION"]
+    expect("runtime.version (ORT_VERSION)", manifest.runtime.version, ortVersion)
+    let runtimeURL = ortVersion.map { "https://github.com/microsoft/onnxruntime/releases/download/v\($0)/onnxruntime-osx-arm64-\($0).tgz" }
+    expect("runtime.url", manifest.runtime.url, runtimeURL)
+    if !lines.contains(where: { $0.contains("releases/download/v$ORT_VERSION/onnxruntime-osx-arm64-$ORT_VERSION.tgz") }) {
+        mismatches.append("runtime.url template not found in fetch-models.sh")
+    }
+    // The archive hash sits on the continuation line of the fetch call: `"$WORK/runtime.tgz" <sha256>`.
+    let archiveLines = lines.filter { $0.hasPrefix("\"$WORK/runtime.tgz\" ") }
+    if archiveLines.count != 1 {
+        mismatches.append("expected exactly one \"$WORK/runtime.tgz\" <sha256> line in fetch-models.sh, found \(archiveLines.count)")
+    } else if let hash = archiveLines[0].split(separator: " ").last.map(String.init),
+              hash.count == 64, hash.allSatisfy(\.isHexDigit) {
+        expect("runtime.sha256 (runtime.tgz)", manifest.runtime.sha256, hash)
+    } else {
+        mismatches.append("runtime.tgz hash in fetch-models.sh is not 64 hex characters: \(archiveLines[0])")
+    }
+    expect("runtime.dylibSHA256 (DYLIB_HASH)", manifest.runtime.dylibSHA256, values["DYLIB_HASH"])
+    expect("runtime.licenseSHA256 (LICENSE_HASH)", manifest.runtime.licenseSHA256, values["LICENSE_HASH"])
+    expect("runtime.noticesSHA256 (NOTICES_HASH)", manifest.runtime.noticesSHA256, values["NOTICES_HASH"])
+    expect("license Apache-2.0.txt (EMBEDDINGGEMMA_LICENSE_HASH)",
+           manifest.licenses.first { $0.resourceName == "Apache-2.0.txt" }?.sha256 ?? "<none>",
+           values["EMBEDDINGGEMMA_LICENSE_HASH"])
+    expect("license EmbeddingGemma2-NOTICE.txt (EMBEDDINGGEMMA_NOTICE_HASH)",
+           manifest.licenses.first { $0.resourceName == "EmbeddingGemma2-NOTICE.txt" }?.sha256 ?? "<none>",
+           values["EMBEDDINGGEMMA_NOTICE_HASH"])
+
+    var scriptModels: [(hash: String, path: String)] = []
+    if let start = lines.firstIndex(where: { $0.hasSuffix("<<'ARTIFACTS'") }),
+       let end = lines.firstIndex(where: { $0 == "ARTIFACTS" }), start < end {
+        for line in lines[(start + 1)..<end] {
+            let parts = line.split(separator: " ")
+            if parts.count == 2 { scriptModels.append((hash: String(parts[0]), path: String(parts[1]))) }
+        }
+    }
+    if scriptModels.count != manifest.modelFiles.count {
+        mismatches.append("model file count: manifest=\(manifest.modelFiles.count) script=\(scriptModels.count)")
+    }
+    for artifact in manifest.modelFiles {
+        let entry = scriptModels.first { $0.path == artifact.path }
+        expect("model sha256 \(artifact.path)", artifact.sha256, entry?.hash)
+        expect("model url \(artifact.path)", artifact.url, base.map { "\($0)/\(artifact.path)" })
+    }
+    for entry in scriptModels where !manifest.modelFiles.contains(where: { $0.path == entry.path }) {
+        mismatches.append("model \(entry.path) is in fetch-models.sh but not in ModelManifest")
+    }
+    if manifest.totalDownloadBytes != 492_067_251 {
+        mismatches.append("totalDownloadBytes: manifest=\(manifest.totalDownloadBytes) expected=492067251")
+    }
+
+    guard mismatches.isEmpty else {
+        for mismatch in mismatches { print("FAIL manifest sync: \(mismatch)") }
+        throw EmbeddingError.invalid("ModelManifest.swift and scripts/fetch-models.sh disagree on \(mismatches.count) field(s)")
+    }
+    print("PASS manifest sync")
+}
+
 func runChecks() async throws {
+    try checkManifestSync()
     var selectedModels: URL?
     var helper: URL?
     var arguments = CommandLine.arguments.dropFirst().makeIterator()
@@ -91,9 +177,7 @@ func runChecks() async throws {
     var checks = Checks()
     try await runRegressionChecks(&checks, root: temp)
     try await checkUnavailableModels(&checks, helper: helperURL, root: temp)
-    let required = ["libonnxruntime.dylib", "tokenizer.json", "config.json", "processor_config.json",
-                    "onnx/model_quantized.onnx", "onnx/model_quantized.onnx_data",
-                    "onnx/vision_encoder_q4.onnx", "onnx/vision_encoder_q4.onnx_data"]
+    let required = ModelManifest.current.requiredFiles
     let missing = required.filter { !FileManager.default.fileExists(atPath: models.appendingPathComponent($0).path) }
     guard missing.isEmpty else {
         print("SKIP EmbedChecks: models not present at \(models.path). Missing: \(missing.joined(separator: ", ")). Run scripts/fetch-models.sh <directory>.")

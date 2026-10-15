@@ -44,13 +44,33 @@ may use the pasteboard after the user invokes the capture shortcut. Capturing a
 screen area requires Screen Recording access. Review these permissions before
 use and choose a vault appropriate for the data being captured.
 
-Capture and search processing run locally. Optional semantic-search setup is an
-explicit download step that contacts Hugging Face and GitHub; normal note
-content is not sent to those download hosts. The optional runtime library is
-downloaded into a user-selected models directory and loaded by the helper
-process, which checks it against a pinned SHA-256 before every load and refuses
-a mismatched file. Binaries are not Apple-signed or notarized; see
-[semantic-search.md](docs/semantic-search.md).
+Capture and search processing run locally, and note content never leaves the
+Mac. The app contacts the network in only two cases: when the user chooses
+**Download Semantic Search Models (492 MB)…** and accepts the consent dialog
+(which names the download size, the hosts huggingface.co and github.com, the
+licenses, and the SHA-256 verification; see
+[docs/semantic-search.md](docs/semantic-search.md)), and for
+update checks and downloads, which run only after the user allows automatic
+checks or chooses **Check for Updates…**.
+
+The model download uses HTTPS only, follows redirects only to HTTPS, and uses
+an ephemeral session with no cookies and no cache. Files are staged beside the
+models folder, resumed with HTTP Range requests when a download is interrupted,
+and checked against a pinned SHA-256 before the staged set is moved into place
+atomically. The optional ONNX Runtime library is extracted from its pinned
+archive and loaded by the helper process, which checks it against the pinned
+SHA-256 before every load and refuses a mismatched file.
+
+Updates are delivered through Sparkle 2.10.0 from the project's GitHub release
+appcast. They are signed with an EdDSA key held by the maintainer, and Sparkle
+also requires the update to be signed with the same code-signing identity. No
+system profile is sent. Releases are signed with one stable self-signed
+certificate, not an Apple Developer ID, and are not notarized. The certificate's
+designated requirement is recorded in the repository, and the release script
+refuses to ship if it changes, so Accessibility and Screen Recording grants
+survive updates. Releases are built without the hardened runtime, so library
+validation is off; the SHA-256 pin is the integrity control for the downloaded
+library. See [semantic-search.md](docs/semantic-search.md).
 
 This scope does not cover a compromised macOS account, malicious software
 running as the same user, tampering with locally downloaded files, or the

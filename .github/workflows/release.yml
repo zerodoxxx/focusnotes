@@ -1,0 +1,87 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 27 (Swift 6.4)
+        run: |
+          set -euo pipefail
+          # Prefer Xcode 27 (public preview on macos-26). Fall back to the newest installed Xcode.
+          xcode="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [[ -z "$xcode" ]]; then
+            echo "Xcode 27 not found; falling back to the newest installed Xcode"
+            xcode="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          [[ -n "$xcode" ]] || { echo "No Xcode found" >&2; exit 1; }
+          sudo xcode-select -s "$xcode"
+
+      - name: Print toolchain
+        run: |
+          swift --version
+          sw_vers
+
+      - name: Resolve models directory
+        id: models-dir
+        run: echo "dir=$HOME/Library/Application Support/com.zerodoxxx.focusnotes/models" >> "$GITHUB_OUTPUT"
+
+      - name: Cache models
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.models-dir.outputs.dir }}
+          key: models-${{ hashFiles('Sources/EmbedKit/ModelManifest.swift') }}
+
+      - name: Fetch models
+        env:
+          MODELS_DIR: ${{ steps.models-dir.outputs.dir }}
+        run: scripts/fetch-models.sh "$MODELS_DIR"
+
+      - name: Import signing identity
+        env:
+          SIGNING_P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 }}
+          SIGNING_P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+          SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.SIGNING_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/identity.p12"
+          scripts/import-signing-identity.sh "$RUNNER_TEMP/identity.p12" "$RUNNER_TEMP/signing.keychain-db"
+
+      - name: Build, sign and verify release
+        env:
+          RELEASE_FROM_TAG: "1"
+          SIGN_KEYCHAIN: ${{ runner.temp }}/signing.keychain-db
+          SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.SIGNING_KEYCHAIN_PASSWORD }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: scripts/release.sh
+
+      - name: Attest DMG
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*.dmg
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --title "focusnotes ${GITHUB_REF_NAME#v}" --generate-notes dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/identity.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

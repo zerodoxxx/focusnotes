@@ -12,10 +12,7 @@ struct SemanticHits: Sendable {
 /// Coordinates disposable vectors. Models and runtime stay in EmbedHelper.
 actor SemanticIndexer {
     private static let defaultRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60), .seconds(300), .seconds(900)]
-    private static let embeddingModelFiles = [
-        "onnx/model_quantized.onnx", "onnx/model_quantized.onnx_data",
-        "onnx/vision_encoder_q4.onnx", "onnx/vision_encoder_q4.onnx_data"
-    ]
+    private static let embeddingModelFiles = ModelManifest.current.modelFiles.map(\.path).filter { $0.hasPrefix("onnx/") }
 
     nonisolated let modelsDirectory: URL
     private let index: SearchIndex
@@ -53,9 +50,7 @@ actor SemanticIndexer {
     }
 
     nonisolated static func modelsInstalled(in directory: URL) -> Bool {
-        ["onnx/model_quantized.onnx", "onnx/model_quantized.onnx_data",
-         "onnx/vision_encoder_q4.onnx", "onnx/vision_encoder_q4.onnx_data",
-         "tokenizer.json", "processor_config.json", "libonnxruntime.dylib"].allSatisfy {
+        ModelManifest.current.requiredFiles.allSatisfy {
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path, isDirectory: &isDirectory) && !isDirectory.boolValue
         }
@@ -71,6 +66,10 @@ actor SemanticIndexer {
             retryTask?.cancel(); retryTask = nil
             job?.cancel(); rerun = false
             retryAttempt = 0
+            // Release the embedding helper while disabled; resources() recreates it on re-enable.
+            let idle = client
+            client = nil
+            if let idle { Task { await idle.shutdown() } }
         }
     }
 

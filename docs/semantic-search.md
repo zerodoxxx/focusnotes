@@ -36,7 +36,7 @@ notices.
 | `tokenizer.json` | BPE vocabulary/merges | 32,170,510 | 32.17 |
 | `libonnxruntime.dylib` | Native arm64 | 44,830,288 | 44.83 |
 
-Configs/license/notices add 0.35 MB; total download is approximately **500.69 MB**.
+Configs/license/notices add 0.35 MB. The ONNX Runtime archive itself is a 36.5 MB compressed download (36,549,009 bytes) that expands to the 44.83 MB dylib. The total download is **492,067,251 bytes (about 492 MB)**, and the installed size on disk is about **501 MB**.
 Q4 text was tested first: cosines 0.991523 / **0.988034** / 0.990065 failed the
 required 0.99 parity. Q8 text with Q4 vision passes and retains the smaller vision
 artifact. Q4 retains float32 activations throughout the CPU path; Q4F16 changes
@@ -75,13 +75,21 @@ brute-force cosine scores with Accelerate. Writes invalidate the cache; SQLite
 The vector database also stores a model identity made from the embedding
 dimensions and the names and byte sizes of the text and vision ONNX graph/data
 files. Changing that identity clears stale vectors so reconciliation rebuilds
-them. File sizes are read from metadata; the model files are not hashed.
+them. The identity reads file sizes from metadata and does not re-hash the
+files on each check. Integrity is established separately: every file is verified
+against its pinned SHA-256 when it is downloaded (see
+[Binary distribution checks](#binary-distribution-checks)).
 
 The app links macOS's system SQLite and checks for FTS5 when the search index
 opens. macOS 14 ships SQLite 3.43 or newer. The index uses no triggers, which
 avoids the FTS5-in-trigger issue in SQLite versions before 3.44.
 
 ## Running and evidence
+
+Developers and CI fetch models with `scripts/fetch-models.sh`; end users use the
+in-app download. Both read the same pinned values in
+`Sources/EmbedKit/ModelManifest.swift`, and an EmbedChecks "manifest sync" stage
+fails if the script drifts from it.
 
 ```sh
 scripts/fetch-models.sh                         # default build/models
@@ -93,9 +101,9 @@ scripts/check-name.sh
 
 Missing models produce a clear skip, exit 0. Build the helper first, or pass
 `EmbedChecks --helper <executable>`. Production callers pass
-`~/Library/Application Support/<bundle id>/models/` to downloader/client; get
-the identifier from the app bundle or derive it from `Config/app.env` exactly
-as `scripts/build-app.sh` does.
+`~/Library/Application Support/<bundle id>/models/` to the in-app downloader and
+client; get the identifier from the app bundle or derive it from
+`Config/app.env` exactly as `scripts/build-app.sh` does.
 
 ## App integration
 
@@ -111,10 +119,19 @@ At launch and each status-menu refresh, cheap file-existence checks look for the
 two text graph files, two vision graph files, tokenizer, processor config and
 runtime dylib in `~/Library/Application Support/<bundle identifier>/models/`.
 The disabled info item under Permissions shows **Semantic search: On** or
-**Semantic search: Off (models not installed)**. Install using
-`scripts/fetch-models.sh <that directory>`; no settings UI is required. Missing
-models and inference failures leave capture, OCR, Recent and keyword search
-available.
+**Semantic search: Off (models not installed)**. Users install models from the
+**Download Semantic Search Models (492 MB)…** menu item, after a consent dialog
+that names the download hosts and licenses. Downloads are staged beside the
+models folder and move into place only after every file verifies. The same menu
+offers **Remove Semantic Search Models…**. Developers can instead run
+`scripts/fetch-models.sh <that directory>`. Missing models and inference
+failures leave capture, OCR, Recent and keyword search available.
+
+The in-app downloader lives in the separate `ModelInstall` module, which is not
+linked into `EmbedHelper`. It uses an ephemeral HTTPS-only session with no
+cookies and no cache, follows redirects only to HTTPS, and resumes interrupted
+files with HTTP Range requests. Cancelling keeps partial data for a later resume.
+The model URLs, sizes and hashes come from `ModelManifest.swift`.
 
 `SemanticIndexer` is a utility-priority actor coordinator. Successful capture
 commits, launch sync, watcher-driven sync and OCR backfill request a run, debounced
@@ -202,16 +219,25 @@ warnings unrelated to these sources.
 
 The helper loads `libonnxruntime.dylib` from the user-selected models directory
 with `dlopen`. Immediately before loading, it hashes the file and compares it to
-a pinned SHA-256 in `Sources/EmbedKit/ONNXRuntime.swift` (kept in sync with
-`DYLIB_HASH` in `scripts/fetch-models.sh`); on mismatch or an unreadable file it
-refuses to load and reports "failed integrity check". This guards against a
-replaced or corrupted file, not against code already running as the same user.
+the pinned SHA-256 from `Sources/EmbedKit/ModelManifest.swift`, the same value the
+in-app downloader uses (`DYLIB_HASH` in `scripts/fetch-models.sh` must match it).
+On mismatch or an unreadable file it refuses to load and reports "failed
+integrity check". This guards against a replaced or corrupted file, not against
+code already running as the same user.
 
-Binaries are distributed without Apple Developer ID signing or notarization, so
-macOS asks users to approve the first launch. See the dated
+Releases are signed with one stable self-signed certificate
+("focusnotes Release Signing"), not an Apple Developer ID, and are not notarized.
+The certificate's designated requirement is recorded in
+`Config/signing-requirement.txt`, and `scripts/release.sh` refuses to ship if it
+changes, so Accessibility and Screen Recording grants survive updates. macOS
+still asks users to approve the first launch. See the dated
 [release checklist](release-checklist.md) for current verification status.
 
-If Apple signing is adopted later,
+Releases are built without the hardened runtime, so library validation is off and
+the downloaded ONNX Runtime can load. The SHA-256 pin is the integrity control for
+that library.
+
+If a Developer ID is adopted later,
 [Apple library validation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.disable-library-validation)
 normally requires Apple signing or the helper's Team ID. Options:
 

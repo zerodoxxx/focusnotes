@@ -11,7 +11,11 @@ let package = Package(
         .executable(name: "App", targets: ["App"]),
         .library(name: "EmbedKit", targets: ["EmbedKit"]),
         .executable(name: "EmbedHelper", targets: ["EmbedHelper"]),
-        .executable(name: "EmbedChecks", targets: ["EmbedChecks"])
+        .executable(name: "EmbedChecks", targets: ["EmbedChecks"]),
+        .library(name: "ModelInstall", targets: ["ModelInstall"])
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
     ],
     targets: [
         .target(name: "CORT", publicHeadersPath: "include"),
@@ -22,6 +26,8 @@ let package = Package(
         .executableTarget(name: "EmbedChecks", dependencies: ["EmbedKit"],
                           exclude: ["generate-reference.py", "requirements-reference.txt"], resources: [.copy("Fixtures")],
                           linkerSettings: [.linkedLibrary("sqlite3")]),
+        .target(name: "ModelInstall", dependencies: ["EmbedKit"]),
+        .executableTarget(name: "ModelInstallChecks", dependencies: ["ModelInstall", "EmbedKit"]),
         .target(name: "Core", linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(
             name: "CaptureKit",
@@ -40,7 +46,8 @@ let package = Package(
             linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("QuartzCore")]
         ),
         .executableTarget(name: "OverlayGallery", dependencies: ["OverlayKit"]),
-        .executableTarget(name: "App", dependencies: ["Core", "CaptureKit", "OverlayKit", "EmbedKit"]),
+        .executableTarget(name: "App", dependencies: ["Core", "CaptureKit", "OverlayKit", "EmbedKit", "ModelInstall",
+                                                      .product(name: "Sparkle", package: "Sparkle")]),
         .executableTarget(name: "CaptureChecks", dependencies: ["CaptureKit"]),
         .executableTarget(name: "CoreChecks", dependencies: ["Core"], linkerSettings: [.linkedLibrary("sqlite3")])
     ],

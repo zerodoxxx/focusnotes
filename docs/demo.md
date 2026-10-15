@@ -131,8 +131,8 @@ sync. The test checks that termination stops the watcher.
 Models live in `~/Library/Application Support/<bundle identifier>/models/`.
 Read `CFBundleIdentifier` from the built bundle's `Contents/Info.plist`, then run
 `scripts/fetch-models.sh "$HOME/Library/Application Support/<bundle identifier>/models"`
-with that identifier substituted. The download is about 500 MB and verifies
-hashes; rerunning reuses verified files. Opening the menu notices newly installed
+with that identifier substituted. The download is about 492 MB and every file is
+verified against its pinned SHA-256; rerunning reuses verified files. Opening the menu notices newly installed
 models without relaunching. Images are indexed only on AC power with nominal or
 fair thermal state; deferred images retry on the next capture or index sync.
 

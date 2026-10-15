@@ -1,0 +1,1 @@
+identifier "com.zerodoxxx.focusnotes" and certificate leaf = H"fad0f64b871914885745a1ea4c3cc3a0fe0b6be6"

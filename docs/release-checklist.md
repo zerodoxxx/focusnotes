@@ -35,7 +35,7 @@ until the open items below are closed.
 
 ## Current verification
 
-Latest post-hardening results:
+Latest post-hardening results (last verified before the 0.1.0 release work; re-run the checks before tagging):
 
 | Check | Current status |
 | --- | --- |
@@ -51,8 +51,10 @@ Latest post-hardening results:
 One earlier helper-stdout-close failure did not recur after the settled build;
 no source fix is attributed to that non-reproducible result.
 
-No CI workflow was present in the reviewed checkout, so these local results do
-not establish hosted-runner coverage.
+CI workflows (`.github/workflows/checks.yml` and `release.yml`) are part of the
+release process. The release identity is imported from GitHub secrets only in
+CI, so hosted-runner results must be read from the workflow runs. The local
+results above do not replace them. See [releasing.md](releasing.md).
 
 ## Manual distribution and disclosure checks
 
@@ -61,14 +63,24 @@ not establish hosted-runner coverage.
   `scripts/fetch-models.sh`) immediately before `dlopen` and refuses to load it
   on mismatch; EmbedChecks covers the rejection path.
 - [x] Signing policy: binaries are distributed without Apple Developer ID
-  signing or notarization (ad-hoc, or a self-signed `SIGN_IDENTITY`). Users
-  approve the first launch via System Settings → Privacy & Security → Open
-  Anyway. Revisit library validation only if Apple signing is adopted later.
+  signing or notarization. Releases use the stable self-signed "focusnotes
+  Release Signing" identity, and `release.sh` fails if the designated
+  requirement differs from `Config/signing-requirement.txt`. Never replace this
+  identity, since a different certificate resets users' Accessibility and
+  Screen Recording permissions. Users approve the first launch via System
+  Settings → Privacy & Security → Open Anyway. Revisit library validation only
+  if Apple signing is adopted later.
 - [ ] Validate Accessibility and Screen Recording grant, denial, and
-  reauthorization flows on a clean macOS account. Automated CaptureChecks do
-  not exercise macOS privacy prompts.
-- [ ] Add CI once the `.app`/`.dmg` build exists; no CI workflow is currently
-  present.
+  reauthorization flows on a clean macOS account, via the permission guide
+  panel. Automated CaptureChecks do not exercise macOS privacy prompts.
+- [ ] Update in place from the previous release on a clean account: Accessibility
+  and Screen Recording stay granted after the update.
+- [ ] Sparkle "Check for Updates…" finds the new version from the published
+  `appcast.xml`.
+- [ ] The in-app semantic model download completes on a clean account.
+- [ ] CI runs `checks.yml` on pushes and pull requests, and `release.yml`
+  produces a draft release from a `v*` tag. Confirm both on GitHub Actions
+  before the first public release.
 - [ ] After making the repository public, enable GitHub private vulnerability
   reporting (Settings → Security and quality → Advanced Security → Private
   vulnerability reporting, or

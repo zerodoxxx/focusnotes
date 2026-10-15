@@ -1,0 +1,87 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode 27 (Swift 6.4)
+        run: |
+          set -euo pipefail
+          # Prefer Xcode 27 (public preview on macos-26). Fall back to the newest installed Xcode.
+          xcode="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [[ -z "$xcode" ]]; then
+            echo "Xcode 27 not found; falling back to the newest installed Xcode"
+            xcode="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          [[ -n "$xcode" ]] || { echo "No Xcode found" >&2; exit 1; }
+          sudo xcode-select -s "$xcode"
+
+      - name: Print toolchain
+        run: |
+          swift --version
+          sw_vers
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: .build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      # Known flaky: `swift run OverlayGallery --check` (run inside release.sh --adhoc) can fail
+      # intermittently. If this step fails there, re-run the job; do not special-case it here.
+      - name: Checks and ad-hoc DMG
+        run: scripts/release.sh --adhoc
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: focusnotes-adhoc-dmg
+          path: dist/
+          retention-days: 14
+
+  smoke-macos-15:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - name: Download ad-hoc DMG
+        uses: actions/download-artifact@v8
+        with:
+          name: focusnotes-adhoc-dmg
+          path: dist
+
+      - name: Mount, verify signature and self-test on macOS 15
+        timeout-minutes: 2
+        env:
+          MNT: ${{ runner.temp }}/mnt
+          STATE: ${{ runner.temp }}/selftest
+        run: |
+          set -euo pipefail
+          mkdir -p "$MNT" "$STATE"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" dist/*.dmg
+          app="$MNT/focusnotes.app"
+          codesign --verify --strict --verbose=2 "$app"
+          # Self-test runs without UI. Exits non-zero on failure. Timeout is enforced by timeout-minutes (2 min).
+          "$app/Contents/MacOS/focusnotes" --self-test "$STATE"
+
+      - name: Detach DMG
+        if: always()
+        env:
+          MNT: ${{ runner.temp }}/mnt
+        run: |
+          hdiutil detach "$MNT" -force || true
