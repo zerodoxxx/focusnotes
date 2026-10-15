@@ -458,12 +458,21 @@ private func checkNoteEditorBehavior() async throws {
     try require(widePanel.frame.width == OverlayTheme.quickMaxWidth, "Width must cap at the maximum, got \(widePanel.frame.width)")
     editor.dismiss()
 
+    // The editor never shrinks below its minimum lines, so on a short screen (CI VMs)
+    // that floor can exceed the screen-fraction cap. Measure it rather than assume it.
+    present("x")
+    try await settle()
+    let floorHeight = try currentPanel().frame.height
+    editor.dismiss()
+
     present(String(repeating: "line\n", count: 30))
     let tallPanel = try currentPanel()
     let tallScroll = tallPanel.contentView.map(descendants)?.compactMap { $0 as? NSScrollView }.first
     try require(tallScroll?.hasVerticalScroller == true, "Long note must scroll at maximum height")
-    try require(tallPanel.frame.height <= min((tallPanel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900, 10_000) * OverlayTheme.quickMaxHeightFraction + 0.5
-                && tallPanel.frame.height <= OverlayTheme.quickMaxHeight, "Editor height must respect the cap")
+    let fractionCap = min((tallPanel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900, 10_000) * OverlayTheme.quickMaxHeightFraction
+    try require(tallPanel.frame.height <= max(fractionCap, floorHeight) + 0.5
+                && tallPanel.frame.height <= OverlayTheme.quickMaxHeight,
+                "Editor height must respect the cap (height \(tallPanel.frame.height), screen cap \(fractionCap), floor \(floorHeight))")
     let shrinking = try textView()
     shrinking.selectAll(nil)
     shrinking.insertText("short", replacementRange: shrinking.selectedRange())
