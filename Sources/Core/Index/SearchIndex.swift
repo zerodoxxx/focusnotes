@@ -61,7 +61,7 @@ public actor SearchIndex {
     }
 
     public func sync() throws -> SyncStats {
-        let refs = try vault.listNotes() // Includes Inbox when it exists; never creates Markdown files.
+        let refs = try vault.listNoteFiles() // Paths and kinds only; titles are irrelevant to indexing.
         let rows = try database.prepare("SELECT path, mtime, size FROM notes")
         var previous: [String: Fingerprint] = [:]
         while try rows.step() {
@@ -72,7 +72,20 @@ public actor SearchIndex {
         var unchanged = 0
         for ref in refs {
             guard let path = try? vault.writePath(of: ref.url) else { continue }
-            guard let metadata = try vault.fileSnapshot(relativePath: path, includingContents: false) else { continue }
+            // This descriptor-backed snapshot validates each path and reads only
+            // metadata. Invalid links and special files are skipped as by listNotes().
+            let metadata: VaultFileSnapshot?
+            do {
+                metadata = try vault.fileSnapshot(relativePath: path, includingContents: false)
+            } catch let error as POSIXError where
+                error.code == .EACCES || error.code == .ELOOP || error.code == .ENOENT ||
+                error.code == .ENOTDIR || error.code == .EPERM {
+                // Keep listNotes()'s behavior for unreadable, missing, linked, or
+                // otherwise rejected candidates. Other I/O failures abort sync so
+                // an operational error cannot silently discard a cached row.
+                continue
+            }
+            guard let metadata else { continue }
             let old = previous[path]
             if old == Self.fingerprint(metadata) {
                 previous.removeValue(forKey: path)

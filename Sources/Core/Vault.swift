@@ -152,6 +152,12 @@ public struct NoteRef: Sendable, Equatable {
     }
 }
 
+/// Note identity for internal scans that need the managed path but not a title read.
+struct VaultNoteFile: Sendable {
+    let url: URL
+    let kind: NoteKind
+}
+
 /// The notes folder: root notes, `Sessions/` and `assets/`.
 public struct Vault: Sendable {
     public static let inboxFileName = "Inbox.md"
@@ -199,6 +205,16 @@ public struct Vault: Sendable {
             refs.append(NoteRef(url: url, title: title(of: url, prefix: prefix), kind: .session))
         }
         return refs
+    }
+
+    /// Lists Markdown paths without opening their contents. Index synchronization
+    /// performs its own descriptor-backed metadata read and does not need titles.
+    func listNoteFiles() throws -> [VaultNoteFile] {
+        let rootNames = try markdownFileNames(in: root, relativeDirectory: "")
+        let sessionNames = try markdownFileNames(in: sessionsURL, relativeDirectory: Self.sessionsDirectoryName)
+        return rootNames.map { name in
+            VaultNoteFile(url: root.appendingPathComponent(name), kind: name == Self.inboxFileName ? .inbox : .note)
+        } + sessionNames.map { VaultNoteFile(url: sessionsURL.appendingPathComponent($0), kind: .session) }
     }
 
     /// `Stem.md`, then `Stem 2.md`, `Stem 3.md`, ... in the root, whichever is free first.
@@ -264,6 +280,14 @@ public struct Vault: Sendable {
     }
 
     private func markdownFiles(in directory: URL, relativeDirectory: String) throws -> [(URL, Data)] {
+        try markdownFileNames(in: directory, relativeDirectory: relativeDirectory).compactMap { name in
+            let relativePath = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
+            guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: relativePath) else { return nil }
+            return (directory.appendingPathComponent(name), prefix)
+        }
+    }
+
+    private func markdownFileNames(in directory: URL, relativeDirectory: String) throws -> [String] {
         let names: [String]
         do {
             names = try NoteFile.listManagedDirectoryNames(in: rootAnchor, relativePath: relativeDirectory)
@@ -273,11 +297,6 @@ public struct Vault: Sendable {
         return names
             .filter { !$0.hasPrefix(".") && URL(fileURLWithPath: $0).pathExtension.lowercased() == "md" }
             .sorted()
-            .compactMap { name in
-                let relativePath = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
-                guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: relativePath) else { return nil }
-                return (directory.appendingPathComponent(name), prefix)
-            }
     }
 
     /// Title from a leading `# ` line within the first 4 KB, else the file stem.
