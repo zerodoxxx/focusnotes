@@ -102,6 +102,14 @@ private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seco
     }
 }
 
+private func waitUntilAsync(_ condition: () async -> Bool, timeout: Duration = .seconds(3)) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while !(await condition()) {
+        guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 private func makeFixture(in root: URL, mode: String) throws -> (URL, URL) {
     let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -192,15 +200,22 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     var baseline = try requests(in: directory).count
     let indexing = Task { try await client.embedDocuments(["hold-indexing"]) }
     try await waitUntil { try requests(in: directory).count > baseline }
-    var queued: [Task<[Float]?, Never>] = []
-    for i in 0..<20 {
-        queued.append(Task { try? await client.embedLatestQuery("obsolete-\(i)") })
-        try await Task.sleep(for: .milliseconds(5))
+    var queued = [Task<[Float]?, Never>]()
+    queued.append(Task { try? await client.embedLatestQuery("obsolete-0") })
+    // The indexing request and first query are both registered with the
+    // transport, so the first query is now the active coalesced operation.
+    try await waitUntilAsync { await client.pendingRequestCountForTesting() >= 2 }
+    for i in 1..<20 {
+        let next = Task { try? await client.embedLatestQuery("obsolete-\(i)") }
+        if let previous = queued.last { _ = await previous.value }
+        queued.append(next)
     }
     let latest = Task { try await client.embedLatestQuery("latest") }
+    // The last obsolete caller returns only after latest reaches the
+    // coalescing actor, while indexing still holds the transport queue.
+    if let previous = queued.last { _ = await previous.value }
     _ = try await indexing.value
     let latestVector = try await latest.value
-    for task in queued { _ = await task.value }
     let afterBurst = try requests(in: directory).dropFirst(baseline).filter { $0.operation == "embedQuery" }.compactMap(\.text)
     checks.require(afterBurst == ["latest"] && unit(latestVector), "query burst behind indexing sends only latest pending query")
 
