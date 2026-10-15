@@ -14,26 +14,29 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
 
       - name: Select Xcode 27 (Swift 6.4)
-        run: |
-          set -euo pipefail
-          # Prefer Xcode 27 (public preview on macos-26). Fall back to the newest installed Xcode.
-          xcode="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [[ -z "$xcode" ]]; then
-            echo "Xcode 27 not found; falling back to the newest installed Xcode"
-            xcode="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          fi
-          [[ -n "$xcode" ]] || { echo "No Xcode found" >&2; exit 1; }
-          sudo xcode-select -s "$xcode"
+        run: sudo xcode-select -s /Applications/Xcode_27.app
 
       - name: Print toolchain
         run: |
           swift --version
           sw_vers
+
+      - name: Require Swift 6.4 or newer
+        run: |
+          set -euo pipefail
+          version="$(swift --version | sed -n 's/.*Apple Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
+          [[ -n "$version" ]] || { echo "Could not read the Swift version" >&2; exit 1; }
+          if [[ "$(printf '%s\n' 6.4 "$version" | sort -V | head -n 1)" != "6.4" ]]; then
+            echo "Swift 6.4+ required; got $version" >&2
+            exit 1
+          fi
+          echo "Swift $version"
 
       - name: Cache SwiftPM build
         uses: actions/cache@v6

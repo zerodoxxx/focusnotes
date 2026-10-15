@@ -79,8 +79,8 @@ results above do not replace them. See [releasing.md](releasing.md).
   `appcast.xml`.
 - [ ] The in-app semantic model download completes on a clean account.
 - [ ] CI runs `checks.yml` on pushes and pull requests, and `release.yml`
-  produces a draft release from a `v*` tag. Confirm both on GitHub Actions
-  before the first public release.
+  tags, builds and drafts a release when a version bump is merged to `main`.
+  Confirm both on GitHub Actions before the first public release.
 - [ ] After making the repository public, enable GitHub private vulnerability
   reporting (Settings → Security and quality → Advanced Security → Private
   vulnerability reporting, or

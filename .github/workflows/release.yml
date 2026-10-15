@@ -1,38 +1,97 @@
-name: release
+name: release on version bump
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [Config/app.env]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
+
+# Runs for different versions must not overlap; never cancel a release in progress.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version and check for an existing tag
+        id: version
+        run: |
+          set -euo pipefail
+          version=""
+          build=""
+          while IFS= read -r line; do
+            key="${line%%=*}"
+            value="${line#*=}"
+            case "$key" in
+              VERSION) version="$value" ;;
+              BUILD) build="$value" ;;
+            esac
+          done < Config/app.env
+          [[ -n "$version" ]] || { echo "VERSION is missing in Config/app.env" >&2; exit 1; }
+          [[ -n "$build" ]] || { echo "BUILD is missing in Config/app.env" >&2; exit 1; }
+          echo "VERSION=$version BUILD=$build"
+
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null
+          rc=$?
+          set -e
+          case "$rc" in
+            0) release=false; echo "Tag v$version already exists; nothing to release" ;;
+            2) release=true; echo "Tag v$version is absent; releasing" ;;
+            *) echo "git ls-remote failed (exit $rc)" >&2; exit 1 ;;
+          esac
+
+          {
+            echo "version=$version"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+
   release:
-    runs-on: macos-26
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
+    runs-on: xcode-27
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Select Xcode 27 (Swift 6.4)
-        run: |
-          set -euo pipefail
-          # Prefer Xcode 27 (public preview on macos-26). Fall back to the newest installed Xcode.
-          xcode="$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [[ -z "$xcode" ]]; then
-            echo "Xcode 27 not found; falling back to the newest installed Xcode"
-            xcode="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          fi
-          [[ -n "$xcode" ]] || { echo "No Xcode found" >&2; exit 1; }
-          sudo xcode-select -s "$xcode"
+        run: sudo xcode-select -s /Applications/Xcode_27.app
 
       - name: Print toolchain
         run: |
           swift --version
           sw_vers
+
+      - name: Require Swift 6.4 or newer
+        run: |
+          set -euo pipefail
+          version="$(swift --version | sed -n 's/.*Apple Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
+          [[ -n "$version" ]] || { echo "Could not read the Swift version" >&2; exit 1; }
+          if [[ "$(printf '%s\n' 6.4 "$version" | sort -V | head -n 1)" != "6.4" ]]; then
+            echo "Swift 6.4+ required; got $version" >&2
+            exit 1
+          fi
+          echo "Swift $version"
 
       - name: Resolve models directory
         id: models-dir
@@ -60,6 +119,14 @@ jobs:
           printf '%s' "$SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/identity.p12"
           scripts/import-signing-identity.sh "$RUNNER_TEMP/identity.p12" "$RUNNER_TEMP/signing.keychain-db"
 
+      - name: Tag the version
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "focusnotes $VERSION"
+          git push origin "v$VERSION"
+
       - name: Build, sign and verify release
         env:
           RELEASE_FROM_TAG: "1"
@@ -78,10 +145,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --title "focusnotes ${GITHUB_REF_NAME#v}" --generate-notes dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml
+          set -euo pipefail
+          appname="$(sed -n 's/^APPNAME=//p' Config/app.env | head -n 1)"
+          [[ -n "$appname" ]] || { echo "APPNAME is missing in Config/app.env" >&2; exit 1; }
+          gh release create "v$VERSION" --draft --verify-tag --title "$appname $VERSION" --generate-notes dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml
 
       - name: Remove signing material
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/identity.p12"
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      - name: Delete the tag after a failed run
+        if: failure()
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            git push --delete origin "v$VERSION"
+          fi

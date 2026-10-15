@@ -70,20 +70,38 @@ output contains `SKIP`.
 
 ## Per release
 
-### 1. Bump the version and commit
+### 1. Bump the version and merge
 
-In `Config/app.env`, set `VERSION` and increase `BUILD`. `BUILD` must always go up.
-Update `CHANGELOG.md`, then commit. The tree must be clean before the next step.
+On a branch, set `VERSION` and increase `BUILD` in `Config/app.env`. `BUILD` must
+always go up. Update `CHANGELOG.md`, then merge to `main`.
 
-### 2. Build with `scripts/release.sh`
+### 2. Let the release workflow build the draft
 
-```sh
-scripts/release.sh
-```
+Merging a change to `Config/app.env` on `main` starts
+`.github/workflows/release.yml`. If the tag `v<version>` does not exist yet, the
+workflow:
 
-The script:
+- tags `v<version>` on the merged commit and pushes the tag;
+- runs `scripts/release.sh` in tag mode: all checks, the build, signing, the
+  bundle checks and the DMG verification described in `release.sh` below;
+- attests the DMG and creates a **draft** release with the DMG,
+  `SHA256SUMS.txt`, `appcast.xml` and generated notes.
 
-- refuses a dirty working tree, a local tag `v<version>`, or a tag already on `origin`;
+If the run fails, the workflow deletes the tag it pushed, so the same version
+can be released again. Fix the cause, then start the workflow manually with
+**Actions → release on version bump → Run workflow** on `main`. A retry builds
+the current tip of `main`, so retry only when `main` contains nothing you do not
+want in this release. If the tag already exists, the run does nothing.
+
+You can also build on your Mac with `scripts/release.sh`. Run it on a clean tree
+at the bump commit, with no local or remote tag `v<version>`. The script creates
+the tag, and you then push it with `git push origin v<version>` and create the
+draft as in step 4 below.
+
+The release script:
+
+- refuses a dirty working tree, a local tag `v<version>`, or a tag already on `origin`
+  (in tag mode it requires the local tag to point at `HEAD` instead);
 - unlocks the signing keychain;
 - runs all checks (`CoreChecks`, `CaptureChecks`, `OverlayGallery --check`,
   `check-name.sh`, `ModelInstallChecks`, `EmbedChecks`). `EmbedChecks` must not SKIP;
@@ -99,9 +117,10 @@ The script:
 
 If any step fails, fix the cause and run again. Do not hand-edit `dist/`.
 
-### 3. Smoke-test on a fresh macOS user account
+### 3. Smoke-test the draft on a fresh macOS user account
 
-Use a clean macOS account, not your everyday one.
+Download the DMG from the draft release. Use a clean macOS account, not your
+everyday one.
 
 1. Install from the DMG and get past Gatekeeper with **System Settings → Privacy &
    Security → Open Anyway**.
@@ -111,14 +130,16 @@ Use a clean macOS account, not your everyday one.
    then open the new one). Check that permissions are kept and
    **Check for Updates…** finds the new version.
 
-If any step fails, do not publish. Fix it, bump `BUILD`, and start again.
+If any step fails, do not publish. Fix it, bump `BUILD` in a new change, merge
+it, and start again.
 
-### 4. Tag and create a draft release
+### 4. Create the draft by hand (local builds only)
+
+Skip this step when the workflow created the draft. After a local
+`scripts/release.sh` build and `git push origin v<version>`:
 
 ```sh
-git tag v<version>
-git push origin v<version>
-gh release create v<version> --draft --title "focusnotes <version>" \
+gh release create v<version> --draft --verify-tag --title "focusnotes <version>" \
   --notes-file <notes.md> \
   dist/focusnotes-<version>-arm64.dmg dist/SHA256SUMS.txt dist/appcast.xml
 ```
@@ -145,10 +166,15 @@ already installed the bad build.
 
 CI is set up but gated. The workflows run on GitHub Actions.
 
-- `.github/workflows/checks.yml` runs the checks on pushes and pull requests.
-- `.github/workflows/release.yml` runs on `v*` tags. It imports the signing
-  identity from secrets, builds with `scripts/release.sh` in tag mode, attests
-  the DMG, and creates the draft release.
+Both workflows run on the `xcode-27` GitHub-hosted runner (Xcode 27, Swift 6.4).
+Each one checks the Swift version before it builds.
+
+- `.github/workflows/checks.yml` runs the checks on pushes to `main` and on pull requests.
+- `.github/workflows/release.yml` runs when `Config/app.env` changes on `main`,
+  or manually with `workflow_dispatch`. When `v<version>` is absent, it tags the
+  commit, imports the signing identity from secrets, builds with
+  `scripts/release.sh` in tag mode, attests the DMG, and creates the draft
+  release. A failed run deletes the tag it pushed.
 
 Secrets used by `release.yml`:
 
