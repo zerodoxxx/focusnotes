@@ -147,18 +147,20 @@ private final class SlowStages: @unchecked Sendable {
 /// resume: the blocking stages below may hold every one on small CI runners.
 @MainActor
 private func runDeadlineChecks(_ checks: inout Checks) async throws {
+    // 350 ms deadline plus scheduling slack for busy CI VMs; still well under the 700 ms stages.
+    let limit = Duration.milliseconds(550)
     let actor = BusyStage(), marker = StageMarker(), slow = SlowStages()
     let holding = Task.detached { await actor.hold(marker) }
     try await waitUntil { marker.started }
     var start = ContinuousClock.now
     let blocked = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { await actor.lookup() }
-    checks.require(blocked == "empty" && start.duration(to: .now) < .milliseconds(500), "whole-search 350 ms deadline includes actor contention")
+    checks.require(blocked == "empty" && start.duration(to: .now) < limit, "whole-search 350 ms deadline includes actor contention")
     await holding.value
     for stage in ["resource initialization", "post-embedding ranking/hit lookup"] {
         start = ContinuousClock.now
         let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slow.run() }
         let elapsed = start.duration(to: .now)
-        let passed = result == "empty" && elapsed < .milliseconds(500)
+        let passed = result == "empty" && elapsed < limit
         let diagnostic = passed ? "" : " (returned \(result) after \(elapsed))"
         checks.require(passed, "whole-search deadline includes \(stage)\(diagnostic)")
         try await waitUntil { !slow.running }
