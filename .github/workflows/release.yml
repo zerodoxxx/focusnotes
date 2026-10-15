@@ -3,7 +3,9 @@ name: release on version bump
 on:
   push:
     branches: [main]
-    paths: [Config/app.env]
+  # Every push to main runs `detect`; it builds a draft release only when v<VERSION>
+  # has no tag, so a failed release retries on the next merge without a manual dispatch.
+  # Publishing the draft stays a manual click.
   workflow_dispatch:
 
 permissions:
