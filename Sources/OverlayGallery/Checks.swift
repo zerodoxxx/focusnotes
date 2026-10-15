@@ -470,7 +470,8 @@ private func checkNoteEditorBehavior() async throws {
     let tallScroll = tallPanel.contentView.map(descendants)?.compactMap { $0 as? NSScrollView }.first
     try require(tallScroll?.hasVerticalScroller == true, "Long note must scroll at maximum height")
     let fractionCap = min((tallPanel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900, 10_000) * OverlayTheme.quickMaxHeightFraction
-    try require(tallPanel.frame.height <= max(fractionCap, floorHeight) + 0.5
+    // AppKit rounds window frames to whole points, so allow up to one point over the cap.
+    try require(tallPanel.frame.height <= max(fractionCap, floorHeight) + 1
                 && tallPanel.frame.height <= OverlayTheme.quickMaxHeight,
                 "Editor height must respect the cap (height \(tallPanel.frame.height), screen cap \(fractionCap), floor \(floorHeight))")
     let shrinking = try textView()
