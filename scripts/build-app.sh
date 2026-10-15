@@ -18,7 +18,7 @@ case "$CONFIGURATION" in
         ;;
 esac
 
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     case "$key" in
         APPNAME) APPNAME="$value" ;;
         BUNDLE_PREFIX) BUNDLE_PREFIX="$value" ;;
@@ -144,6 +144,12 @@ plutil -insert NSHumanReadableCopyright -string "Copyright © 2026 $APPNAME cont
 # Sparkle updates need both the feed URL and the EdDSA public key. Without both,
 # neither key is written and the app hides "Check for Updates…".
 if [[ -n "${GITHUB_REPO:-}" && -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
+    # An Ed25519 public key is 32 bytes; anything else makes Sparkle refuse to start.
+    key_bytes="$(printf '%s' "$SPARKLE_PUBLIC_ED_KEY" | base64 -D 2>/dev/null | wc -c | tr -d ' ')"
+    if [[ "$key_bytes" != 32 ]]; then
+        printf 'error: SPARKLE_PUBLIC_ED_KEY does not decode to 32 bytes (got %s)\n' "$key_bytes" >&2
+        exit 1
+    fi
     plutil -insert SUFeedURL -string "https://github.com/$GITHUB_REPO/releases/latest/download/appcast.xml" "$PLIST_PATH"
     plutil -insert SUPublicEDKey -string "$SPARKLE_PUBLIC_ED_KEY" "$PLIST_PATH"
 fi

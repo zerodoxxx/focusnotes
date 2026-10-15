@@ -21,7 +21,7 @@ if [[ $# -gt 1 ]]; then
     exit 2
 fi
 
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     case "$key" in
         APPNAME) APPNAME="$value" ;;
         BUNDLE_PREFIX) BUNDLE_PREFIX="$value" ;;

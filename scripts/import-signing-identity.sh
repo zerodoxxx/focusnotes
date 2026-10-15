@@ -24,7 +24,7 @@ usage() {
 P12="$1"
 [[ -f "$P12" ]] || fail "identity file not found: $P12"
 
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     case "$key" in
         APPNAME) APPNAME="$value" ;;
     esac

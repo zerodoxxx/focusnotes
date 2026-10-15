@@ -46,7 +46,7 @@ use and choose a vault appropriate for the data being captured.
 
 Capture and search processing run locally, and note content never leaves the
 Mac. The app contacts the network in only two cases: when the user chooses
-**Download Semantic Search Models (492 MB)…** and accepts the consent dialog
+**Enable Semantic Search…** and accepts the consent dialog
 (which names the download size, the hosts huggingface.co and github.com, the
 licenses, and the SHA-256 verification; see
 [docs/semantic-search.md](docs/semantic-search.md)), and for

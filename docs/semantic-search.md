@@ -120,10 +120,10 @@ two text graph files, two vision graph files, tokenizer, processor config and
 runtime dylib in `~/Library/Application Support/<bundle identifier>/models/`.
 The disabled info item under Permissions shows **Semantic search: On** or
 **Semantic search: Off (models not installed)**. Users install models from the
-**Download Semantic Search Models (492 MB)…** menu item, after a consent dialog
+**Enable Semantic Search…** menu item, after a consent dialog
 that names the download hosts and licenses. Downloads are staged beside the
 models folder and move into place only after every file verifies. The same menu
-offers **Remove Semantic Search Models…**. Developers can instead run
+offers **Semantic Search → Remove Models…**. Developers can instead run
 `scripts/fetch-models.sh <that directory>`. Missing models and inference
 failures leave capture, OCR, Recent and keyword search available.
 

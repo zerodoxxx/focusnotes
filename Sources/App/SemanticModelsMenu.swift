@@ -36,7 +36,7 @@ final class SemanticModelsMenu {
         self.succeeded = succeeded
         item = NSMenuItem(title: "", action: download, keyEquivalent: "")
         item.target = target
-        let removeItem = NSMenuItem(title: "Remove Semantic Search Models…", action: remove, keyEquivalent: "")
+        let removeItem = NSMenuItem(title: "Remove Models…", action: remove, keyEquivalent: "")
         removeItem.target = target
         submenu.addItem(removeItem)
     }
@@ -48,6 +48,7 @@ final class SemanticModelsMenu {
         item.submenu = installed && idle ? submenu : nil
         item.action = installed ? nil : downloadAction
         item.isEnabled = !isRemoving
+        item.state = installed && idle ? .on : .off
         item.title = title()
     }
 
@@ -95,20 +96,20 @@ final class SemanticModelsMenu {
 
     private func title() -> String {
         if installed {
-            return isRemoving ? "Removing Semantic Search Models…" : "Semantic Search: On"
+            return isRemoving ? "Removing Models…" : "Semantic Search"
         }
         switch phase {
         case .downloading:
-            guard let progress else { return "Downloading Semantic Search Models…" }
+            guard let progress else { return "Downloading Models…" }
             let percent = Int((progress.fraction * 100).rounded(.down))
-            return "Downloading Semantic Search Models… \(percent)% (\(size(progress.completedBytes)) of \(size(progress.totalBytes)))"
+            return "Downloading Models… \(percent)%"
         case .removing:
-            return "Removing Semantic Search Models…"
+            return "Removing Models…"
         case .idle:
             if (try? makeInstaller())?.hasPartialDownload == true {
-                return "Resume Semantic Search Model Download…"
+                return "Resume Semantic Search…"
             }
-            return "Download Semantic Search Models (\(size(ModelManifest.current.totalDownloadBytes)))…"
+            return "Enable Semantic Search…"
         }
     }
 

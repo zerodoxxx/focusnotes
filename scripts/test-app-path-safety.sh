@@ -55,7 +55,7 @@ fail() {
 }
 
 CURRENT_APPNAME=""
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     if [[ "$key" == "APPNAME" ]]; then
         CURRENT_APPNAME="$value"
     fi

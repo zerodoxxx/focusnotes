@@ -113,12 +113,12 @@ installed in place.
 ## Semantic search
 
 Keyword search works without any download. For meaning-based search, download the on-device models from the menu-bar
-icon: **Download Semantic Search Models (492 MB)…**. The download is about 500 MB and needs Apple silicon.
+icon: **Enable Semantic Search…**. The download is about 492 MB and needs Apple silicon.
 
 - The EmbeddingGemma model (Apache-2.0) is downloaded from huggingface.co, and ONNX Runtime (MIT) from github.com.
 - Each file is checked against a pinned SHA-256 hash before it is used.
 - If the download is interrupted, it resumes. You can cancel it at any time.
-- To remove the models, use the **Semantic Search: On** submenu.
+- To remove the models, use **Semantic Search → Remove Models…**.
 
 See [docs/semantic-search.md](docs/semantic-search.md) for how it works.
 
@@ -128,7 +128,7 @@ focusnotes sends note content, captures and search queries nowhere. Everything t
 
 The app connects to the network in exactly two cases:
 
-1. **Semantic models.** When you choose **Download Semantic Search Models**.
+1. **Semantic models.** When you choose **Enable Semantic Search…**.
 2. **Updates.** When you choose **Check for Updates…**, or when automatic update checks are on.
 
 ## Uninstall

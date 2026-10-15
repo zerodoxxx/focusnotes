@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     if [[ "$key" == "APPNAME" ]]; then
         APPNAME="$value"
     fi

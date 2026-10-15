@@ -21,7 +21,7 @@ case "$#" in
     *) usage ;;
 esac
 
-while IFS='=' read -r key value; do
+while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
     case "$key" in
         APPNAME) APPNAME="$value" ;;
         VERSION) VERSION="$value" ;;
