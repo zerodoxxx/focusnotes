@@ -16,6 +16,7 @@ enum AppErrorLog {
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
     private var terminationRequested = false
+    private let relaunchLifecycle = RelaunchLifecycle(launch: { ApplicationDelegate.launchRelaunchHelper() })
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task {
@@ -27,6 +28,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 let state = home.appendingPathComponent("Library/Application Support").appendingPathComponent(AppInfo.bundleIdentifier, isDirectory: true)
                 let pipeline = try await CapturePipeline.open(vaultRoot: root, stateDirectory: state, calendar: .current)
                 let controller = AppController(pipeline: pipeline)
+                connectRelaunchHandler(to: controller)
                 self.controller = controller
                 await controller.start()
             } catch {
@@ -37,6 +39,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        relaunchLifecycle.applicationWillTerminate()
+    }
+
+    private func connectRelaunchHandler(to controller: AppController) {
+        controller.onRelaunchRequested = { [weak self] in self?.requestRelaunch() }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let controller else { return .terminateNow }
         guard !terminationRequested else { return .terminateLater }
@@ -44,10 +54,56 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let shutdown = controller.beginTermination()
         Task {
             let shouldTerminate = await shutdown.value
-            if !shouldTerminate { terminationRequested = false }
+            if !shouldTerminate {
+                relaunchLifecycle.terminationWasVetoed()
+                terminationRequested = false
+            }
             sender.reply(toApplicationShouldTerminate: shouldTerminate)
         }
         return .terminateLater
+    }
+
+    private func requestRelaunch() {
+        relaunchLifecycle.request()
+        NSApp.terminate(nil)
+    }
+
+    private static func launchRelaunchHelper() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "parent_pid=\"$1\"; app_path=\"$2\"; while /bin/kill -0 \"$parent_pid\" 2>/dev/null; do /bin/sleep 0.1; done; exec /usr/bin/open -n \"$app_path\"",
+            "focusnotes-relaunch",
+            String(ProcessInfo.processInfo.processIdentifier),
+            Bundle.main.bundlePath,
+        ]
+        try? process.run()
+    }
+}
+
+/// Holds a relaunch request until AppKit confirms the app is actually terminating.
+@MainActor
+final class RelaunchLifecycle {
+    private let launch: @MainActor () -> Void
+    private var isRequested = false
+
+    init(launch: @escaping @MainActor () -> Void) {
+        self.launch = launch
+    }
+
+    func request() {
+        isRequested = true
+    }
+
+    func terminationWasVetoed() {
+        isRequested = false
+    }
+
+    func applicationWillTerminate() {
+        guard isRequested else { return }
+        isRequested = false
+        launch()
     }
 }
 
@@ -108,6 +164,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var requestedScreenCapture = false
     private let permissionGuide = PermissionGuide()
     private var appUpdater: AppUpdater?
+    var onRelaunchRequested: (() -> Void)?
 
     init(pipeline: CapturePipeline, presentsUI: Bool = true, onToast: ((Toast) -> Void)? = nil) {
         self.pipeline = pipeline
@@ -115,6 +172,7 @@ final class AppController: NSObject, NSMenuDelegate {
         self.onToast = onToast
         super.init()
         permissionGuide.onGranted = { [weak self] _ in self?.refreshStatus() }
+        permissionGuide.onRelaunch = { [weak self] in self?.onRelaunchRequested?() }
         toast.onExpire = { [weak self] in
             guard let self, self.pendingToastID == self.pending?.id else { return }
             _ = self.commitPending()

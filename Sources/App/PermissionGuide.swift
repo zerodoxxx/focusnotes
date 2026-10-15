@@ -13,6 +13,7 @@ final class PermissionGuide {
 
     /// Called after the success state has faded out.
     var onGranted: ((CapturePermission) -> Void)?
+    var onRelaunch: (() -> Void)?
 
     private static let timeout: TimeInterval = 10 * 60
     private static let screenInset: CGFloat = 8
@@ -66,6 +67,7 @@ final class PermissionGuide {
     private func makePanel() -> PermissionGuidePanel {
         let panel = PermissionGuidePanel()
         panel.onClose = { [weak self] in self?.dismiss() }
+        panel.onRelaunch = { [weak self] in self?.onRelaunch?() }
         self.panel = panel
         return panel
     }

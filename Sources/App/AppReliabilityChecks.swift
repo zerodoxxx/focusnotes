@@ -7,8 +7,34 @@ import OverlayKit
 @MainActor
 func checkAppReliability() async throws {
     try checkUnavailableShortcutMenu()
+    try checkRelaunchLifecycle()
     try await checkChangesDuringInitialScan()
     try await checkDraftTerminationVeto()
+}
+
+@MainActor
+private func checkRelaunchLifecycle() throws {
+    var launches = 0
+    let lifecycle = RelaunchLifecycle { launches += 1 }
+    lifecycle.request()
+    guard launches == 0 else {
+        throw SelfTestFailure("A relaunch must wait until AppKit confirms termination")
+    }
+    lifecycle.terminationWasVetoed()
+    lifecycle.applicationWillTerminate()
+    guard launches == 0 else {
+        throw SelfTestFailure("A vetoed termination must discard its pending relaunch")
+    }
+
+    lifecycle.request()
+    guard launches == 0 else {
+        throw SelfTestFailure("A slow shutdown must not launch another app instance while it is draining")
+    }
+    lifecycle.applicationWillTerminate()
+    lifecycle.applicationWillTerminate()
+    guard launches == 1 else {
+        throw SelfTestFailure("An accepted termination must launch exactly one replacement instance")
+    }
 }
 
 @MainActor

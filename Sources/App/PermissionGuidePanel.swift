@@ -10,6 +10,7 @@ final class PermissionGuidePanel: NSPanel {
     static let relaunchHeight: CGFloat = 100
 
     var onClose: (() -> Void)?
+    var onRelaunch: (() -> Void)?
 
     private let effectView = NSVisualEffectView()
     private let rootStack = NSStackView()
@@ -166,13 +167,9 @@ final class PermissionGuidePanel: NSPanel {
         onClose?()
     }
 
-    /// Starts a detached relaunch after a short delay, then quits. The shell survives this process exiting.
+    /// Requests the app's lifecycle owner to relaunch after an accepted termination.
     @objc private func relaunchTapped() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "sleep 0.5; /usr/bin/open -n \"$0\"", Bundle.main.bundlePath]
-        guard (try? process.run()) != nil else { return }
-        NSApp.terminate(nil)
+        onRelaunch?()
     }
 }
 

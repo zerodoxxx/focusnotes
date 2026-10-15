@@ -187,36 +187,47 @@ public actor ModelInstaller {
 
         // Step 4: downloads in manifest order, with the runtime archive last.
         for item in downloads {
-            try Task.checkCancellation()
+            try checkCancellation()
             let base = completed
             let size = item.size
             try await fetch(item) { onDisk in
                 throttle.report(base + min(onDisk, size))
             }
+            // Keep a completed transfer resumable if cancellation arrives as it finishes,
+            // but do not start finalization after the user has cancelled.
+            try checkCancellation()
             completed += item.size
         }
 
         // Step 5: unpack the runtime archive and verify each member before it is installed.
         if !runtimeInstalled {
+            try checkCancellation()
             try extractRuntime(archive: archive, staging: staging)
         }
 
         // Step 6: bundled license files, verified before they are copied in.
         for license in manifest.licenses {
+            try checkCancellation()
             let source = bundledResources.appendingPathComponent(license.resourceName)
             guard try hashMatches(source, license.sha256) else {
                 throw ModelInstallError.checksumMismatch(file: license.resourceName)
             }
+            try checkCancellation()
             try replaceItem(at: staging.appendingPathComponent(license.installedName), copyingFrom: source)
+            try checkCancellation()
         }
 
         // Step 7: everything the app needs is present, and nothing is half-written.
         let requiredNames = manifest.requiredFiles
             + [manifest.runtimeLicenseName, manifest.runtimeNoticesName]
             + manifest.licenses.map(\.installedName)
-        for name in requiredNames where !fm.fileExists(atPath: staging.appendingPathComponent(name).path) {
-            throw ModelInstallError.io("\(name) is missing after the download")
+        for name in requiredNames {
+            try checkCancellation()
+            guard fm.fileExists(atPath: staging.appendingPathComponent(name).path) else {
+                throw ModelInstallError.io("\(name) is missing after the download")
+            }
         }
+        try checkCancellation()
         if containsPartialFiles(in: staging) {
             throw ModelInstallError.io("an incomplete download is still present")
         }
@@ -225,6 +236,9 @@ public actor ModelInstaller {
         guard fm.fileExists(atPath: staging.path) else {
             throw ModelInstallError.io("the staging folder was removed during the install")
         }
+        // This is the final cancellation point before the directory swap. Verified
+        // downloads remain in staging and the installed set stays untouched on cancel.
+        try checkCancellation()
         try commit(staging: staging)
         logger.info("Model install complete: \(requiredNames.count, privacy: .public) files")
 
@@ -277,11 +291,13 @@ public actor ModelInstaller {
 
     /// Extracts the three runtime members with the system tar and verifies each against its pinned hash.
     private func extractRuntime(archive: URL, staging: URL) throws {
+        try checkCancellation()
         let fm = FileManager.default
         let runtime = manifest.runtime
         let extractDirectory = staging.appendingPathComponent(Self.extractDirectoryName, isDirectory: true)
         try? fm.removeItem(at: extractDirectory)
         try fm.createDirectory(at: extractDirectory, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: extractDirectory) }
 
         let members: [(member: String, digest: String, installedName: String)] = [
             (runtime.dylibMember, runtime.dylibSHA256, manifest.dylibName),
@@ -303,6 +319,9 @@ public actor ModelInstaller {
         }
         let errorOutput = (try? stderr.fileHandleForReading.readToEnd()) ?? Data()
         process.waitUntilExit()
+        // Reading tar's stderr waits for the child to close the pipe. Check as soon as
+        // extraction finishes so cancellation cannot proceed into validation or commit.
+        try checkCancellation()
         guard process.terminationStatus == 0 else {
             try? fm.removeItem(at: extractDirectory)
             let text = String(decoding: errorOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -310,6 +329,7 @@ public actor ModelInstaller {
         }
 
         for entry in members {
+            try checkCancellation()
             let extracted = extractDirectory.appendingPathComponent(entry.member)
             guard fm.fileExists(atPath: extracted.path) else {
                 try? fm.removeItem(at: extractDirectory)
@@ -320,12 +340,13 @@ public actor ModelInstaller {
                 try? fm.removeItem(at: archive)
                 throw ModelInstallError.checksumMismatch(file: entry.member)
             }
+            try checkCancellation()
         }
         for entry in members {
+            try checkCancellation()
             try replaceItem(at: staging.appendingPathComponent(entry.installedName),
                             movingFrom: extractDirectory.appendingPathComponent(entry.member))
         }
-        try? fm.removeItem(at: extractDirectory)
         try? fm.removeItem(at: archive)
     }
 
@@ -335,11 +356,13 @@ public actor ModelInstaller {
         let parent = modelsDirectory.deletingLastPathComponent()
         var backup: URL?
         if fm.fileExists(atPath: modelsDirectory.path) {
+            try checkCancellation()
             let old = parent.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
             try fm.moveItem(at: modelsDirectory, to: old)
             backup = old
         }
         do {
+            try checkCancellation()
             try fm.moveItem(at: staging, to: modelsDirectory)
         } catch {
             if let backup {
@@ -390,6 +413,10 @@ public actor ModelInstaller {
     private func hashMatches(_ file: URL, _ expected: String) throws -> Bool {
         guard FileManager.default.fileExists(atPath: file.path) else { return false }
         return try FileDigest.sha256Hex(of: file) == expected
+    }
+
+    private func checkCancellation() throws {
+        try Task<Never, Never>.checkCancellation()
     }
 
     /// Bytes already in the partial file for `part`. Read-only: 0 when the file is missing or larger than expected.

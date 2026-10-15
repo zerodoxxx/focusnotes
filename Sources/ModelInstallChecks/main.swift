@@ -180,6 +180,8 @@ actor FakeTransport: ModelTransport {
         case corruptOnce
         /// Every attempt: serve corrupted bytes.
         case alwaysCorrupt
+        /// Cancel the calling install task after this file has been completely written.
+        case cancelAfterComplete
         /// Write N bytes, then wait until the task is cancelled.
         case suspendAfter(Int64)
         /// First attempt with a non-zero offset: delete the .part file and fail with a network error.
@@ -264,6 +266,9 @@ actor FakeTransport: ModelTransport {
             throw ModelInstallError.network("simulated")
         }
         try Self.append(payload, to: file, base: offset, progress: progress)
+        if case .cancelAfterComplete? = mode {
+            withUnsafeCurrentTask { $0?.cancel() }
+        }
     }
 
     private static func append(_ data: Data, to file: URL, base: Int64,
@@ -412,6 +417,39 @@ func caseCancel(_ root: URL, _ fixture: Fixture) async throws {
     let files = try regularFiles(under: models)
     try expect(files == ["marker.txt"], "models directory changed on cancel: \(files.sorted())")
     try expect(exists(stagingDirectory(root)), "staging directory was removed on cancel")
+}
+
+func caseCancelAfterFinalFetch(_ root: URL, _ fixture: Fixture) async throws {
+    let models = modelsDirectory(root)
+    let previousModel = Data("previous installed model".utf8)
+    try writeFile(models.appendingPathComponent("onnx/a.onnx"), previousModel)
+    try writeFile(models.appendingPathComponent("marker.txt"), Data("kept".utf8))
+
+    let archiveURL = Fixture.servedURL("runtime.tgz")
+    let transport = FakeTransport(served: fixture.served, modes: [archiveURL: .cancelAfterComplete])
+    let installer = makeInstaller(root: root, fixture: fixture, transport: transport)
+    let task = Task { try await installer.install { _ in } }
+    try await expectError("cancel after final fetch", { $0 == .cancelled }) {
+        try await task.value
+    }
+
+    let installedAfterCancel = try regularFiles(under: models)
+    try expect(installedAfterCancel == ["marker.txt", "onnx/a.onnx"],
+               "installed file set changed after cancellation: \(installedAfterCancel.sorted())")
+    let preservedModel = try Data(contentsOf: models.appendingPathComponent("onnx/a.onnx"))
+    try expect(preservedModel == previousModel, "previous installed model contents changed after cancellation")
+    let staged = try regularFiles(under: stagingDirectory(root))
+    let expectedStaged = Set(["onnx/a.onnx", "tokenizer.json", "vocab.txt", "runtime.tgz"])
+    try expect(staged == expectedStaged, "staging holds \(staged.sorted()), expected resumable files \(expectedStaged.sorted())")
+    try expect(!exists(stagingDirectory(root).appendingPathComponent(".runtime-extract", isDirectory: true)),
+               "temporary extraction data survived cancellation")
+
+    // A second installer call should finish from the verified staged files without refetching.
+    let requestCount = await transport.totalRequests()
+    try await installer.install { _ in }
+    try expect(await transport.totalRequests() == requestCount,
+               "retry fetched files again despite complete verified staging data")
+    try expectFinalLayout(root, fixture)
 }
 
 func caseDiskSpace(_ root: URL, _ fixture: Fixture) async throws {
@@ -569,6 +607,7 @@ func runAllCases(_ fixture: Fixture) async -> Bool {
         ("corrupt once, then OK", caseCorruptOnceThenOK),
         ("always corrupt", caseAlwaysCorrupt),
         ("cancel", caseCancel),
+        ("cancel after final fetch", caseCancelAfterFinalFetch),
         ("disk space", caseDiskSpace),
         ("reuse valid model file", caseReuseValidFile),
         ("replace existing models directory", caseReplaceExisting),

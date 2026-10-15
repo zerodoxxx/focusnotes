@@ -10,10 +10,12 @@ FIXTURE="$TEMP_ROOT/project"
 FAKE_BIN="$TEMP_ROOT/fake-bin"
 SWIFT_BIN="$TEMP_ROOT/swift-bin"
 MOCK_LOG="$TEMP_ROOT/mock.log"
-mkdir -p "$FIXTURE/scripts" "$FIXTURE/Config" "$FIXTURE/assets/icons" "$FAKE_BIN" "$SWIFT_BIN" "$TEMP_ROOT/outside.app" "$TEMP_ROOT/home"
+export FIXTURE
+mkdir -p "$FIXTURE/scripts" "$FIXTURE/Config" "$FIXTURE/assets/icons" "$FIXTURE/licenses" "$FAKE_BIN" "$SWIFT_BIN" "$TEMP_ROOT/outside.app" "$TEMP_ROOT/home"
 cp "$SCRIPT_DIR/build-app.sh" "$SCRIPT_DIR/run-app.sh" "$SCRIPT_DIR/check-app-path.py" "$FIXTURE/scripts/"
 touch "$SWIFT_BIN/App" "$SWIFT_BIN/EmbedHelper"
 touch "$FIXTURE/assets/icons/AppIcon.icns" "$FIXTURE/assets/icons/MenuBarIcon.pdf" "$FIXTURE/assets/icons/MenuBarIcon-active.pdf"
+touch "$FIXTURE/licenses/Apache-2.0.txt" "$FIXTURE/licenses/EmbeddingGemma2-NOTICE.txt" "$FIXTURE/LICENSE" "$FIXTURE/THIRD_PARTY_NOTICES.md"
 
 cat > "$FAKE_BIN/swift" <<'SH'
 #!/usr/bin/env bash
@@ -25,6 +27,12 @@ for arg in "$@"; do
         exit 0
     fi
 done
+
+# A real SwiftPM build resolves Sparkle into .build/artifacts. Keep that
+# package output local to the fixture so this test never needs Swift or network
+# access to validate the bundle assembly path.
+mkdir -p "$FIXTURE/.build/artifacts/sparkle/Sparkle/macos-arm64_x86_64/Sparkle.framework/Versions/B"
+printf 'fixture Sparkle binary\n' > "$FIXTURE/.build/artifacts/sparkle/Sparkle/macos-arm64_x86_64/Sparkle.framework/Versions/B/Sparkle"
 SH
 
 cat > "$FAKE_BIN/plutil" <<'SH'
@@ -37,7 +45,50 @@ cat > "$FAKE_BIN/codesign" <<'SH'
 printf 'codesign %s\n' "$*" >> "$MOCK_LOG"
 SH
 
-chmod +x "$FAKE_BIN/swift" "$FAKE_BIN/plutil" "$FAKE_BIN/codesign"
+cat > "$FAKE_BIN/ditto" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ditto %s\n' "$*" >> "$MOCK_LOG"
+cp -R "$1" "$2"
+SH
+
+cat > "$FAKE_BIN/otool" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'otool %s\n' "$*" >> "$MOCK_LOG"
+case "$1" in
+    -l)
+        cat <<EOF
+Load command 1
+          cmd LC_RPATH
+      cmdsize 32
+         path $FIXTURE/.build/checkouts/Sparkle (offset 12)
+Load command 2
+          cmd LC_RPATH
+      cmdsize 32
+         path /Users/fixture/Library/Frameworks (offset 12)
+EOF
+        ;;
+    -L)
+        printf '%s:\n' "$2"
+        if [[ "$2" == */EmbedHelper ]]; then
+            printf '\t/usr/lib/libSystem.B.dylib\n'
+        else
+            printf '\t@rpath/Sparkle.framework/Versions/B/Sparkle\n'
+        fi
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SH
+
+cat > "$FAKE_BIN/install_name_tool" <<'SH'
+#!/usr/bin/env bash
+printf 'install_name_tool %s\n' "$*" >> "$MOCK_LOG"
+SH
+
+chmod +x "$FAKE_BIN/swift" "$FAKE_BIN/plutil" "$FAKE_BIN/codesign" "$FAKE_BIN/ditto" "$FAKE_BIN/otool" "$FAKE_BIN/install_name_tool"
 
 write_config() {
     cat > "$FIXTURE/Config/app.env" <<EOF
@@ -92,6 +143,13 @@ PATH="$FAKE_BIN:$PATH" MOCK_LOG="$MOCK_LOG" SWIFT_BIN="$SWIFT_BIN" \
     "$FIXTURE/scripts/build-app.sh" > "$TEMP_ROOT/valid-build.out"
 [[ -f "$FIXTURE/build/$CURRENT_APPNAME.app/Contents/MacOS/$CURRENT_APPNAME" ]] || fail "valid app name did not produce the expected fixture bundle"
 [[ -f "$FIXTURE/build/$CURRENT_APPNAME.app/Contents/MacOS/EmbedHelper" ]] || fail "valid build omitted EmbedHelper"
+SPARKLE_SOURCE="$FIXTURE/.build/artifacts/sparkle/Sparkle/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_BUNDLE="$FIXTURE/build/$CURRENT_APPNAME.app/Contents/Frameworks/Sparkle.framework"
+[[ -f "$SPARKLE_BUNDLE/Versions/B/Sparkle" ]] || fail "valid build did not embed the fixture Sparkle framework"
+grep -Fq "ditto $SPARKLE_SOURCE $SPARKLE_BUNDLE" "$MOCK_LOG" || fail "valid build did not copy the discovered Sparkle artifact"
+grep -Fq "install_name_tool -delete_rpath $FIXTURE/.build/checkouts/Sparkle" "$MOCK_LOG" || fail "valid build did not remove the SwiftPM build rpath"
+grep -Fq "install_name_tool -delete_rpath /Users/fixture/Library/Frameworks" "$MOCK_LOG" || fail "valid build did not remove the developer-home rpath"
+grep -Fq "install_name_tool -add_rpath @executable_path/../Frameworks" "$MOCK_LOG" || fail "valid build did not add the embedded-framework rpath"
 
 # The install wrapper rejects the name before calling even a stub build command.
 mv "$FIXTURE/scripts/build-app.sh" "$FIXTURE/scripts/build-app.real"
