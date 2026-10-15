@@ -130,6 +130,7 @@ jobs:
       - name: Build, sign and verify release
         env:
           RELEASE_FROM_TAG: "1"
+          CAPTURE_CHECKS_ALLOW_OCR_SKIP: "1"
           SIGN_KEYCHAIN: ${{ runner.temp }}/signing.keychain-db
           SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.SIGNING_KEYCHAIN_PASSWORD }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}

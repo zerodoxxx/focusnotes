@@ -100,6 +100,17 @@ func checkPasteboard() throws {
 
 func checkOCRAndClassifier() async throws {
     let fixtures = try Fixtures.make()
+    // GitHub's macOS VMs have no working Vision text recognizer. CI opts in to skipping
+    // only when recognition itself is unavailable; wrong OCR results still fail.
+    if ProcessInfo.processInfo.environment["CAPTURE_CHECKS_ALLOW_OCR_SKIP"] == "1" {
+        do {
+            _ = try await OCR.recognize(image: fixtures[0].image)
+        } catch {
+            print("OCR: SKIP (Vision text recognition is unavailable here: \(error))")
+            print("Classifier: SKIP (needs OCR results)")
+            return
+        }
+    }
     var results: [(Fixture, OCRResult, CaptureClassification)] = []
     for fixture in fixtures {
         // Exercise both the PNG-data and CGImage public entry points.

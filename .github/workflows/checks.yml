@@ -49,6 +49,9 @@ jobs:
       # Known flaky: `swift run OverlayGallery --check` (run inside release.sh --adhoc) can fail
       # intermittently. If this step fails there, re-run the job; do not special-case it here.
       - name: Checks and ad-hoc DMG
+        env:
+          # Vision OCR does not work in GitHub's macOS VMs; CaptureChecks then skips only OCR.
+          CAPTURE_CHECKS_ALLOW_OCR_SKIP: "1"
         run: scripts/release.sh --adhoc
 
       - name: Upload dist
