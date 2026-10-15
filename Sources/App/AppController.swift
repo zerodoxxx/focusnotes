@@ -74,7 +74,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         process.arguments = [
             "-c",
             "parent_pid=\"$1\"; app_path=\"$2\"; while /bin/kill -0 \"$parent_pid\" 2>/dev/null; do /bin/sleep 0.1; done; exec /usr/bin/open -n \"$app_path\"",
-            "focusnotes-relaunch",
+            "relaunch-helper",
             String(ProcessInfo.processInfo.processIdentifier),
             Bundle.main.bundlePath,
         ]
