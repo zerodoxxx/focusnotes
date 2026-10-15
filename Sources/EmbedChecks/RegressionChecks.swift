@@ -145,7 +145,10 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     for stage in ["resource initialization", "post-embedding ranking/hit lookup"] {
         start = ContinuousClock.now
         let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slowSynchronousStage() }
-        checks.require(result == "empty" && start.duration(to: .now) < .milliseconds(500), "whole-search deadline includes \(stage)")
+        let elapsed = start.duration(to: .now)
+        let passed = result == "empty" && elapsed < .milliseconds(500)
+        let diagnostic = passed ? "" : " (returned \(result) after \(elapsed))"
+        checks.require(passed, "whole-search deadline includes \(stage)\(diagnostic)")
     }
     let healthy = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { "complete" }
     checks.require(healthy == "complete", "healthy semantic work wins deadline")
