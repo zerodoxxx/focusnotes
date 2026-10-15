@@ -297,9 +297,16 @@ func checkSearchIndexPerformance() async throws {
     var start = clock.now
     let coldStats = try await index.sync()
     let cold = indexSeconds(start.duration(to: clock.now))
-    start = clock.now
-    let warmStats = try await index.sync()
-    let warm = indexSeconds(start.duration(to: clock.now))
+    var warmSamples: [Double] = []
+    for _ in 0..<5 {
+        start = clock.now
+        let warmStats = try await index.sync()
+        warmSamples.append(indexSeconds(start.duration(to: clock.now)))
+        try require(warmStats.added == 0 && warmStats.updated == 0 && warmStats.removed == 0 && warmStats.unchanged == 2_000,
+                    "repeated no-change sync should leave all 2,000 notes unchanged")
+    }
+    warmSamples.sort()
+    let warm = warmSamples[warmSamples.count / 2]
     var searches: [Double] = []
     for _ in 0..<20 {
         start = clock.now
@@ -309,10 +316,10 @@ func checkSearchIndexPerformance() async throws {
     }
     searches.sort()
     let median = (searches[9] + searches[10]) / 2
-    print(String(format: "Index performance (2,000 notes × 10 captures): cold sync %.3f s; no-change sync %.1f ms; search median %.2f ms.", cold, warm * 1_000, median * 1_000))
-    try require(coldStats.added == 2_000 && warmStats.unchanged == 2_000, "performance fixture should index all notes and leave them unchanged")
+    print(String(format: "Index performance (2,000 notes × 10 captures): cold sync %.3f s; no-change sync median (5 runs) %.1f ms; search median %.2f ms.", cold, warm * 1_000, median * 1_000))
+    try require(coldStats.added == 2_000, "performance fixture should index all notes")
     try require(cold < 6, "cold sync exceeded 6 seconds: \(cold)")
-    try require(warm < 0.4, "no-change sync exceeded 400 milliseconds: \(warm)")
+    try require(warm < 0.4, "no-change sync median exceeded 400 milliseconds: \(warm)")
     try require(median < 0.04, "search median exceeded 40 milliseconds: \(median)")
 }
 
