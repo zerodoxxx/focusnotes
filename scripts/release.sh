@@ -311,7 +311,7 @@ if [[ "$ADHOC" == 0 ]]; then
     [[ -f "$APPCAST" ]] || fail "generate_appcast did not write $APPCAST"
     check "appcast.xml enclosure is EdDSA-signed" grep -Fq 'sparkle:edSignature=' "$APPCAST"
     check "appcast.xml points at $DMG_NAME on release v$VERSION" grep -Fq "url=\"https://github.com/$GITHUB_REPO/releases/download/v$VERSION/$DMG_NAME\"" "$APPCAST"
-    check "appcast.xml sparkle:version == $BUILD" grep -Fq "sparkle:version=\"$BUILD\"" "$APPCAST"
+    check "appcast.xml sparkle:version == $BUILD" grep -Fq "<sparkle:version>$BUILD</sparkle:version>" "$APPCAST"
 fi
 
 # Mounted verify: the DMG must contain the signed app and an Applications link.
