@@ -9,18 +9,18 @@ public enum SemanticDeadline {
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
-                let deadline = ContinuousClock.now.advanced(by: timeout)
-                let timer = Task.detached(priority: .userInitiated) {
-                    do { try await ContinuousClock().sleep(until: deadline) }
-                    catch { return }
-                    race.finish(fallback)
-                }
-                race.track(timer)
+                // The timer lives on GCD, not the cooperative pool, so synchronous
+                // work that saturates the pool cannot delay the fallback. Firing
+                // after the race has finished is a no-op.
+                let (seconds, attoseconds) = timeout.components
+                let nanoseconds = max(0, seconds) * 1_000_000_000 + max(0, attoseconds) / 1_000_000_000
+                DispatchQueue.global(qos: .userInitiated)
+                    .asyncAfter(deadline: .now() + .nanoseconds(Int(nanoseconds))) { race.finish(fallback) }
                 let work = Task.detached(priority: .userInitiated) {
                     guard !Task.isCancelled, !race.isFinished else { return }
                     race.finish(await operation())
                 }
-                race.track(work)
+                race.track { work.cancel() }
             }
         } onCancel: { race.finish(fallback) }
     }
@@ -31,7 +31,7 @@ private final class DeadlineRace<Value: Sendable>: @unchecked Sendable {
     private let fallback: Value
     private var continuation: CheckedContinuation<Value, Never>?
     private var finished = false
-    private var tasks: [Task<Void, Never>] = []
+    private var cancellers: [@Sendable () -> Void] = []
 
     init(fallback: Value) { self.fallback = fallback }
     var isFinished: Bool { lock.withLock { finished } }
@@ -45,24 +45,24 @@ private final class DeadlineRace<Value: Sendable>: @unchecked Sendable {
         if ended { continuation.resume(returning: fallback) }
     }
 
-    func track(_ task: Task<Void, Never>) {
+    func track(_ cancel: @escaping @Sendable () -> Void) {
         let ended = lock.withLock {
             if finished { return true }
-            tasks.append(task)
+            cancellers.append(cancel)
             return false
         }
-        if ended { task.cancel() }
+        if ended { cancel() }
     }
 
     func finish(_ value: Value) {
-        let state = lock.withLock { () -> (CheckedContinuation<Value, Never>?, [Task<Void, Never>]) in
+        let state = lock.withLock { () -> (CheckedContinuation<Value, Never>?, [@Sendable () -> Void]) in
             guard !finished else { return (nil, []) }
             finished = true
-            let state = (continuation, tasks)
-            continuation = nil; tasks = []
+            let state = (continuation, cancellers)
+            continuation = nil; cancellers = []
             return state
         }
-        state.1.forEach { $0.cancel() }
+        state.1.forEach { $0() }
         state.0?.resume(returning: value)
     }
 }

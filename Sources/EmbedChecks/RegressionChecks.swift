@@ -94,7 +94,7 @@ private func requests(in directory: URL) throws -> [EmbedRequest] {
     }
 }
 
-private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seconds(3)) async throws {
+nonisolated(nonsending) private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seconds(3)) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !(try condition()) {
         guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
@@ -132,10 +132,22 @@ private actor BusyStage {
     func hold(_ marker: StageMarker) { marker.mark(); usleep(700_000) }
     func lookup() -> String { "complete" }
 }
-private func slowSynchronousStage() -> String { usleep(700_000); return "complete" }
+private final class SlowStages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var running: Bool { lock.withLock { count > 0 } }
+    func run() -> String {
+        lock.withLock { count += 1 }
+        defer { lock.withLock { count -= 1 } }
+        usleep(700_000); return "complete"
+    }
+}
 
-func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
-    let actor = BusyStage(), marker = StageMarker()
+/// Main-actor isolated so the caller never needs a cooperative-pool thread to
+/// resume: the blocking stages below may hold every one on small CI runners.
+@MainActor
+private func runDeadlineChecks(_ checks: inout Checks) async throws {
+    let actor = BusyStage(), marker = StageMarker(), slow = SlowStages()
     let holding = Task.detached { await actor.hold(marker) }
     try await waitUntil { marker.started }
     var start = ContinuousClock.now
@@ -144,21 +156,28 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     await holding.value
     for stage in ["resource initialization", "post-embedding ranking/hit lookup"] {
         start = ContinuousClock.now
-        let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slowSynchronousStage() }
+        let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slow.run() }
         let elapsed = start.duration(to: .now)
         let passed = result == "empty" && elapsed < .milliseconds(500)
         let diagnostic = passed ? "" : " (returned \(result) after \(elapsed))"
         checks.require(passed, "whole-search deadline includes \(stage)\(diagnostic)")
+        try await waitUntil { !slow.running }
     }
     let healthy = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { "complete" }
     checks.require(healthy == "complete", "healthy semantic work wins deadline")
     let cancelled = Task {
-        await SemanticDeadline.run(timeout: .seconds(5), fallback: "empty") { slowSynchronousStage() }
+        await SemanticDeadline.run(timeout: .seconds(5), fallback: "empty") { slow.run() }
     }
     try await Task.sleep(for: .milliseconds(20))
     start = .now; cancelled.cancel()
     let cancelledResult = await cancelled.value
     checks.require(cancelledResult == "empty" && start.duration(to: .now) < .milliseconds(100), "search cancellation returns without draining synchronous work")
+    try await waitUntil { !slow.running }
+}
+
+func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
+    try await runDeadlineChecks(&checks)
+    var start: ContinuousClock.Instant
 
     // Old stores have no model identity, so their vectors cannot be safely reused.
     let legacyURL = root.appendingPathComponent("legacy.sqlite")
