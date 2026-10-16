@@ -17,7 +17,7 @@ print(message)
 
 @MainActor
 func checkMarkdownStyler() throws {
-    let text = editorSample + "\n# One\n### Three\n#### Four\n####### Deep\n__strong__ _emphasis_\n1. Numbered\n+ Plus\nhttps://example.org\n😀 **unicode**"
+    let text = editorSample + "\n# One\n### Three\n#### Four\n####### Deep\n__strong__ _emphasis_\n1. Numbered\n+ Plus\n  - [ ] Nested task\n    - [x] Deeper task\n  - Nested bullet\nhttps://example.org\n😀 **unicode**"
     let source = text as NSString
     let result = NSMutableAttributedString(string: text, attributes: MarkdownStyler.baseAttributes)
     let spans = MarkdownStyler.styles(text)
@@ -54,6 +54,25 @@ func checkMarkdownStyler() throws {
     try expect((try attrs("- [ ]")[.foregroundColor] as? NSColor) == OverlayTheme.secondaryColor, "Task marker range")
     try expect((try attrs("Reviewed")[.strikethroughStyle] as? Int) == NSUnderlineStyle.single.rawValue, "Completed task strike")
     try expect((try attrs("Reviewed")[.foregroundColor] as? NSColor) == OverlayTheme.secondaryColor, "Completed task color")
+    let checkboxTextIndent = OverlayTheme.editorCheckboxSize + OverlayTheme.editorCheckboxGap
+    for token in ["Nested task", "Deeper task"] {
+        let task = try attrs(token)
+        let taskText = source.range(of: token)
+        let taskLine = source.lineRange(for: taskText)
+        let taskMarker = source.range(of: "- [", range: taskLine)
+        let indentation = taskMarker.location == NSNotFound ? -1
+            : result.attribute(MarkdownStyler.taskIndent, at: taskMarker.location, effectiveRange: nil) as? CGFloat ?? -1
+        let preview = task[MarkdownStyler.previewParagraph] as? NSParagraphStyle
+        try expect(indentation > 0 && preview != nil, "Nested task checkbox style: \(token)")
+        try expect(abs((preview?.firstLineHeadIndent ?? -1) - checkboxTextIndent) < 0.001,
+                   "Nested task first-line indent must not count visible Markdown spaces twice: \(token)")
+        try expect(abs((preview?.headIndent ?? -1) - indentation - checkboxTextIndent) < 0.001,
+                   "Wrapped nested task lines must align after the checkbox and list indentation: \(token)")
+    }
+    let nestedBulletIndent = (try attrs("Nested bullet")[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
+    let rootBulletIndent = (try attrs("A long")[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
+    try expect(nestedBulletIndent > rootBulletIndent,
+               "Nested bullet hanging indent must retain its existing marker spacing")
     try expect((try attrs("> ")[.foregroundColor] as? NSColor) == OverlayTheme.tertiaryColor, "Quote marker")
     try expect((try attrs("Keep")[.paragraphStyle] as? NSParagraphStyle)?.headIndent == OverlayTheme.editorQuoteIndent, "Quote indent")
     try expect((try attrs("link")[.foregroundColor] as? NSColor) == OverlayTheme.editorLinkColor, "Link text range")

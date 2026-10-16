@@ -199,8 +199,11 @@ public enum MarkdownStyler {
                     let checked = markerText.lowercased().contains("[x]")
                     let indentation = (source.substring(with: list.range(at: 1)) as NSString).size(withAttributes: [.font: OverlayTheme.editorFont]).width
                     let preview = paragraph.mutableCopy() as! NSMutableParagraphStyle
-                    preview.firstLineHeadIndent = indentation + OverlayTheme.editorCheckboxSize + OverlayTheme.editorCheckboxGap
-                    preview.headIndent = preview.firstLineHeadIndent
+                    // Leading Markdown spaces remain visible while the task marker is hidden.
+                    // They already move the first-line text, so only wrapped lines need the
+                    // explicit list indentation in addition to the checkbox and its gap.
+                    preview.firstLineHeadIndent = OverlayTheme.editorCheckboxSize + OverlayTheme.editorCheckboxGap
+                    preview.headIndent = indentation + preview.firstLineHeadIndent
                     add(line, [rawParagraph: paragraph, previewParagraph: preview])
                     add(itemMarker, [syntax: true, Self.element: blockElement, task: checked, taskIndent: indentation])
                 }
