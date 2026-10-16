@@ -78,9 +78,12 @@ results above do not replace them. See [releasing.md](releasing.md).
 - [ ] Sparkle "Check for Updates…" finds the new version from the published
   `appcast.xml`.
 - [ ] The in-app semantic model download completes on a clean account.
-- [ ] CI runs `checks.yml` on pushes and pull requests, and `release.yml`
-  tags, builds and drafts a release when a version bump is merged to `main`.
-  Confirm both on GitHub Actions before the first public release.
+- [ ] CI runs `checks.yml` on pushes and pull requests. Confirm that
+  `release.yml` can be manually started, prepare a version branch and pull
+  request, and build, attest, and draft the release after that PR is merged.
+  Confirm the required PR checks and review, draft assets, and appcast before
+  publishing. If Actions cannot create the PR, confirm its summary includes a
+  compare link and open the PR manually.
 - [ ] After making the repository public, enable GitHub private vulnerability
   reporting (Settings → Security and quality → Advanced Security → Private
   vulnerability reporting, or

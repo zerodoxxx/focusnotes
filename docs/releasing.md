@@ -70,28 +70,58 @@ output contains `SKIP`.
 
 ## Per release
 
-### 1. Bump the version and merge
+### 1. Merge the code you want to release
 
-On a branch, set `VERSION` and increase `BUILD` in `Config/app.env`. `BUILD` must
-always go up. Update `CHANGELOG.md`, then merge to `main`.
+Merge ordinary code changes to `main` as usual. Pushing code does not start a
+release.
 
-### 2. Let the release workflow build the draft
+### 2. Start a release from GitHub Actions
 
-Merging a change to `Config/app.env` on `main` starts
-`.github/workflows/release.yml`. If the tag `v<version>` does not exist yet, the
-workflow:
+Open **Actions → Release → Run workflow** on the default branch and enter the
+version without the leading `v` (for example, `0.1.2`). For a new release, use
+a stable `major.minor.patch` version greater than the current `VERSION` in
+`Config/app.env`. To retry a failed version after its tag and release have been
+cleared, enter that same version; `BUILD` still increments.
 
-- tags `v<version>` on the merged commit and pushes the tag;
+The workflow first checks that the selected default-branch commit is current
+and that neither a tag nor a GitHub release already uses `v<version>`. It then
+increments `BUILD`, updates `VERSION` and `BUILD` in `Config/app.env`, and pushes
+a version commit to a release branch, then tries to open a pull request for it.
+Review and merge the PR using the normal checks and approval rules. This keeps
+the version commit on `main` without bypassing branch protection.
+
+This repository currently disables automatic pull request creation by
+`GITHUB_TOKEN`. If the workflow cannot open the PR, it leaves the commit on its
+release branch and puts a compare link in the run summary. Open that link and
+create the PR manually. A repository admin may enable **Settings → Actions →
+General → Allow GitHub Actions to create and approve pull requests** as a
+one-time convenience. If enabled, GitHub may require a maintainer to approve
+the CI runs created by the bot PR before they can satisfy required checks.
+
+Merging the version PR to `main` starts the release build for the resulting
+merge commit. Ordinary code merges do not start a release. The workflow:
+
 - runs `scripts/release.sh` in tag mode: all checks, the build, signing, the
   bundle checks and the DMG verification described in `release.sh` below;
-- attests the DMG and creates a **draft** release with the DMG,
+- attests the DMG, pushes tag `v<version>`, and creates a **draft** release with the DMG,
   `SHA256SUMS.txt`, `appcast.xml` and generated notes.
 
-If the run fails, the workflow deletes the tag it pushed, so the same version
-can be released again. Fix the cause, then start the workflow manually with
-**Actions → release on version bump → Run workflow** on `main`. A retry builds
-the current tip of `main`, so retry only when `main` contains nothing you do not
-want in this release. If the tag already exists, the run does nothing.
+Review and test the draft, then publish it in GitHub. A regular merge can happen
+at any time; the release includes the code on `main` when its version commit is
+merged. If a build fails and leaves no tag or release, run **Release → Run
+workflow** again with the same version to create a PR that increments `BUILD`;
+merge it to retry. The workflow removes its own tag only when GitHub confirms
+that no release exists for it. If a release exists or GitHub cannot confirm its
+state, the workflow leaves the release and tag untouched; inspect and resolve
+that state before retrying. `BUILD` always goes up.
+
+This repository already has a tag and empty release for `v0.1.1`, so that
+version cannot be reused. Choose an unused version such as `0.1.2` for the next
+release.
+
+The workflow writes only to a release branch and opens a PR; the version commit
+reaches the default branch through the usual review and merge process. Its
+release job runs only for a push to `main` that changes `Config/app.env`.
 
 You can also build on your Mac with `scripts/release.sh`. Run it on a clean tree
 at the bump commit, with no local or remote tag `v<version>`. The script creates
@@ -166,15 +196,18 @@ already installed the bad build.
 
 CI is set up but gated. The workflows run on GitHub Actions.
 
-Both workflows run on the `xcode-27` GitHub-hosted runner (Xcode 27, Swift 6.4).
-Each one checks the Swift version before it builds.
+The checks workflow runs on the `xcode-27` GitHub-hosted runner (Xcode 27,
+Swift 6.4) and checks that toolchain before it builds. The release workflow
+uses `ubuntu-latest` to prepare a version branch and PR, then builds on
+`xcode-27` after that PR changes `Config/app.env` on `main`.
 
 - `.github/workflows/checks.yml` runs the checks on pushes to `main` and on pull requests.
-- `.github/workflows/release.yml` runs when `Config/app.env` changes on `main`,
-  or manually with `workflow_dispatch`. When `v<version>` is absent, it tags the
-  commit, imports the signing identity from secrets, builds with
-  `scripts/release.sh` in tag mode, attests the DMG, and creates the draft
-  release. A failed run deletes the tag it pushed.
+- `.github/workflows/release.yml` runs only when manually started with a
+  version input to prepare a version commit and PR. After that PR is merged,
+  the workflow imports the signing identity from secrets, builds the merge
+  commit with `scripts/release.sh` in tag mode, attests the DMG, and creates the
+  draft release. A failed run removes only its own tag when no release exists
+  for it; existing releases and tags are left untouched.
 
 Secrets used by `release.yml`:
 

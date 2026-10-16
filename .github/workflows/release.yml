@@ -1,36 +1,245 @@
-name: release on version bump
+name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v (for example, 0.1.2)
+        required: true
+        type: string
   push:
     branches: [main]
-  # Every push to main runs `detect`; it builds a draft release only when v<VERSION>
-  # has no tag, so a failed release retries on the next merge without a manual dispatch.
-  # Publishing the draft stays a manual click.
-  workflow_dispatch:
+    paths:
+      - Config/app.env
 
 permissions:
   contents: read
 
-# Runs for different versions must not overlap; never cancel a release in progress.
+# Do not overlap version preparation with a release already in progress.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  detect:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      release: ${{ steps.version.outputs.release }}
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Read version and check for an existing tag
-        id: version
+      - name: Prepare version commit and pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+
+          [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] || {
+            echo "Run this workflow from the default branch ($DEFAULT_BRANCH)." >&2
+            exit 1
+          }
+
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          checked_out_commit="$(git rev-parse HEAD)"
+          latest_commit="$(git rev-parse FETCH_HEAD)"
+          [[ "$checked_out_commit" == "$GITHUB_SHA" && "$latest_commit" == "$GITHUB_SHA" ]] || {
+            echo "The selected default-branch commit is stale. Start a new run from the latest $DEFAULT_BRANCH." >&2
+            exit 1
+          }
+
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "Version must use stable major.minor.patch form without a leading v, for example 0.1.2." >&2
+            exit 1
+          }
+
+          current_version=""
+          current_build=""
+          while IFS= read -r line; do
+            key="${line%%=*}"
+            value="${line#*=}"
+            case "$key" in
+              VERSION) current_version="$value" ;;
+              BUILD) current_build="$value" ;;
+            esac
+          done < Config/app.env
+          [[ "$current_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "VERSION in Config/app.env is not a stable major.minor.patch version." >&2
+            exit 1
+          }
+          [[ "$current_build" =~ ^[1-9][0-9]*$ ]] || {
+            echo "BUILD in Config/app.env must be a positive integer." >&2
+            exit 1
+          }
+
+          if [[ "$RELEASE_VERSION" != "$current_version" ]]; then
+            lowest_version="$(printf '%s\n' "$current_version" "$RELEASE_VERSION" | sort -V | head -n 1)"
+            [[ "$lowest_version" == "$current_version" ]] || {
+              echo "Requested version $RELEASE_VERSION is older than Config/app.env VERSION=$current_version." >&2
+              exit 1
+            }
+          fi
+
+          tag="v$RELEASE_VERSION"
+          set +e
+          tag_refs="$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" 2>&1)"
+          tag_status=$?
+          set -e
+          case "$tag_status" in
+            0)
+              echo "Tag $tag already exists. Choose a version that has never been tagged." >&2
+              exit 1
+              ;;
+            2) ;;
+            *)
+              echo "$tag_refs" >&2
+              echo "Could not check whether $tag already exists on origin." >&2
+              exit 1
+              ;;
+          esac
+
+          release_error="$RUNNER_TEMP/release-lookup-error.txt"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" >/dev/null 2>"$release_error"; then
+            echo "A GitHub release for $tag already exists. Choose a version that has never been released." >&2
+            exit 1
+          elif ! grep -q 'HTTP 404' "$release_error"; then
+            cat "$release_error" >&2
+            echo "Could not check whether a GitHub release for $tag already exists." >&2
+            exit 1
+          fi
+
+          next_build=$((current_build + 1))
+          branch="codex-release-v${RELEASE_VERSION}-build${next_build}-${GITHUB_RUN_ID}"
+          open_release_prs="$(gh pr list --repo "$GH_REPO" --base "$DEFAULT_BRANCH" --state open --json headRefName,url --jq '.[] | select(.headRefName | startswith("codex-release-v")) | [.headRefName, .url] | @tsv')"
+          while IFS=$'\t' read -r open_branch open_url; do
+            [[ -n "$open_branch" ]] || continue
+            if [[ "$open_branch" == "$branch" ]]; then
+              {
+                echo "## Version pull request is ready"
+                echo "Existing PR: $open_url"
+                echo
+                echo "Review and merge it to start the release build."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "Version pull request already exists: $open_url"
+              exit 0
+            fi
+            echo "Another release version PR is open: $open_url. Merge or close it before starting another release." >&2
+            exit 1
+          done <<< "$open_release_prs"
+
+          compare_url="https://github.com/$GH_REPO/compare/$DEFAULT_BRANCH...$branch?expand=1"
+          set +e
+          existing_branch="$(git ls-remote --exit-code --heads origin "refs/heads/$branch" 2>&1)"
+          branch_status=$?
+          set -e
+          case "$branch_status" in
+            0)
+              {
+                echo "## Version pull request needs manual creation"
+                echo "The version branch already exists: [open a PR]($compare_url)"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "Branch $branch already exists without an open PR. Inspect it and open a PR: $compare_url" >&2
+              exit 1
+              ;;
+            2) ;;
+            *)
+              echo "$existing_branch" >&2
+              echo "Could not check whether branch $branch already exists." >&2
+              exit 1
+              ;;
+          esac
+
+          updated_env="$(mktemp)"
+          awk -v version="$RELEASE_VERSION" -v build="$next_build" '
+            /^VERSION=/ { print "VERSION=" version; version_found=1; next }
+            /^BUILD=/ { print "BUILD=" build; build_found=1; next }
+            { print }
+            END {
+              if (!version_found || !build_found) exit 1
+            }
+          ' Config/app.env > "$updated_env"
+          mv "$updated_env" Config/app.env
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add Config/app.env
+          git commit -m "Bump version to $RELEASE_VERSION (build $next_build)"
+          if ! git push origin "HEAD:refs/heads/$branch"; then
+            echo "Could not push the version branch. Check that this workflow can write repository contents; main was not changed." >&2
+            exit 1
+          fi
+
+          pr_body="$RUNNER_TEMP/release-pr-body.md"
+          cat > "$pr_body" <<EOF
+          This PR prepares release v$RELEASE_VERSION (build $next_build).
+
+          Merging it to $DEFAULT_BRANCH starts the signed release build and creates a draft release for review.
+          EOF
+
+          if pr_url="$(gh pr create --repo "$GH_REPO" --base "$DEFAULT_BRANCH" --head "$branch" --title "Release v$RELEASE_VERSION (build $next_build)" --body-file "$pr_body" 2>&1)"; then
+            {
+              echo "## Version pull request is ready"
+              echo "Review and merge: $pr_url"
+              echo
+              echo "After merge, the release workflow will build and create a draft release."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Version pull request: $pr_url"
+          else
+            pr_error="$pr_url"
+            existing_pr="$(gh pr list --repo "$GH_REPO" --head "$branch" --base "$DEFAULT_BRANCH" --state open --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+            if [[ -n "$existing_pr" ]]; then
+              {
+                echo "## Version pull request is ready"
+                echo "Review and merge: $existing_pr"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "Version pull request exists: $existing_pr"
+            else
+              {
+                echo "## Version branch is ready; pull request needs manual creation"
+                echo "The version commit is on `$branch`: [open a PR]($compare_url)"
+                echo
+                echo "The repository currently disables GitHub Actions pull request creation. A maintainer can open the PR manually, or enable the one-time Actions setting."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "The version branch was pushed, but no PR was confirmed. Open it manually: $compare_url" >&2
+              echo "A repository admin can enable Settings → Actions → General → Allow GitHub Actions to create and approve pull requests for automatic creation." >&2
+              echo "$pr_error" >&2
+              exit 1
+            fi
+          fi
+
+  release:
+    if: github.event_name == 'push'
+    # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
+    runs-on: xcode-27
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Read version and check for an existing release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] || {
+            echo "Release builds run only from the default branch ($DEFAULT_BRANCH)." >&2
+            exit 1
+          }
+
           version=""
           build=""
           while IFS= read -r line; do
@@ -41,40 +250,47 @@ jobs:
               BUILD) build="$value" ;;
             esac
           done < Config/app.env
-          [[ -n "$version" ]] || { echo "VERSION is missing in Config/app.env" >&2; exit 1; }
-          [[ -n "$build" ]] || { echo "BUILD is missing in Config/app.env" >&2; exit 1; }
-          echo "VERSION=$version BUILD=$build"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "VERSION in Config/app.env must use stable major.minor.patch form." >&2
+            exit 1
+          }
+          [[ "$build" =~ ^[1-9][0-9]*$ ]] || {
+            echo "BUILD in Config/app.env must be a positive integer." >&2
+            exit 1
+          }
 
+          tag="v$version"
           set +e
-          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null
-          rc=$?
+          tag_refs="$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" 2>&1)"
+          tag_status=$?
           set -e
-          case "$rc" in
-            0) release=false; echo "Tag v$version already exists; nothing to release" ;;
-            2) release=true; echo "Tag v$version is absent; releasing" ;;
-            *) echo "git ls-remote failed (exit $rc)" >&2; exit 1 ;;
+          case "$tag_status" in
+            0)
+              echo "Tag $tag already exists. The version PR cannot be released; choose a new version." >&2
+              exit 1
+              ;;
+            2) ;;
+            *)
+              echo "$tag_refs" >&2
+              echo "Could not check whether $tag already exists on origin." >&2
+              exit 1
+              ;;
           esac
+
+          release_error="$RUNNER_TEMP/release-lookup-error.txt"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" >/dev/null 2>"$release_error"; then
+            echo "A GitHub release for $tag already exists. No files were changed." >&2
+            exit 1
+          elif ! grep -q 'HTTP 404' "$release_error"; then
+            cat "$release_error" >&2
+            echo "Could not check whether a GitHub release for $tag already exists." >&2
+            exit 1
+          fi
 
           {
             echo "version=$version"
-            echo "release=$release"
+            echo "build=$build"
           } >> "$GITHUB_OUTPUT"
-
-  release:
-    needs: detect
-    if: needs.detect.outputs.release == 'true'
-    # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
-    runs-on: xcode-27
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    env:
-      VERSION: ${{ needs.detect.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Select Xcode 27 (Swift 6.4)
         run: sudo xcode-select -s /Applications/Xcode_27.app
@@ -121,13 +337,20 @@ jobs:
           printf '%s' "$SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/identity.p12"
           scripts/import-signing-identity.sh "$RUNNER_TEMP/identity.p12" "$RUNNER_TEMP/signing.keychain-db"
 
-      - name: Tag the version
+      - name: Tag the version locally
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
+            echo "Tag v$VERSION appeared after preflight; no tag was created by this run." >&2
+            exit 1
+          fi
           git tag -a "v$VERSION" -m "focusnotes $VERSION"
-          git push origin "v$VERSION"
+          echo "created=true" >> "$GITHUB_OUTPUT"
 
       - name: Build, sign and verify release
         env:
@@ -143,10 +366,18 @@ jobs:
         with:
           subject-path: dist/*.dmg
 
+      - name: Push release tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git push origin "refs/tags/v$VERSION:refs/tags/v$VERSION"
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           appname="$(sed -n 's/^APPNAME=//p' Config/app.env | head -n 1)"
@@ -159,10 +390,30 @@ jobs:
           rm -f "$RUNNER_TEMP/identity.p12"
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
-      - name: Delete the tag after a failed run
+      - name: Delete this run's tag after a failed release
         if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG_CREATED: ${{ steps.tag.outputs.created }}
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
-            git push --delete origin "v$VERSION"
+          [[ "$TAG_CREATED" == "true" ]] || exit 0
+          tag="v$VERSION"
+          if ! local_tag="$(git rev-parse --verify "refs/tags/$tag" 2>/dev/null)"; then
+            exit 0
           fi
+          remote_tag="$(git ls-remote origin "refs/tags/$tag" | awk 'NR == 1 { print $1 }')"
+          [[ -n "$remote_tag" && "$remote_tag" == "$local_tag" ]] || exit 0
+
+          release_error="$RUNNER_TEMP/release-cleanup-error.txt"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" >/dev/null 2>"$release_error"; then
+            echo "A release for $tag exists; leaving the release and tag untouched. Inspect it before retrying." >&2
+            exit 0
+          elif ! grep -q 'HTTP 404' "$release_error"; then
+            cat "$release_error" >&2
+            echo "Could not confirm whether a release for $tag exists; leaving the tag in place." >&2
+            exit 1
+          fi
+          git push origin --delete "refs/tags/$tag"
