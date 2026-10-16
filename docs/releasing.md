@@ -90,13 +90,15 @@ a version commit to a release branch, then tries to open a pull request for it.
 Review and merge the PR using the normal checks and approval rules. This keeps
 the version commit on `main` without bypassing branch protection.
 
-This repository currently disables automatic pull request creation by
-`GITHUB_TOKEN`. If the workflow cannot open the PR, it leaves the commit on its
-release branch and puts a compare link in the run summary. Open that link and
-create the PR manually. A repository admin may enable **Settings → Actions →
-General → Allow GitHub Actions to create and approve pull requests** as a
-one-time convenience. If enabled, GitHub may require a maintainer to approve
-the CI runs created by the bot PR before they can satisfy required checks.
+If GitHub blocks `GITHUB_TOKEN` from creating the PR with the expected
+permission error, the workflow succeeds with a warning, leaves the commit on
+its release branch, and puts a compare link in the run summary. Open that link
+and create the PR manually; the release does not start until the PR is merged.
+Unexpected PR-creation errors still fail the run and include the same recovery
+link. A repository admin can review the setting under **Settings → Actions →
+General → Allow GitHub Actions to create and approve pull requests**. GitHub may
+require a maintainer to approve the CI runs created by a bot PR before they can
+satisfy required checks.
 
 Merging the version PR to `main` starts the release build for the resulting
 merge commit. Ordinary code merges do not start a release. The workflow:

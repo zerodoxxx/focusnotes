@@ -82,8 +82,9 @@ results above do not replace them. See [releasing.md](releasing.md).
   `release.yml` can be manually started, prepare a version branch and pull
   request, and build, attest, and draft the release after that PR is merged.
   Confirm the required PR checks and review, draft assets, and appcast before
-  publishing. If Actions cannot create the PR, confirm its summary includes a
-  compare link and open the PR manually.
+  publishing. If the expected Actions permission block prevents automatic PR
+  creation, confirm the run succeeds with a warning and a compare link, then
+  open the PR manually. Unexpected PR-creation errors must remain failed runs.
 - [ ] After making the repository public, enable GitHub private vulnerability
   reporting (Settings → Security and quality → Advanced Security → Private
   vulnerability reporting, or

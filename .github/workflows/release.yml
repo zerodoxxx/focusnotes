@@ -201,16 +201,26 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               echo "Version pull request exists: $existing_pr"
             else
-              {
-                echo "## Version branch is ready; pull request needs manual creation"
-                echo "The version commit is on `$branch`: [open a PR]($compare_url)"
-                echo
-                echo "The repository currently disables GitHub Actions pull request creation. A maintainer can open the PR manually, or enable the one-time Actions setting."
-              } >> "$GITHUB_STEP_SUMMARY"
-              echo "The version branch was pushed, but no PR was confirmed. Open it manually: $compare_url" >&2
-              echo "A repository admin can enable Settings → Actions → General → Allow GitHub Actions to create and approve pull requests for automatic creation." >&2
-              echo "$pr_error" >&2
-              exit 1
+              if [[ "$pr_error" == *"GitHub Actions is not permitted to create or approve pull requests (createPullRequest)"* ]]; then
+                {
+                  echo "## Action required: create the version pull request"
+                  printf 'The version commit for v%s (build %s) is on branch `%s`.\n\n' "$RELEASE_VERSION" "$next_build" "$branch"
+                  printf '[Open a PR from this branch](%s). No release has been built yet.\n\n' "$compare_url"
+                  echo "A repository admin can review Settings → Actions → General → Allow GitHub Actions to create and approve pull requests if this permission block is unexpected or persists."
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::warning title=Manual PR required::The version commit is ready on $branch; open a PR to start the release flow: $compare_url"
+                echo "GitHub blocked PR creation because the repository does not permit the workflow token to create pull requests." >&2
+              else
+                {
+                  echo "## Pull request creation failed"
+                  printf 'The version commit for v%s (build %s) is on branch `%s`.\n\n' "$RELEASE_VERSION" "$next_build" "$branch"
+                  printf '[Open a PR from this branch](%s) to continue.\n\n' "$compare_url"
+                  echo "The automatic PR attempt failed for an unexpected reason; see the workflow log before retrying."
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "Unexpected PR creation failure. The version branch remains available at $compare_url" >&2
+                printf '%s\n' "$pr_error" >&2
+                exit 1
+              fi
             fi
           fi
 
