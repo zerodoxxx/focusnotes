@@ -14,7 +14,8 @@ window keeps focus the whole time, and everything lands in plain Markdown files 
 - **Quick note.** A floating Markdown panel with a live preview. It stays on screen while you work and saves with ⌘↩.
   Include folder segments in the title to save a note in a subfolder.
 - **Sessions.** Start a session for a topic (a course, a paper, a design review) and every capture goes to that
-  topic's note until you end it. Add subheadings to start new sections.
+  topic's note until you end it. A unique existing name resumes its note; duplicate matches open a chooser,
+  while a slash-qualified name picks a path under `Sessions/`. Add subheadings to start new sections.
 - **Search.** Keyword search across all notes, plus optional on-device semantic search.
 - **No focus stealing.** focusnotes never activates itself; every action has a global shortcut and a toast confirms
   the save.
@@ -88,6 +89,13 @@ Focusnotes appends to it. Folder and filename matching ignores case. External no
 used this way are tracked for search and file updates; Focusnotes does not scan your home folder.
 Paths into the reserved `assets/` folder and note names whose final component starts with `~$` are
 rejected.
+
+An unprefixed valid slash-separated name always means a folder path, so names such as
+`10/18 standup` resolve as paths too. For relative names, URL-shaped input and malformed
+slash forms with a trailing/repeated separator or whitespace next to a slash fall back to a
+flat filename. Leading-slash HOME paths keep strict validation.
+If the external-note registry is damaged, unsupported, or unsafe, it is preserved and external
+notes are paused with a warning; notes in the vault remain available.
 
 Timestamps and source details are stored in HTML comments, so the visible text stays clean:
 

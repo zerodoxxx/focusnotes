@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-17 (previous commit: `f3d72362bd81a0875523d78cab8ba06eed830604`)
+Last Updated: 2026-10-18 (previous commit: `962ea7d78abc0298c7d1a66063a3d24476c95d8e`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -37,10 +37,13 @@ Third paragraph.
 
 Browser suffixes are removed from source titles; empty titles fall back to the
 app, then “Unknown source”. Legacy dated capture blocks remain readable and are
-never rewritten. Session notes use `Sessions/<Title>.md`; starting the same cleaned
-filename again, ignoring case, resumes that note. Existing dated session notes
-can also resume in place. Images stay in `assets/`, with `../assets/` links from
-session notes.
+never rewritten. Session notes can live at any depth under `Sessions/`. A unique
+bare-name match resumes at its full path; several matches open a newest-first
+picker with title, path, and modified date. A slash-qualified name such as
+`archive/Standup` resolves directly under `Sessions/`; a missing qualified name
+creates that nested path. Escape cancels without changing session state. Existing
+dated session notes can also resume in place. Images stay in `assets/`, with
+relative `../assets/` links from session notes.
 
 ### Quick-note paths
 
@@ -50,7 +53,11 @@ Relative paths are under the vault, so `science/math/trigonometry` saves to
 home folder: `/Desktop/science/math/trigonometry` saves to
 `~/Desktop/science/math/trigonometry.md`. Missing folders are created. Folder
 and existing filename matching is case-insensitive, and saving to an existing
-note appends the typed note to that file.
+note appends the typed note to that file. Every valid unprefixed slash-separated
+name is folder syntax, including ambiguous prose or dates such as
+`pros/cons of X` and `10/18 standup`. For relative names, URLs, trailing/repeated
+separators, and whitespace adjacent to a slash use the legacy flat filename cleanup;
+malformed leading-slash HOME paths retain strict validation.
 
 Sessions keep their `Sessions/` namespace: a quick note saved while a session is
 active continues to append to that session note. Paths containing traversal
@@ -62,14 +69,18 @@ Vault notes are discovered recursively below the vault, with hidden files and
 the root-level directory named `assets` excluded case-insensitively; nested
 directories named `assets` remain ordinary note folders. Before writing to an
 external destination, Focusnotes records its exact HOME-relative Markdown path
-in a durable registry so journal replay can reuse the destination. At startup,
-safely readable notes at registered paths join the vault's discovered notes;
-missing or unreadable paths are skipped.
+in a durable registry so journal replay can reuse the destination. The registry
+caches a validated path snapshot and generation, invalidated when its file or
+parent changes. At startup, safely readable notes at registered paths join the
+vault's discovered notes; missing or unreadable paths are skipped.
 Search indexes those paths, and the watcher monitors existing parent directories
-of registered external notes. A note directly under HOME may require HOME as the
-FSEvents root; events are filtered to exact registered note paths, so unrelated
-home files are not read, indexed, or reported as note changes. Focusnotes does
-not scan HOME to discover external notes.
+of registered external notes using bounded vnode sources; recursive FSEvents is
+limited to the vault. Missing parents are observed from their nearest existing
+ancestor, and only the registered paths are rechecked on an event. If the registry
+is malformed, unsupported, or unsafe, its bytes are preserved, external notes are
+hidden from search and new external saves are refused with a warning. Vault notes
+remain usable; a valid registry recovery restores external indexing and watching.
+Focusnotes does not scan HOME to discover external notes.
 
 Area OCR uses preferred supported languages with accurate recognition and
 language correction. Classification has a 1.5-second budget: slower OCR stages
@@ -115,5 +126,3 @@ same file and clears the draft after saving, including when the title line was r
 
 The app links macOS's system SQLite and checks for FTS5 when the search index opens. macOS 14 ships SQLite 3.43 or
 newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQLite versions before 3.44.
-
-Last Updated: `ab5df2f`

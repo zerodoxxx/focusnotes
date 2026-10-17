@@ -55,6 +55,11 @@ Use a temporary vault and a disposable test folder under your home directory.
    at `<vault>/science/math/trigonometry.md`, with missing folders created, and
    the note appears in search. Edit the file outside Focusnotes and confirm its
    indexed content updates.
+   Also confirm a valid unprefixed prose/date name such as `pros/cons of X` or
+   `10/18 standup` is interpreted as a folder path. Relative URL-shaped names,
+   `TODO/`, `a//b`, and a relative slash with whitespace beside it should instead
+   save as flat filenames using the legacy cleanup. Verify malformed leading-slash
+   HOME paths still show a path validation error.
 2. **Case-insensitive matching and append:** Create `Science/Algebra.md`, then
    save a quick note titled `science/algebra` with distinctive text. Confirm the
    original folder and filename are reused (no `science/` duplicate and no
@@ -87,6 +92,25 @@ Use a temporary vault and a disposable test folder under your home directory.
    appends under `Sessions/<session title>.md`; it does not create a note at a
    title-derived folder or home-relative path. End the session and confirm a
    standalone quick note uses the path from its title.
+   Create `Sessions/Standup.md` and `Sessions/archive/Standup.md`, start `Standup`,
+   and confirm the chooser lists both titles, paths, and modification dates in
+   newest-first order. Up/Down plus Return resumes the selected full path;
+   Escape leaves the session state and both notes untouched. A unique nested
+   bare-name match resumes its exact path, while `archive/Standup` resolves
+   directly without a chooser. A missing qualified name creates a nested session.
+6. **Registry preservation and recovery:** With a disposable state directory,
+   register two external notes, then replace `external-notes.json` with malformed
+   bytes, version 2, or a symlink. Confirm Focusnotes warns that the registry was
+   preserved, external notes disappear from search, vault notes remain searchable,
+   and an attempted external save is refused with a specific warning. Compare the
+   malformed/versioned file bytes before/after; for the symlink case, confirm the
+   symlink identity and target are unchanged. Restore a valid registry (or remove
+   the unsafe registry to restore a valid empty state), then confirm the warning
+   clears, external indexing and watching recover, and an external save succeeds.
+   Atomically replace a registered note in its parent folder, create an unregistered
+   Markdown sibling there, and churn an unrelated HOME subtree. Confirm the
+   registered replacement is reindexed, while neither the sibling nor unrelated
+   HOME files are indexed or reported as note changes.
 
 # Quick note panel (⌥⇧N)
 
@@ -190,4 +214,4 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    click-away and Space changes. Opening another focusnotes panel, save, esc/✕, Open as Note and
    app quit still close the note.
 
-Last Updated: `ab5df2f`
+Last Updated: 2026-10-18 (previous commit: `962ea7d78abc0298c7d1a66063a3d24476c95d8e`)
