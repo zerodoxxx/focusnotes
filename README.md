@@ -12,6 +12,7 @@ window keeps focus the whole time, and everything lands in plain Markdown files 
 - **Capture area.** Drag over part of the screen to save it as an image. Text in the image is recognised (OCR) and
   becomes searchable.
 - **Quick note.** A floating Markdown panel with a live preview. It stays on screen while you work and saves with ⌘↩.
+  Include folder segments in the title to save a note in a subfolder.
 - **Sessions.** Start a session for a topic (a course, a paper, a design review) and every capture goes to that
   topic's note until you end it. Add subheadings to start new sections.
 - **Search.** Keyword search across all notes, plus optional on-device semantic search.
@@ -75,9 +76,16 @@ focusnotes/
 ├── Inbox.md              # captures made outside a session
 ├── Sessions/
 │   └── System Design.md  # one note per session
-├── <Quick note title>.md # quick notes written outside a session
+├── <Quick note name>.md  # quick notes, optionally in nested folders
 └── assets/               # area captures (images)
 ```
+
+Quick-note titles can include folder paths. `science/math/trigonometry` saves as
+`science/math/trigonometry.md` under the notes folder, creating missing folders.
+Prefix the path with `/` to resolve it from your home folder: `/Desktop/science/math/trigonometry`
+saves to `~/Desktop/science/math/trigonometry.md`. If the target note already exists,
+Focusnotes appends to it. Folder and filename matching ignores case. External note paths
+used this way are tracked for search and file updates; Focusnotes does not scan your home folder.
 
 Timestamps and source details are stored in HTML comments, so the visible text stays clean:
 
