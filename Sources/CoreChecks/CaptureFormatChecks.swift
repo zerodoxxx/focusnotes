@@ -29,6 +29,11 @@ func checkCaptureFormat() throws {
     for suffix in [" — Mozilla Firefox", " - Google Chrome", " - Brave", " — Safari"] {
         try require(CaptureFormat.sourceHeading(CaptureSource(windowTitle: "Page" + suffix)) == "Page", "browser suffix remained")
     }
+    let escapedImage = CaptureFormat.block(
+        for: Capture(id: id, createdAt: when, content: .image(assetPath: "assets/shot.png"), source: CaptureSource()),
+        noteRelativeDir: "Deep/Folder", calendar: calendar, assetPathPrefix: "../../My Vault"
+    )
+    try require(escapedImage.contains("![](../../My%20Vault/assets/shot.png)"), "asset links must encode path components while preserving relative traversal")
     let app = "A \"quoted\" -- app --> &quot;"
     let escaped = block(.text("Hello"), source: CaptureSource(appName: app))
     let line = escaped.components(separatedBy: "\n")[1]

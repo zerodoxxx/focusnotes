@@ -53,6 +53,41 @@ func checkCaptureService() async throws {
     let inboxAfterTitle = try checkRead(vault.inboxURL)
     try require(inboxAfterTitle.contains("Heading wins"), "capture should land in Inbox.md")
 
+    let nested = vault.root.appendingPathComponent("Science/Math", isDirectory: true)
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    let existingNested = nested.appendingPathComponent("Trigonometry.md")
+    try checkWrite("# Existing nested note\n\n", to: existingNested)
+    let pathCapture = Capture(id: UUID(), createdAt: now, content: .text("Nested heading capture"), source: CaptureSource())
+    let pathPrepared = try await service.prepare(pathCapture, heading: "science/math/trigonometry")
+    try require(pathPrepared.destination.url == existingNested && pathPrepared.destination.title == "trigonometry",
+                "folder-qualified heading should resolve an existing file and directory case-insensitively")
+    _ = try await service.save(pathPrepared)
+    let nestedText = try checkRead(existingNested)
+    try require(nestedText.hasPrefix("# Existing nested note\n\n") && nestedText.contains("Nested heading capture"),
+                "folder-qualified heading should append to the existing nested note without replacing its contents")
+
+    let newNestedCapture = Capture(id: UUID(), createdAt: now, content: .text("Create nested destination"), source: CaptureSource())
+    let newNestedPrepared = try await service.prepare(newNestedCapture, heading: "Science/New Folder/New Note")
+    try require(newNestedPrepared.destination.url == vault.root.appendingPathComponent("Science/New Folder/New Note.md"),
+                "unmatched folder-qualified heading should preserve its selected nested destination")
+    _ = try await service.save(newNestedPrepared)
+    _ = try await service.save(newNestedPrepared)
+    let newNestedText = try checkRead(newNestedPrepared.destination.url)
+    try require(newNestedText.components(separatedBy: checkCaptureMarker(newNestedCapture.id)).count - 1 == 1,
+                "replaying a queued nested destination should append its capture only once")
+
+    do {
+        _ = try await service.prepare(Capture(id: UUID(), createdAt: now, content: .text("unsafe"), source: CaptureSource()),
+                                      heading: "Science/../escape")
+        throw CheckFailure.failed("capture heading traversal should be rejected")
+    } catch is CheckFailure { throw CheckFailure.failed("capture heading traversal was accepted") }
+    catch is NotePathNameError {}
+
+    let nestedImage = try await service.saveImage(png: png, source: CaptureSource(), heading: "science/new folder/new note")
+    let nestedImageText = try checkRead(nestedImage.destination.url)
+    try require(nestedImageText.contains("![](../../assets/"),
+                "nested note image links should climb back to the vault assets directory")
+
     // An image in the session note links to ../assets/ and the PNG exists.
     let imageSave = try await service.saveImage(png: png, source: CaptureSource(appName: "Preview"), noteTitle: nil)
     try require(imageSave.destination.kind == .session, "an image with an active session should route to the session note")
@@ -84,7 +119,7 @@ func checkCaptureService() async throws {
     // A failed write and replay both reuse the prepared identity and destination.
     let retryID = UUID()
     let retryCapture = Capture(id: retryID, createdAt: now, content: .text("retry identity"), source: CaptureSource(appName: "Test"))
-    let prepared = await service.prepare(retryCapture, noteTitle: "Retry Destination")
+    let prepared = try await service.prepare(retryCapture, heading: "Retry Destination")
     try FileManager.default.createDirectory(at: prepared.destination.url, withIntermediateDirectories: false)
     do {
         _ = try await service.save(prepared)

@@ -22,6 +22,26 @@ func checkNoteTitle() throws {
         NoteTitle.matchKey("Foo") != NoteTitle.matchKey("Foo 2"),
         "matchKey should keep distinct titles distinct"
     )
+    let relativeName = try NoteTitle.pathName(for: " science / math / trigonometry ")
+    try require(relativeName.scope == .vault && relativeName.components == ["science", "math", "trigonometry"],
+                "relative note names should preserve their path components")
+    try require(relativeName.displayTitle == "trigonometry", "path note display title should use its final component")
+    let homeName = try NoteTitle.pathName(for: "/Desktop/science/math/trigonometry")
+    try require(homeName.scope == .home && homeName.relativePath == "Desktop/science/math/trigonometry",
+                "leading slash should select a home-relative path")
+    let sanitizedName = try NoteTitle.pathName(for: "science/math:trig")
+    try require(sanitizedName.components == ["science", "math-trig"], "path components should retain filename sanitization")
+    let longDisplayName = try NoteTitle.pathName(for: "folder/" + String(repeating: "word ", count: 15))
+    try require(longDisplayName.displayTitle.count <= 61 && longDisplayName.displayTitle.hasSuffix("…"),
+                "path display titles should keep the existing 60-character cap")
+    for invalid in ["", "/", "science/", "science//math", "./math", "science/../math", "math\u{0000}x", "science/~$draft"] {
+        try require((try? NoteTitle.pathName(for: invalid)) == nil, "unsafe note path should be rejected: \(invalid.debugDescription)")
+    }
+    let excessiveDepth = Array(repeating: "x", count: 33).joined(separator: "/")
+    try require((try? NoteTitle.pathName(for: excessiveDepth)) == nil, "note path depth should be bounded")
+    let longComponent = String(repeating: "x", count: 120)
+    let excessiveLength = Array(repeating: longComponent, count: 8).joined(separator: "/")
+    try require((try? NoteTitle.pathName(for: excessiveLength)) == nil, "total note path length should be bounded")
     try require(NoteTitle.fileStem(for: "a/b:c") == "a-b-c", "fileStem should replace / and :")
     try require(NoteTitle.fileStem(for: "a\\b") == "a-b", "fileStem should replace backslash")
     try require(NoteTitle.fileStem(for: "Plan\u{0007}X") == "Plan-X", "fileStem should replace control characters")

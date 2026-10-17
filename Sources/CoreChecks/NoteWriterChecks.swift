@@ -81,6 +81,7 @@ func checkNoteWriter() async throws {
     )
     let assetData = try Data(contentsOf: root.appendingPathComponent(assetPath))
     try require(assetData == png, "saved PNG bytes differ")
+    try await checkImageLinksForManagedLocations(vault: vault, writer: writer, assetPath: assetPath, calendar: calendar, when: when)
     try await checkSourceGrouping(vault: vault, calendar: calendar, capture: capture)
     try await checkPartialCaptureReplay(vault: vault, calendar: calendar, capture: capture)
     try await checkAtomicReplacement(vault: vault, calendar: calendar, capture: capture)
@@ -89,6 +90,63 @@ func checkNoteWriter() async throws {
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
+}
+
+private func checkImageLinksForManagedLocations(vault: Vault, writer: NoteWriter, assetPath: String,
+                                                calendar: Calendar, when: Date) async throws {
+    let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+    let homeFolder = home.appendingPathComponent(".app-check-\(UUID().uuidString)", isDirectory: true)
+    defer { checkRemoveDirectory(homeFolder) }
+
+    let homeNote = homeFolder.appendingPathComponent("Deep/Visual Notes.md")
+    try checkWrite("# Visual Notes\n\nExisting text\n", to: homeNote)
+    let capture = Capture(id: UUID(), createdAt: when, content: .image(assetPath: assetPath), source: CaptureSource())
+    let destination = Destination(url: homeNote, title: "Visual Notes", kind: .note)
+    let original = try Data(contentsOf: homeNote)
+    try await writer.appendIfMissing(capture, to: destination)
+    let written = try Data(contentsOf: homeNote)
+    try require(written.starts(with: original), "writing a home-relative note must append without changing its existing bytes")
+    try await writer.appendIfMissing(capture, to: destination)
+    let replayed = try Data(contentsOf: homeNote)
+    try require(replayed == written, "replaying an external image capture must remain idempotent")
+
+    let homeText = String(decoding: written, as: UTF8.self)
+    let homeLink = try markdownImageTarget(in: homeText)
+    let resolvedHomeAsset = URL(string: homeLink, relativeTo: homeNote.deletingLastPathComponent())!.standardizedFileURL
+    let expectedAsset = vault.root.appendingPathComponent(assetPath).standardizedFileURL
+    try require(resolvedHomeAsset.path == expectedAsset.path, "home note image link should resolve to the vault-managed asset")
+    let homeParsed = NoteParser.parse(contents: homeText, notePath: homeNote.absoluteString, titleFallback: "Visual Notes",
+                                     calendar: calendar, assetRootURL: vault.assetsURL)
+    try require(homeParsed.blocks.contains { $0.kind == .image && $0.assetPath == assetPath },
+                "home-relative note image links should map back to the vault asset path")
+
+    let nestedNote = vault.root.appendingPathComponent("Projects/Deep/Nested.md")
+    var nestedCapture = capture
+    nestedCapture.id = UUID()
+    try await writer.append(nestedCapture, to: nestedNote, title: "Nested")
+    let nestedText = try checkRead(nestedNote)
+    let nestedLink = try markdownImageTarget(in: nestedText)
+    let resolvedNestedAsset = URL(string: nestedLink, relativeTo: nestedNote.deletingLastPathComponent())!.standardizedFileURL
+    try require(resolvedNestedAsset.path == expectedAsset.path, "nested vault note image link should resolve to the vault-managed asset")
+
+    let outside = vault.root.appendingPathComponent("Outside note.md")
+    try checkWrite("outside bytes\n", to: outside)
+    let linked = homeFolder.appendingPathComponent("Linked.md")
+    try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: outside)
+    do {
+        try await writer.appendIfMissing(capture, to: Destination(url: linked, title: "Linked", kind: .note))
+        throw CheckFailure.failed("home-relative note appends must reject a symlink target")
+    } catch is CheckFailure { throw CheckFailure.failed("home note symlink unexpectedly accepted") }
+    catch {}
+    let outsideAfter = try checkRead(outside)
+    try require(outsideAfter == "outside bytes\n", "a home-note symlink must not change its outside target")
+}
+
+private func markdownImageTarget(in contents: String) throws -> String {
+    guard let line = contents.components(separatedBy: "\n").first(where: { $0.hasPrefix("![](") && $0.hasSuffix(")") }) else {
+        throw CheckFailure.failed("image capture did not contain a Markdown image link")
+    }
+    return String(line.dropFirst(4).dropLast())
 }
 
 private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async throws {

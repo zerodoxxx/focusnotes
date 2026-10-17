@@ -129,14 +129,14 @@ final class AppController: NSObject, NSMenuDelegate {
     private var searchCloseWaiters: [CheckedContinuation<Void, Never>] = []
     private var pending: PendingCapture?
     private var pendingToastID: UUID?
-    private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Never>, persistence: Task<Void, Error>)?
+    private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Error>, persistence: Task<Void, Error>)?
     private var commitTail: Task<SavedCapture, Error>?
     private var commitGeneration = 0
-    private var preparedJobs: [UUID: Task<CaptureJob, Never>] = [:]
+    private var preparedJobs: [UUID: Task<CaptureJob, Error>] = [:]
     private var acquisitionTask: Task<Void, Never>?
     private var acquisitionGeneration = 0
     private var acquisitionFallback: PendingCapture?
-    private var recoveryJobs: [UUID: Task<CaptureJob, Never>] = [:]
+    private var recoveryJobs: [UUID: Task<CaptureJob, Error>] = [:]
     private var recoveryPersistences: [UUID: Task<Void, Error>] = [:]
     private var processingTail: Task<Void, Never>?
     private var processingGeneration = 0
@@ -340,10 +340,10 @@ final class AppController: NSObject, NSMenuDelegate {
     private func journalAcquisition(_ capture: PendingCapture) {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
-        let preparation = Task.detached(priority: .userInitiated) { await pipeline.prepare(capture, noteTitle: nil) }
+        let preparation = Task.detached(priority: .userInitiated) { try await pipeline.prepare(capture, heading: nil) }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
-            try await pipeline.journal.store(preparation.value)
+            try await pipeline.journal.store(try await preparation.value)
         }
     }
 
@@ -368,12 +368,12 @@ final class AppController: NSObject, NSMenuDelegate {
         let recovery = recoveryJobs[capture.id]
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
-            let destination = await recovery?.value.prepared.destination
-            return await pipeline.prepare(capture, noteTitle: nil, destination: destination)
+            let recovered = try? await recovery?.value
+            return try await pipeline.prepare(capture, heading: nil, destination: recovered?.prepared.destination)
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
-            try await pipeline.journal.store(preparation.value)
+            try await pipeline.journal.store(try await preparation.value)
         }
         stagedJob = (capture.id, preparation, persistence)
         pending = capture
@@ -405,15 +405,15 @@ final class AppController: NSObject, NSMenuDelegate {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let destination: Destination?
-            if let recovery { destination = await recovery.value.prepared.destination }
-            else if noteTitle == nil { destination = await staged?.preparation.value.prepared.destination }
+            if let recovery { destination = try? await recovery.value.prepared.destination }
+            else if heading == nil { destination = try? await staged?.preparation.value.prepared.destination }
             else { destination = nil }
-            return await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination)
+            return try await pipeline.prepare(capture, heading: heading, destination: destination)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
         let task = Task.detached(priority: .userInitiated) {
-            let job = await preparation.value
+            let job = try await preparation.value
             _ = try? await staged?.persistence.value
             _ = try? await recoveryPersistence?.value
             try await pipeline.journal.store(job)
@@ -433,6 +433,12 @@ final class AppController: NSObject, NSMenuDelegate {
                     self?.showToast(Toast(style: .success, title: "Saved to \(saved.destination.title)", duration: 1.6))
                 }
             } catch {
+                if heading != nil, case .failure = await preparation.result, let staged {
+                    self?.preparedJobs.removeValue(forKey: capture.id)
+                    self?.stagedJob = staged
+                    self?.pending = capture
+                    self?.pendingToastID = capture.id
+                }
                 self?.report(error, title: "Couldn't save capture")
             }
             if self?.commitGeneration == generation { self?.commitTail = nil }
@@ -489,8 +495,8 @@ final class AppController: NSObject, NSMenuDelegate {
             // A journal write itself may have failed earlier. Retry the exact prepared
             // capture, never its title or destination routing.
             for (id, preparation) in preparedJobs {
-                let job = await preparation.value
                 do {
+                    let job = try await preparation.value
                     try await pipeline.journal.store(job)
                     _ = try await pipeline.commit(job) { [weak self] saved, pinFailed in
                         self?.showNoteSaveFeedback(saved, pinFailed: pinFailed)
@@ -660,7 +666,11 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !controller.isTerminating else { return }
             let pipeline = controller.pipeline
             let active = await pipeline.sessions.current()
-            let sessionDestination = active.map { Router.destination(noteTitle: nil, activeSession: $0, notes: [], vault: pipeline.vault) }
+            let sessionDestination: Destination?
+            if let active {
+                do { sessionDestination = try Router.destination(heading: nil, activeSession: active, notes: [], vault: pipeline.vault) }
+                catch { controller.report(error, title: "Couldn't resolve note destination"); return }
+            } else { sessionDestination = nil }
             do {
                 let restored = try pipeline.drafts.loadSnapshot()
                 let draft = restored.text
@@ -668,18 +678,20 @@ final class AppController: NSObject, NSMenuDelegate {
                 controller.editor = editor
                 let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave)
                 let calendar = pipeline.calendar
-                func relativePath(_ destination: Destination?) -> String? { destination.flatMap { pipeline.vault.relativePath(of: $0.url) } }
+                func noteID(_ destination: Destination?) -> String? {
+                    destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
+                }
                 @MainActor func save(_ text: String, controller: AppController) async throws -> SavedCapture? {
                     return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave)
                 }
-                let initiallyPinned = relativePath(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
+                let initiallyPinned = noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 editor.present(destination: sessionDestination?.title, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
                         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave)
                         if blank {
                             state.pinOnSave = false
-                            editor?.setDestination(state.destination?.title, isPinned: relativePath(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
                     onSubmit: { [weak controller] text in
@@ -693,7 +705,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             do { try state.resetPinOnSave(in: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
                             state.destination = sessionDestination
-                            editor?.setDestination(sessionDestination?.title, isPinned: relativePath(sessionDestination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(sessionDestination?.title, isPinned: noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? false)
                             return
                         }
                         controller?.enqueue { controller in
@@ -730,21 +742,28 @@ final class AppController: NSObject, NSMenuDelegate {
                         case .write:
                             do { try state.resetPinOnSave(in: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
-                            state.destination = Destination(url: pipeline.vault.url(forRelativePath: item.id), title: item.title, kind: state.kinds[item.id] ?? .note)
+                            do {
+                                let location = try pipeline.vault.noteLocation(forID: item.id)
+                                state.destination = Destination(url: location.url, title: item.title, kind: state.kinds[item.id] ?? .note)
+                            } catch { controller?.report(error, title: "Couldn't select note"); return }
                             editor?.setDestination(item.title, isPinned: pipeline.pins.isPinned(item.id))
-                        case .open: controller?.openNote(pipeline.vault.url(forRelativePath: item.id))
-                        case .reveal: controller?.revealNote(pipeline.vault.url(forRelativePath: item.id))
+                        case .open:
+                            do { controller?.openNote(try pipeline.vault.noteLocation(forID: item.id).url) }
+                            catch { controller?.report(error, title: "Couldn't open note") }
+                        case .reveal:
+                            do { controller?.revealNote(try pipeline.vault.noteLocation(forID: item.id).url) }
+                            catch { controller?.report(error, title: "Couldn't reveal note") }
                         }
                     },
                     onTogglePin: { [weak controller] in
                         do {
                             guard let destination = state.destination else { return try state.togglePinOnSave(in: pipeline.drafts) }
-                            guard let path = relativePath(destination) else { return false }
+                            guard let path = noteID(destination) else { return false }
                             guard FileManager.default.fileExists(atPath: destination.url.path) else { return try state.togglePinOnSave(in: pipeline.drafts) }
                             return try pipeline.pins.toggle(path)
                         } catch {
                             controller?.report(error, title: "Couldn't update Pinned")
-                            return relativePath(state.destination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
+                            return noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                         }
                     },
                     onClose: { [weak controller] in controller?.editor = nil },
@@ -757,7 +776,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                         if blank {
                             state.pinOnSave = false
-                            editor?.setDestination(state.destination?.title, isPinned: relativePath(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
@@ -788,24 +807,24 @@ final class AppController: NSObject, NSMenuDelegate {
         _ = try await pendingCommit?.value
         _ = try await processedCommit?.value
         let pipeline = pipeline
-        var retry: Task<CaptureJob, Never>?
+        var retry: Task<CaptureJob, Error>?
         for candidate in Array(preparedJobs.values) {
-            let job = await candidate.value
+            guard let job = try? await candidate.value else { continue }
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
                 if destination == nil || job.prepared.destination == destination { retry = candidate; break }
             }
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = await pipeline.service.prepareNote(capture, destination: destination, calendar: pipeline.calendar)
+            let prepared = try await pipeline.service.prepareNote(capture, destination: destination, calendar: pipeline.calendar)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText)
         }
-        let preparedNote = await preparation.value.prepared
+        let preparedNote = try await preparation.value.prepared
         let noteID = preparedNote.capture.id
         preparedJobs[noteID] = preparation
         let previous = commitTail
         let task = Task.detached(priority: .userInitiated) { [weak self] in
-            let job = await preparation.value
+            let job = try await preparation.value
             try await pipeline.journal.store(job)
             _ = try? await previous?.value
             return try await pipeline.commit(job, pinOnSave: pinOnSave) { [weak self] saved, pinFailed in
@@ -830,7 +849,9 @@ final class AppController: NSObject, NSMenuDelegate {
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
             let active = await controller.pipeline.sessions.current()
-            let destination = Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: controller.pipeline.vault)
+            let destination: Destination
+            do { destination = try Router.destination(heading: nil, activeSession: active, notes: [], vault: controller.pipeline.vault) }
+            catch { controller.report(error, title: "Couldn't resolve note destination"); return }
             controller.presentInput(placeholder: "Subheading", title: "Add subheading", secondary: "In \(destination.title)",
                                     suggestions: [], onSubmit: { [weak controller] text in
                 controller?.enqueue { controller in
@@ -854,13 +875,13 @@ final class AppController: NSObject, NSMenuDelegate {
         let preparation = Task.detached(priority: .userInitiated) {
             let prepared: PreparedCapture
             if let destination { prepared = PreparedCapture(capture: capture, destination: destination) }
-            else { prepared = await pipeline.service.prepare(capture, noteTitle: nil) }
+            else { prepared = try await pipeline.service.prepare(capture, heading: nil) }
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
         preparedJobs[capture.id] = preparation
         let previous = commitTail
         let task = Task.detached(priority: .userInitiated) {
-            let job = await preparation.value
+            let job = try await preparation.value
             try await pipeline.journal.store(job)
             _ = try? await previous?.value
             return try await pipeline.commit(job)
@@ -932,8 +953,14 @@ final class AppController: NSObject, NSMenuDelegate {
                 // Capture the full SearchHit now; query results cannot change the action.
                 switch action {
                 case .primary: return { [weak controller] in controller?.copy(hit) }
-                case .open: return { NSWorkspace.shared.open(pipeline.vault.root.appendingPathComponent(hit.notePath)) }
-                case .reveal: return { NSWorkspace.shared.activateFileViewerSelecting([pipeline.vault.root.appendingPathComponent(hit.notePath)]) }
+                case .open: return { [weak controller] in
+                    do { _ = NSWorkspace.shared.open(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
+                    catch { controller?.report(error, title: "Couldn't open note") }
+                }
+                case .reveal: return { [weak controller] in
+                    do { NSWorkspace.shared.activateFileViewerSelecting([try pipeline.vault.noteLocation(forID: hit.notePath).url]) }
+                    catch { controller?.report(error, title: "Couldn't reveal note") }
+                }
                 }
             }))
         }

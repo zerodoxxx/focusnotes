@@ -58,7 +58,7 @@ extension AppController {
         let sessionCount = try await endSession(session)
         let ownExternal = PendingCapture(trigger: .selection, content: .text("coalescedownneedle app append"),
                                          source: CapturePipeline.source(context), subtitle: "App append")
-        let ownJob = await pipeline.prepare(ownExternal, noteTitle: "External Edit")
+        let ownJob = try await pipeline.prepare(ownExternal, heading: "External Edit")
         try await pipeline.journal.store(ownJob)
         _ = try await pipeline.commit(ownJob)
         let external = Capture(id: UUID(), createdAt: Date(), content: .text("watcherexternalneedle appended by another editor"),
@@ -317,7 +317,11 @@ extension AppController {
               try Data(contentsOf: created.destination.url) == rootBytes,
               !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path) else { throw SelfTestFailure("New-note replay changed its path/bytes or retained the original draft") }
         guard let duplicateTitle = try await controller.addNote(rootDraft),
-              duplicateTitle.destination.url.lastPathComponent == "independentnoteneedle 2.md" else { throw SelfTestFailure("Controller collision suffix failed") }
+              duplicateTitle.destination.url == created.destination.url,
+              !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path),
+              try String(contentsOf: duplicateTitle.destination.url, encoding: .utf8).contains("<!-- note:\(duplicateTitle.captureID.uuidString.lowercased()) at=") else {
+            throw SelfTestFailure("Controller typed-note collision did not append to the existing note")
+        }
         try await checkQuickNotePinPersistence()
         let resumed = try await controller.startSession(name: "feedback")
         guard resumed.notePath == session.notePath, resumed.resumed == true else { throw SelfTestFailure("Session did not resume by name") }

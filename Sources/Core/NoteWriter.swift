@@ -39,23 +39,21 @@ public actor NoteWriter {
 
     /// Appends one capture block to `note`. Creates the file with its header when it does not exist.
     public func append(_ capture: Capture, to note: URL, title: String) throws {
-        let relativePath = try vault.writePath(of: note)
-        let block = CaptureFormat.block(
-            for: capture,
-            noteRelativeDir: vault.relativeDirectory(forWritePath: relativePath),
-            calendar: calendar, includeSourceHeading: false
-        )
+        let location = try vault.managedLocation(of: note)
+        try prepareParentDirectory(for: location)
+        let block = captureBlock(capture, location: location, includeSourceHeading: false)
         let header = CaptureFormat.noteHeader(title: title) + "\n"
 
-        try NoteFile.append(block: block, header: header, root: vault.rootAnchor, relativePath: relativePath,
-                            to: note, cache: &appendCache, identityPrefix: identityPrefix(capture),
+        try NoteFile.append(block: block, header: header, root: location.anchor, relativePath: location.relativePath,
+                            to: location.url, cache: &appendCache, identityPrefix: identityPrefix(capture),
                             sourceHeading: headingSource(capture), equivalentBlocks: legacyBlocks(capture, block: block),
                             calendar: calendar, beforeWrite: beforeAppend, afterWrite: afterAppend)
     }
 
     /// Retries keep the original marker and asset path, including after journal replay.
     public func appendIfMissing(_ capture: Capture, to destination: Destination, png: Data? = nil, noteMarkerIsIdentity: Bool = false) throws {
-        let notePath = try vault.writePath(of: destination.url)
+        let location = try vault.managedLocation(of: destination.url)
+        try prepareParentDirectory(for: location)
         if case .image(let path) = capture.content {
             let assetPath = try checkedAssetPath(path)
             if let png {
@@ -64,7 +62,7 @@ public actor NoteWriter {
                 try NoteFile.ensureAsset(png, in: vault.rootAnchor, relativePath: assetPath)
             }
         }
-        let block = CaptureFormat.block(for: capture, noteRelativeDir: vault.relativeDirectory(forWritePath: notePath), calendar: calendar, includeSourceHeading: false)
+        let block = captureBlock(capture, location: location, includeSourceHeading: false)
         let prefix: String = switch capture.content {
         case .note: "note"
         case .subheading: "subheading"
@@ -73,11 +71,28 @@ public actor NoteWriter {
         let marker = "<!-- \(prefix):\(capture.id.uuidString.lowercased()) -->"
         let savedNoteMarker = noteMarkerIsIdentity && prefix == "note" ? String(block.prefix(while: { $0 != "\n" })) : nil
         try NoteFile.append(block: block, header: CaptureFormat.noteHeader(title: destination.title) + "\n",
-                            root: vault.rootAnchor, relativePath: notePath, to: destination.url,
+                            root: location.anchor, relativePath: location.relativePath, to: location.url,
                             cache: &appendCache, identityPrefix: identityPrefix(capture), unlessMarkerExists: marker,
                             savedNoteMarker: savedNoteMarker, sourceHeading: headingSource(capture),
                             equivalentBlocks: legacyBlocks(capture, block: block), calendar: calendar,
                             beforeWrite: beforeAppend, afterWrite: afterAppend)
+    }
+
+    private func prepareParentDirectory(for location: VaultManagedLocation) throws {
+        let parentPath = location.relativePath.split(separator: "/").dropLast().joined(separator: "/")
+        if !parentPath.isEmpty {
+            try NoteFile.prepareManagedDirectory(parentPath, in: location.anchor)
+        }
+    }
+
+    private func captureBlock(_ capture: Capture, location: VaultManagedLocation,
+                              includeSourceHeading: Bool) -> String {
+        let noteRelativeDir = location.relativePath.split(separator: "/").dropLast().joined(separator: "/")
+        let assetPathPrefix = CaptureFormat.relativePath(
+            from: location.url.deletingLastPathComponent(), to: vault.root
+        )
+        return CaptureFormat.block(for: capture, noteRelativeDir: noteRelativeDir, calendar: calendar,
+                                   includeSourceHeading: includeSourceHeading, assetPathPrefix: assetPathPrefix)
     }
 
     private func identityPrefix(_ capture: Capture) -> String {

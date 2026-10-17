@@ -45,7 +45,8 @@ struct CapturePipeline: Sendable {
 
     @concurrent
     static func open(vaultRoot: URL, stateDirectory: URL, calendar: Calendar, modelsDirectory: URL? = nil) async throws -> Self {
-        let vault = Vault(root: vaultRoot)
+        let vault = Vault(root: vaultRoot,
+                          externalNoteRegistryURL: stateDirectory.appendingPathComponent("external-notes.json"))
         try vault.prepare()
         let index = try SearchIndex(vault: vault, databaseURL: stateDirectory.appendingPathComponent("index.sqlite"), calendar: calendar)
         let semantic = SemanticIndexer(index: index, vault: vault, stateDirectory: stateDirectory,
@@ -72,7 +73,7 @@ struct CapturePipeline: Sendable {
         )
     }
 
-    func prepare(_ capture: PendingCapture, noteTitle: String?, destination: Destination? = nil) async -> CaptureJob {
+    func prepare(_ capture: PendingCapture, heading: String?, destination: Destination? = nil) async throws -> CaptureJob {
         let content: CaptureContent
         let png: Data?
         let ocr: String?
@@ -89,13 +90,14 @@ struct CapturePipeline: Sendable {
         let value = Capture(id: capture.id, createdAt: capture.createdAt, content: content, source: capture.source)
         let prepared: PreparedCapture
         if let destination { prepared = PreparedCapture(capture: value, destination: destination) }
-        else { prepared = await service.prepare(value, noteTitle: noteTitle) }
+        else { prepared = try await service.prepare(value, heading: heading) }
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 
     func commit(_ job: CaptureJob, pinOnSave: Bool? = nil,
                 onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
         let saved = try await service.save(job.prepared, png: job.png)
+        monitor.refreshExternalRoots()
         // A cache failure must not retry an already appended capture. Startup sync repairs it.
         do {
             try await index.reindex(note: saved.destination.url)
@@ -128,8 +130,8 @@ struct CapturePipeline: Sendable {
         guard case .note(let text) = job.prepared.capture.content else { return nil }
         var pinFailed = false
         try drafts.completeSave(matching: job.noteDraft ?? text, pinOnSave: pinOnSave) { intent in
-            guard intent, let path = vault.relativePath(of: saved.destination.url) else { return }
-            do { try pins.set(path, pinned: true) }
+            guard intent, let noteID = try? vault.noteID(for: saved.destination.url) else { return }
+            do { try pins.set(noteID, pinned: true) }
             catch {
                 pinFailed = true
                 logger.error("Couldn't pin note (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")

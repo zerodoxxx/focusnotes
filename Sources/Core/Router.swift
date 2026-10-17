@@ -22,9 +22,17 @@ public enum Router {
         activeSession: Session?,
         notes: [NoteRef],
         vault: Vault
-    ) -> Destination {
-        let cleaned = NoteTitle.cleanTitle(noteTitle ?? "")
+    ) throws -> Destination {
+        let cleaned = NoteTitle.cleanTitle(heading ?? "")
         if !cleaned.isEmpty {
+            let pathName = try NoteTitle.pathName(for: cleaned)
+            let qualifiedPath = pathName.scope == .home || pathName.components.count > 1
+            if qualifiedPath {
+                let location = try vault.resolveNoteName(pathName)
+                let leafTitle = String(cleaned.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+                return Destination(url: location.url, title: NoteTitle.cleanTitle(leafTitle), kind: .note)
+            }
+
             let key = NoteTitle.matchKey(cleaned)
             if let note = notes.first(where: { $0.kind == .note && NoteTitle.matchKey($0.title) == key }) {
                 return Destination(url: note.url, title: note.title, kind: .note)
@@ -35,12 +43,13 @@ public enum Router {
             if key == NoteTitle.matchKey(Vault.inboxTitle) {
                 return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
             }
-            return Destination(url: vault.uniqueNoteURL(forTitle: cleaned), title: cleaned, kind: .note)
+            let location = try vault.resolveNoteName(pathName)
+            return Destination(url: location.url, title: cleaned, kind: .note)
         }
 
         if let activeSession {
             return Destination(
-                url: vault.url(forRelativePath: activeSession.notePath),
+                url: try vault.managedURL(forRelativePath: activeSession.notePath),
                 title: activeSession.name,
                 kind: .session
             )
