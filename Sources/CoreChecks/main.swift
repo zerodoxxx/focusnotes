@@ -73,6 +73,7 @@ do {
     try await checkSearchIndex()
     try await checkSearchIndexPerformance()
     try checkVaultWatcher()
+    try await checkExternalNoteRegistry()
 } catch {
     fputs("Core checks failed: \(error)\n", stderr)
     exit(EXIT_FAILURE)

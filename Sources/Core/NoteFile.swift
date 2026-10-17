@@ -5,6 +5,12 @@ import Foundation
 enum NoteFile {
     private static let attempts = 4
 
+    struct ManagedDirectoryEntry: Sendable {
+        let name: String
+        let isDirectory: Bool
+        let noteSnapshot: VaultFileSnapshot?
+    }
+
     private struct FileIdentity: Equatable {
         let device: dev_t
         let inode: ino_t
@@ -78,6 +84,100 @@ enum NoteFile {
         }
         guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
         return names
+    }
+
+    /// Lists names and classifies directories from the same validated descriptor.
+    /// Known `d_type` values avoid opening every regular note as a candidate
+    /// directory; unknown values fall back to descriptor-relative `fstatat`.
+    /// When requested, eligible Markdown leaves also carry a no-follow metadata
+    /// snapshot so callers can skip reopening unchanged files one at a time.
+    static func listManagedDirectoryEntries(in root: VaultDirectoryAnchor,
+                                            relativePath: String,
+                                            includeNoteMetadata: Bool = false) throws -> [ManagedDirectoryEntry] {
+        let components = relativePath.isEmpty ? [] : try pathComponents(relativePath)
+        let directories = try openDirectory(root: root, components: components, create: false)
+        let descriptor = openat(directories.descriptor, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+        guard let stream = fdopendir(descriptor) else {
+            close(descriptor)
+            throw posixError()
+        }
+        defer { closedir(stream) }
+
+        var entries: [ManagedDirectoryEntry] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(stream) else {
+                if errno != 0 { throw posixError() }
+                break
+            }
+            var value = entry.pointee
+            let capacity = MemoryLayout.size(ofValue: value.d_name)
+            let name = withUnsafePointer(to: &value.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { String(cString: $0) }
+            }
+            guard name != ".", name != ".." else { continue }
+
+            let isDirectory: Bool
+            if value.d_type == DT_DIR {
+                isDirectory = true
+            } else if value.d_type == DT_UNKNOWN {
+                var attributes = stat()
+                guard fstatat(directories.descriptor, name, &attributes, AT_SYMLINK_NOFOLLOW) == 0 else {
+                    if errno == ENOENT { continue }
+                    throw posixError()
+                }
+                isDirectory = attributes.st_mode & S_IFMT == S_IFDIR
+            } else {
+                isDirectory = false
+            }
+
+            var noteSnapshot: VaultFileSnapshot? = nil
+            if includeNoteMetadata, !isDirectory, !name.hasPrefix("."),
+               !name.hasPrefix("~$"), URL(fileURLWithPath: name).pathExtension.lowercased() == "md" {
+                noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
+            }
+            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory, noteSnapshot: noteSnapshot))
+        }
+        guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
+        return entries
+    }
+
+    private static func managedNoteMetadata(in parent: Int32, name: String) throws -> VaultFileSnapshot? {
+        let descriptor = openat(parent, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0 {
+            if errno == EACCES || errno == ELOOP || errno == ENOENT || errno == ENOTDIR || errno == EPERM {
+                return nil
+            }
+            throw posixError()
+        }
+        defer { close(descriptor) }
+
+        var opened = stat()
+        guard fstat(descriptor, &opened) == 0 else { throw posixError() }
+        guard opened.st_mode & S_IFMT == S_IFREG,
+              opened.st_uid == getuid(), opened.st_nlink == 1 else { return nil }
+
+        var current = stat()
+        guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0 else {
+            if errno == EACCES || errno == ELOOP || errno == ENOENT || errno == ENOTDIR || errno == EPERM {
+                return nil
+            }
+            throw posixError()
+        }
+        guard current.st_mode & S_IFMT == S_IFREG,
+              current.st_uid == getuid(), current.st_nlink == 1,
+              FileIdentity(opened) == FileIdentity(current) else {
+            throw POSIXError(.EAGAIN)
+        }
+        guard opened.st_size == current.st_size,
+              opened.st_mtimespec.tv_sec == current.st_mtimespec.tv_sec,
+              opened.st_mtimespec.tv_nsec == current.st_mtimespec.tv_nsec,
+              opened.st_ctimespec.tv_sec == current.st_ctimespec.tv_sec,
+              opened.st_ctimespec.tv_nsec == current.st_ctimespec.tv_nsec else {
+            throw POSIXError(.EAGAIN)
+        }
+        return VaultFileSnapshot(contents: nil, attributes: opened)
     }
 
     /// Reads only a bounded prefix from a regular, app-owned, single-link note.

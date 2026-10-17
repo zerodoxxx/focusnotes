@@ -25,7 +25,8 @@ public enum NoteParser {
         contents: String,
         notePath: String,
         titleFallback: String,
-        calendar: Calendar
+        calendar: Calendar,
+        assetRootURL: URL? = nil
     ) -> ParsedNote {
         var lines = contents.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         if lines[0].hasPrefix("\u{FEFF}") { lines[0].removeFirst() }
@@ -50,7 +51,7 @@ public enum NoteParser {
                 blocks += looseBlocks(body.components(separatedBy: "\n")[...])
                 continue
             }
-            let asset = boundary.isNote ? nil : imagePath(body, notePath: notePath)
+            let asset = boundary.isNote ? nil : imagePath(body, notePath: notePath, assetRootURL: assetRootURL)
             blocks.append(ParsedBlock(
                 captureID: boundary.id, kind: boundary.isNote ? .note : (asset == nil ? .text : .image),
                 createdAt: boundary.date, sourceApp: boundary.app, windowTitle: boundary.window,
@@ -223,10 +224,29 @@ public enum NoteParser {
         return (date, app, window)
     }
 
-    private static func imagePath(_ body: String, notePath: String) -> String? {
+    private static func imagePath(_ body: String, notePath: String, assetRootURL: URL?) -> String? {
         guard !body.contains("\n"), body.hasPrefix("![]("), body.hasSuffix(")") else { return nil }
-        let link = String(body.dropFirst(4).dropLast()).replacingOccurrences(of: "%20", with: " ")
-        guard !link.isEmpty, !link.hasPrefix("/"), !link.contains(":"), !link.contains("\n") else { return nil }
+        let encodedLink = String(body.dropFirst(4).dropLast())
+        guard !encodedLink.isEmpty, !encodedLink.hasPrefix("/"), !encodedLink.contains(":"),
+              !encodedLink.contains("\\"), !encodedLink.contains("?"), !encodedLink.contains("#"),
+              !encodedLink.contains("\n") else { return nil }
+
+        if let noteURL = absoluteNoteURL(notePath) {
+            guard let assetRootURL,
+                  let components = URLComponents(string: encodedLink), components.scheme == nil,
+                  components.host == nil, components.query == nil, components.fragment == nil,
+                  let resolved = URL(string: encodedLink, relativeTo: noteURL.deletingLastPathComponent())?.standardizedFileURL else {
+                return nil
+            }
+            let root = assetRootURL.standardizedFileURL
+            let rootComponents = root.pathComponents
+            let resolvedComponents = resolved.pathComponents
+            guard resolvedComponents.count > rootComponents.count,
+                  Array(resolvedComponents.prefix(rootComponents.count)) == rootComponents else { return nil }
+            return ([Vault.assetsDirectoryName] + Array(resolvedComponents.dropFirst(rootComponents.count))).joined(separator: "/")
+        }
+
+        guard let link = encodedLink.removingPercentEncoding else { return nil }
         var components = notePath.split(separator: "/").dropLast().map(String.init)
         for part in link.split(separator: "/") {
             if part == "." { continue }
@@ -237,7 +257,17 @@ public enum NoteParser {
                 components.append(String(part))
             }
         }
-        return components.isEmpty ? nil : components.joined(separator: "/")
+        guard components.count > 1, components[0] == Vault.assetsDirectoryName else { return nil }
+        return components.joined(separator: "/")
+    }
+
+    private static func absoluteNoteURL(_ notePath: String) -> URL? {
+        if notePath.hasPrefix("file://") {
+            guard let url = URL(string: notePath), url.isFileURL else { return nil }
+            return url
+        }
+        guard notePath.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: notePath)
     }
 
     private static func isBlank(_ line: String) -> Bool { line.allSatisfy(\.isWhitespace) }

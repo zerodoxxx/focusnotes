@@ -40,6 +40,35 @@ filename again, ignoring case, resumes that note. Existing dated session notes
 can also resume in place. Images stay in `assets/`, with `../assets/` links from
 session notes.
 
+### Quick-note paths
+
+A standalone quick note's derived title can include slash-separated folders.
+Relative paths are under the vault, so `science/math/trigonometry` saves to
+`<vault>/science/math/trigonometry.md`. A leading `/` resolves from the user's
+home folder: `/Desktop/science/math/trigonometry` saves to
+`~/Desktop/science/math/trigonometry.md`. Missing folders are created. Folder
+and existing filename matching is case-insensitive, and saving to an existing
+note appends the typed note to that file.
+
+Sessions keep their `Sessions/` namespace: a quick note saved while a session is
+active continues to append to that session note. Paths containing traversal
+components such as `..`, paths that cross a symbolic link, and leaves beginning
+with `~$` are rejected. The vault's `assets/` destination is reserved, matched
+case-insensitively; a home-relative path that resolves inside that directory is
+also rejected. Paths are limited to 32 components and 900 UTF-8 bytes.
+Vault notes are discovered recursively below the vault, with hidden files and
+the root-level directory named `assets` excluded case-insensitively; nested
+directories named `assets` remain ordinary note folders. Before writing to an
+external destination, Focusnotes records its exact HOME-relative Markdown path
+in a durable registry so journal replay can reuse the destination. At startup,
+safely readable notes at registered paths join the vault's discovered notes;
+missing or unreadable paths are skipped.
+Search indexes those paths, and the watcher monitors existing parent directories
+of registered external notes. A note directly under HOME may require HOME as the
+FSEvents root; events are filtered to exact registered note paths, so unrelated
+home files are not read, indexed, or reported as note changes. Focusnotes does
+not scan HOME to discover external notes.
+
 Area OCR uses preferred supported languages with accurate recognition and
 language correction. Classification has a 1.5-second budget: slower OCR stages
 an image and continues in the background to make it searchable. The acquisition
@@ -58,10 +87,13 @@ written into the Markdown), and ⌘O saves like ⌘↩ then opens the note in yo
 Markdown app. ⌘N saves and opens a blank note. The caret and selection lines show dimmed syntax; other lines render
 without the syntax. Bullets display as •, and clickable task boxes support undo.
 The stored text stays Markdown. ⌘↩ (including keypad Enter) saves and appends to
-the active session; outside a session the footer says “Create note” and it creates a separate root note. Its title comes
-from the first non-empty line with Markdown removed, capped at a word boundary at
-60 characters (then “…”), or “Note yyyy-MM-dd HH.mm” if nothing remains. Filenames
-use the existing cleaning/collision rules (`Title.md`, `Title 2.md`). An ordinary
+the active session; outside a session the footer says “Create note” and it creates a separate note. Its name comes
+from the first non-empty line with Markdown removed, or “Note yyyy-MM-dd HH.mm”
+if nothing remains. An unqualified name keeps the 60-character display-title cap
+(then “…”). A path is parsed before display truncation: each component is cleaned
+and bounded to 120 characters and 220 UTF-8 bytes, while the displayed title is
+its sanitized final component, capped at 60 characters. Slashes in the name
+select the note's folder path as described above. An ordinary
 first line equal to the untruncated title is omitted from the body; lists, tasks,
 quotes and code stay intact. Captures and subheadings still use Inbox without a
 session. Return inserts a new line and continues lists (removing an empty marker);
@@ -81,3 +113,5 @@ same file and clears the draft after saving, including when the title line was r
 
 The app links macOS's system SQLite and checks for FTS5 when the search index opens. macOS 14 ships SQLite 3.43 or
 newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQLite versions before 3.44.
+
+Last Updated: `ab5df2f`

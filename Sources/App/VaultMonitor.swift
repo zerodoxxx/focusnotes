@@ -49,6 +49,13 @@ final class VaultMonitor: @unchecked Sendable {
 
     func sync() async { await refresh.run(notes: true, assets: false) }
     func backfill() async { await refresh.run(notes: false, assets: true, fullAssetValidation: true) }
+
+    func refreshExternalRoots() {
+        lock.withLock {
+            guard !stopped else { return }
+            watcher.refreshExternalRoots()
+        }
+    }
 }
 
 private actor VaultRefresh {

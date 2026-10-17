@@ -17,7 +17,7 @@ public enum CaptureFormat {
     /// - Parameters:
     ///   - noteRelativeDir: the note's folder relative to the vault root (`""` for root notes, `"Sessions"` for session notes).
     public static func block(for capture: Capture, noteRelativeDir: String, calendar: Calendar,
-                             includeSourceHeading: Bool = true) -> String {
+                             includeSourceHeading: Bool = true, assetPathPrefix: String? = nil) -> String {
         if case .subheading(let text) = capture.content {
             return "## \(cleanSubheading(text))\n<!-- subheading:\(capture.id.uuidString.lowercased()) -->\n"
         }
@@ -31,7 +31,7 @@ public enum CaptureFormat {
             let trimmed = textBody(text)
             body = trimmed.isEmpty ? "(empty)" : trimmed
         case .image(let assetPath):
-            body = imageBody(assetPath: assetPath, noteRelativeDir: noteRelativeDir)
+            body = imageBody(assetPath: assetPath, noteRelativeDir: noteRelativeDir, assetPathPrefix: assetPathPrefix)
         case .subheading, .note: preconditionFailure("handled above")
         }
         let app = escapeMetadata(cleanPart(capture.source.appName))
@@ -160,10 +160,34 @@ public enum CaptureFormat {
         line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private static func imageBody(assetPath: String, noteRelativeDir: String) -> String {
-        let depth = noteRelativeDir.split(separator: "/").count
-        let link = (String(repeating: "../", count: depth) + assetPath)
-            .replacingOccurrences(of: " ", with: "%20")
-        return "![](\(link))"
+    /// Returns a relative path from `directory` to `target`, without reading either path.
+    /// This supports notes outside the vault while keeping generated links relative.
+    static func relativePath(from directory: URL, to target: URL) -> String {
+        let source = directory.standardizedFileURL.pathComponents
+        let destination = target.standardizedFileURL.pathComponents
+        var common = 0
+        while common < source.count, common < destination.count, source[common] == destination[common] {
+            common += 1
+        }
+        return (Array(repeating: "..", count: source.count - common) + Array(destination.dropFirst(common)))
+            .joined(separator: "/")
     }
+
+    private static func imageBody(assetPath: String, noteRelativeDir: String, assetPathPrefix: String?) -> String {
+        let path: String
+        if let assetPathPrefix {
+            let prefix = assetPathPrefix.isEmpty ? [] : assetPathPrefix.split(separator: "/").map(String.init)
+            let suffix = assetPath.split(separator: "/").map(String.init)
+            path = (prefix + suffix).joined(separator: "/")
+        } else {
+            let depth = noteRelativeDir.split(separator: "/").count
+            path = String(repeating: "../", count: depth) + assetPath
+        }
+        let encoded = path.split(separator: "/", omittingEmptySubsequences: false)
+            .map { String($0).addingPercentEncoding(withAllowedCharacters: pathSegmentCharacters) ?? String($0) }
+            .joined(separator: "/")
+        return "![](\(encoded))"
+    }
+
+    private static let pathSegmentCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
 }

@@ -78,6 +78,35 @@ func checkNoteParser() throws {
     try require(ambiguous.blocks[0].sourceApp == nil && ambiguous.blocks[0].windowTitle == "Window only", "new marker metadata must distinguish app from source title")
     let escaping = NoteParser.parse(contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\n![](../../outside.png)", notePath: "Root.md", titleFallback: "Fallback", calendar: calendar)
     try require(escaping.blocks[0].kind == .text, "an image outside the vault should degrade to text")
+    let noteURL = URL(fileURLWithPath: "/Users/example/Desktop/typed note.md")
+    let assetRootURL = URL(fileURLWithPath: "/Users/example/Vault/assets", isDirectory: true)
+    let image = Capture(id: id, createdAt: minute, content: .image(assetPath: "assets/shot one.png"), source: CaptureSource())
+    let externalBlock = CaptureFormat.block(
+        for: image, noteRelativeDir: "", calendar: calendar,
+        assetPathPrefix: "../Vault"
+    )
+    let external = NoteParser.parse(contents: externalBlock, notePath: noteURL.absoluteString, titleFallback: "typed note",
+                                    calendar: calendar, assetRootURL: assetRootURL)
+    try require(external.blocks.first?.kind == .image && external.blocks.first?.assetPath == "assets/shot one.png",
+                "home-note image links should resolve to vault assets only")
+    let externalEscape = NoteParser.parse(
+        contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\n![](../outside.png)",
+        notePath: noteURL.absoluteString, titleFallback: "typed note", calendar: calendar, assetRootURL: assetRootURL
+    )
+    try require(externalEscape.blocks.first?.kind == .text && externalEscape.blocks.first?.assetPath == nil,
+                "external Markdown links outside the vault asset root must stay unindexed")
+    let encodedTraversal = NoteParser.parse(
+        contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\n![](%2E%2E/%2E%2E/outside.png)",
+        notePath: noteURL.absoluteString, titleFallback: "typed note", calendar: calendar, assetRootURL: assetRootURL
+    )
+    try require(encodedTraversal.blocks.first?.kind == .text && encodedTraversal.blocks.first?.assetPath == nil,
+                "percent-encoded traversal outside the asset root must stay unindexed")
+    let vaultOverTraversal = NoteParser.parse(
+        contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\n![](../../assets/shot.png)",
+        notePath: "Nested/Root.md", titleFallback: "Root", calendar: calendar
+    )
+    try require(vaultOverTraversal.blocks.first?.kind == .text && vaultOverTraversal.blocks.first?.assetPath == nil,
+                "vault-relative image paths must reject traversal above the vault root before re-entering assets")
     let legacy = "### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\nlegacy body\n"
     let newCapture = Capture(id: UUID(), createdAt: minute.addingTimeInterval(42), content: .text("new body"), source: CaptureSource(appName: "Safari", windowTitle: "Page"))
     let repeatedCapture = Capture(id: UUID(), createdAt: minute.addingTimeInterval(43), content: .text("repeat body"), source: newCapture.source)
