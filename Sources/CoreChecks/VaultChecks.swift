@@ -81,7 +81,26 @@ func checkVault() throws {
     try checkSelectedRootSymlink()
     try checkRootAnchorAdoptsExternalCreation()
     try checkNoteNameResolution()
+    try checkCaseInsensitiveAssetsExclusion()
     print("Vault checks passed.")
+}
+
+private func checkCaseInsensitiveAssetsExclusion() throws {
+    let root = try checkMakeDirectory("vault-case-variant-assets")
+    defer { checkRemoveDirectory(root) }
+    let variantAssets = root.appendingPathComponent("ASSETS", isDirectory: true)
+    try checkWrite("# Private asset note\n\ncasevariantassetsecret\n",
+                   to: variantAssets.appendingPathComponent("docs/Asset note.md"))
+
+    // Create the variant before Vault.init/prepare: on case-insensitive macOS,
+    // preparing lowercase `assets` adopts this existing directory spelling.
+    let vault = Vault(root: root)
+    try vault.prepare()
+    let paths = Set(try vault.listNotes().compactMap { vault.relativePath(of: $0.url) })
+    try require(!paths.contains("ASSETS/docs/Asset note.md"),
+                "assets with any root-level case spelling must be excluded from note discovery")
+    try require(!paths.contains("assets/docs/Asset note.md"),
+                "the managed assets directory must never be discovered as a note folder")
 }
 
 private func checkNoteNameResolution() throws {

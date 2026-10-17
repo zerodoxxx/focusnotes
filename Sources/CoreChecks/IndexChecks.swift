@@ -6,7 +6,10 @@ import Foundation
 func checkSearchIndex() async throws {
     let base = try checkMakeDirectory("index")
     defer { checkRemoveDirectory(base) }
-    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    let vaultRoot = base.appendingPathComponent("Vault", isDirectory: true)
+    try checkWrite("# Private asset note\n\ncasevariantassetssecret\n",
+                   to: vaultRoot.appendingPathComponent("ASSETS/docs/Asset note.md"))
+    let vault = Vault(root: vaultRoot)
     let calendar = checkCalendar()
     let early = checkDate(2026, 10, 13, 10, 4)
     let latest = checkDate(2026, 10, 13, 15, 0)
@@ -42,6 +45,8 @@ func checkSearchIndex() async throws {
         let index = try SearchIndex(vault: vault, databaseURL: databaseURL, calendar: calendar)
         let first = try await index.sync()
         try require(first.added == 7 && first.updated == 0 && first.removed == 0 && first.unchanged == 0, "first sync should add every note, including nested notes and Inbox")
+        let excludedAssets = try await index.search("casevariantassetssecret")
+        try require(excludedAssets.isEmpty, "mixed-case root assets folders must stay out of the note search index")
         let second = try await index.sync()
         try require(second.unchanged == 7 && second.added == 0 && second.updated == 0 && second.removed == 0, "second sync should be all unchanged")
         for (url, data) in beforeNotes {

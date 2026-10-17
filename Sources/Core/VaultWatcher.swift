@@ -21,6 +21,8 @@ public final class VaultWatcher: @unchecked Sendable {
     private let queue = DispatchQueue(label: "vault-watcher")
     private let queueKey = DispatchSpecificKey<Bool>()
     private var stream: FSEventStreamRef?
+    private var activeWatchRoots: Set<String>?
+    private var streamGeneration = 0
 
     public init(
         vault: Vault,
@@ -44,6 +46,13 @@ public final class VaultWatcher: @unchecked Sendable {
         return running
     }
 
+    @_spi(Checks)
+    public var streamGenerationForChecks: Int {
+        var generation = 0
+        performOnQueue { generation = self.streamGeneration }
+        return generation
+    }
+
     public func start() {
         performOnQueue { self.startOnQueue() }
     }
@@ -53,18 +62,39 @@ public final class VaultWatcher: @unchecked Sendable {
     }
 
     /// Rebuilds the stream after an explicitly registered external note creates
-    /// missing parent directories. The new roots remain bounded to those notes.
+    /// missing parent directories. Unchanged roots keep the existing stream; a
+    /// replacement starts before the old stream stops, then a bounded full sync
+    /// reconciles any changes during the root transition.
     public func refreshExternalRoots() {
         performOnQueue {
-            guard self.stream != nil else { return }
-            self.stopOnQueue()
-            self.startOnQueue()
+            guard let current = self.stream, let activeWatchRoots = self.activeWatchRoots else { return }
+            guard let desiredWatchRoots = try? self.desiredWatchRoots() else { return }
+            guard desiredWatchRoots != activeWatchRoots,
+                  let replacement = self.createStartedStream(watching: desiredWatchRoots) else { return }
+
+            self.stream = replacement
+            self.activeWatchRoots = desiredWatchRoots
+            self.streamGeneration += 1
+            self.stop(current)
+            self.onChange(VaultChange(notesChanged: [], assetsChanged: [], needsFullSync: true))
         }
     }
 
     private func startOnQueue() {
         guard stream == nil else { return }
+        guard let roots = try? desiredWatchRoots() else { return }
+        guard let stream = createStartedStream(watching: roots) else { return }
+        self.stream = stream
+        activeWatchRoots = roots
+        streamGeneration += 1
+    }
 
+    private func desiredWatchRoots() throws -> Set<String> {
+        let externalPaths = try vault.externalNoteWatchURLs().map(\.path)
+        return Set(([vault.root.path] + externalPaths).map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+    }
+
+    private func createStartedStream(watching roots: Set<String>) -> FSEventStreamRef? {
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
@@ -72,8 +102,7 @@ public final class VaultWatcher: @unchecked Sendable {
             release: nil,
             copyDescription: nil
         )
-        let externalPaths = (try? vault.externalNoteWatchURLs())?.map(\.path) ?? []
-        let paths = Array(Set([vault.root.path] + externalPaths)).sorted() as CFArray
+        let paths = roots.sorted() as CFArray
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,
             vaultWatcherCallback,
@@ -83,21 +112,26 @@ public final class VaultWatcher: @unchecked Sendable {
             latency,
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)
         ) else {
-            return
+            return nil
         }
 
         FSEventStreamSetDispatchQueue(stream, queue)
         guard FSEventStreamStart(stream) else {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
-            return
+            return nil
         }
-        self.stream = stream
+        return stream
     }
 
     private func stopOnQueue() {
         guard let stream else { return }
         self.stream = nil
+        activeWatchRoots = nil
+        stop(stream)
+    }
+
+    private func stop(_ stream: FSEventStreamRef) {
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
         FSEventStreamRelease(stream)
@@ -158,7 +192,7 @@ public final class VaultWatcher: @unchecked Sendable {
                 continue
             }
 
-            if components[0] == Vault.assetsDirectoryName {
+            if components[0].caseInsensitiveCompare(Vault.assetsDirectoryName) == .orderedSame {
                 assetsChanged.insert(relativePath)
             } else if isMarkdown(name), !isDirectory(flags) {
                 notesChanged.insert(relativePath)
@@ -185,7 +219,7 @@ public final class VaultWatcher: @unchecked Sendable {
             return false
         }
 
-        if components[0] == Vault.assetsDirectoryName {
+        if components[0].caseInsensitiveCompare(Vault.assetsDirectoryName) == .orderedSame {
             return components.count >= 2
         }
         return isMarkdown(name)

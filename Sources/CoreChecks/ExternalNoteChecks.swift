@@ -1,4 +1,4 @@
-import Core
+@_spi(Checks) import Core
 import Foundation
 
 private final class ExternalWatcherRecorder: @unchecked Sendable {
@@ -64,6 +64,7 @@ func checkExternalNoteRegistry() async throws {
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     watcher.start()
     try require(watcher.isRunning, "external-note watcher should start before registration")
+    let initialGeneration = watcher.streamGenerationForChecks
 
     let capture = externalNoteCapture("/Desktop/Research/Registered", body: "externalregistryneedle", now: now)
     let prepared = try await service.prepareNote(capture, calendar: calendar)
@@ -83,8 +84,18 @@ func checkExternalNoteRegistry() async throws {
                 "reopening a Vault must not scan unrelated files in HOME")
 
     // The app refreshes watcher roots after a successful save. Exercise the
-    // same refresh once the new registered parent directory exists.
+    // same refresh once the new registered parent directory exists. A changed
+    // root set must start a replacement and request reconciliation for events
+    // that could have occurred during the transition.
     watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == initialGeneration + 1,
+                "adding an external parent should replace the active watcher stream")
+    let rootRefresh = recorder.waitForChange(timeout: 3.0) { $0.needsFullSync }
+    try require(rootRefresh != nil, "adding an external watch root should request a bounded full sync")
+    let activeGeneration = watcher.streamGenerationForChecks
+    watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == activeGeneration,
+                "refreshing the same external roots should preserve the replacement stream")
     try checkWrite("# Registered\n\nexternalregistryneedle updated", to: registered.url)
     let externalChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains(registered.id) }
     watcher.stop()
