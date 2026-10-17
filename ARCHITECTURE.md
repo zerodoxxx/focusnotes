@@ -1,6 +1,6 @@
 # FocusNotes Architecture
 
-Last Updated: 2026-10-17 (source baseline `74a6ffd020f793474dcbd46209466959a722401f`)
+Last Updated: 2026-10-17 (previous commit: `f3d72362bd81a0875523d78cab8ba06eed830604`)
 
 ## Runtime and package boundaries
 
@@ -40,7 +40,7 @@ The selection path checks secure-input state, Accessibility trust, and whether t
 
 Vision OCR classifies a region as text or image from OCR coverage, confidence, and line count; if OCR takes more than 1.5 seconds, the pending capture retains the PNG and holds OCR for deferred completion. ([Sources/CaptureKit/CaptureClassifier.swift](Sources/CaptureKit/CaptureClassifier.swift#L19-L48), [Sources/App/CapturePipeline.swift](Sources/App/CapturePipeline.swift#L226-L258))
 
-`Capture` represents text, image, subheading, and typed-note content with a UUID, timestamp, and optional source app/window metadata. For ordinary captures with a non-empty heading, `Router` matches root-note titles first, session titles second, then Inbox, and creates a new root note if none match; without a heading it selects the active session or Inbox. Typed-note saves use `prepareNote`: an explicit destination is retained, otherwise an active session is selected, or `TypedNote` supplies a title for a unique new root path. ([Sources/Core/Capture.swift](Sources/Core/Capture.swift#L3-L34), [Sources/Core/Router.swift](Sources/Core/Router.swift#L15-L50), [Sources/Core/CaptureService.swift](Sources/Core/CaptureService.swift#L77-L89), [Sources/Core/TypedNote.swift](Sources/Core/TypedNote.swift#L8-L38), [Sources/App/AppController.swift](Sources/App/AppController.swift#L777-L822))
+`Capture` represents text, image, subheading, and typed-note content with a UUID, timestamp, and optional source app/window metadata. For ordinary captures with a non-empty note title, `Router` matches root-note titles first, session titles second, then Inbox, and creates a new root note if none match; without a note title it selects the active session or Inbox. Typed-note saves use `prepareNote`: an explicit destination is retained, otherwise an active session is selected, or `TypedNote` supplies a title for a unique new root path. ([Sources/Core/Capture.swift](Sources/Core/Capture.swift#L3-L34), [Sources/Core/Router.swift](Sources/Core/Router.swift#L15-L50), [Sources/Core/CaptureService.swift](Sources/Core/CaptureService.swift#L77-L89), [Sources/Core/TypedNote.swift](Sources/Core/TypedNote.swift#L8-L38), [Sources/App/AppController.swift](Sources/App/AppController.swift#L777-L822))
 
 The pipeline prepares a fixed destination before saving, stores a job in the recovery journal before waiting on earlier commits, then writes via `CaptureService` and `NoteWriter`; image jobs carry a stable vault-relative asset path. ([Sources/App/CapturePipeline.swift](Sources/App/CapturePipeline.swift#L75-L94), [Sources/App/AppController.swift](Sources/App/AppController.swift#L393-L423))
 

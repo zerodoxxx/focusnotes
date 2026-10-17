@@ -1,13 +1,15 @@
 # focusnotes reference
 
+Last Updated: 2026-10-17 (previous commit: `f3d72362bd81a0875523d78cab8ba06eed830604`)
+
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
 ## Capture and storage
 
 Pressing a capture shortcut again while its toast is visible chooses the destination note.
 
-Notes are append-only, plain Markdown compatible with Obsidian: `#` names the
-note, `##` is a user subheading, and `###` identifies a source. A source heading
+Notes are append-only, plain Markdown compatible with Obsidian: `#` contains the note title;
+`##` is a user subheading, and `###` identifies a source. A source heading
 appears on the first capture, when the source changes, or after an intervening
 Markdown heading outside fenced code. Timestamps and apps live in invisible
 markers, so repeated captures stay uncluttered:
