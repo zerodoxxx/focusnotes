@@ -57,10 +57,12 @@ with `~$` are rejected. The vault's `assets/` destination is reserved, matched
 case-insensitively; a home-relative path that resolves inside that directory is
 also rejected. Paths are limited to 32 components and 900 UTF-8 bytes.
 Vault notes are discovered recursively below the vault, with hidden files and
-`assets/` excluded. Before writing to an external destination, Focusnotes records
-its exact HOME-relative Markdown path in a durable registry so a journal replay
-can recover the same destination. At startup, safely readable notes at registered
-paths join the vault's discovered notes; missing or unreadable paths are skipped.
+the root-level directory named `assets` excluded case-insensitively; nested
+directories named `assets` remain ordinary note folders. Before writing to an
+external destination, Focusnotes records its exact HOME-relative Markdown path
+in a durable registry so journal replay can reuse the destination. At startup,
+safely readable notes at registered paths join the vault's discovered notes;
+missing or unreadable paths are skipped.
 Search indexes those paths, and the watcher monitors existing parent directories
 of registered external notes. A note directly under HOME may require HOME as the
 FSEvents root; events are filtered to exact registered note paths, so unrelated
@@ -112,4 +114,4 @@ same file and clears the draft after saving, including when the title line was r
 The app links macOS's system SQLite and checks for FTS5 when the search index opens. macOS 14 ships SQLite 3.43 or
 newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQLite versions before 3.44.
 
-Last Updated: `57fd18b`
+Last Updated: `ab5df2f`
