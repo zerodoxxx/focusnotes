@@ -28,6 +28,8 @@ func checkSearchIndex() async throws {
     try checkWrite("# Café Manual\n\nA documentunique deletedterm paragraph.\n### ordinary heading\nHand edited content.\n", to: manualURL)
     let fallbackURL = vault.root.appendingPathComponent("No Title.md")
     try checkWrite("fallbackunique first line\n\nsecond paragraph", to: fallbackURL)
+    try checkWrite("nestedindexneedle from a deeply nested note.\n",
+                   to: vault.root.appendingPathComponent("science/math/Nested.md"))
     try FileManager.default.setAttributes([.modificationDate: early], ofItemAtPath: rootURL.path)
     try FileManager.default.setAttributes([.modificationDate: early.addingTimeInterval(60)], ofItemAtPath: sessionURL.path)
     try FileManager.default.setAttributes([.modificationDate: early.addingTimeInterval(120)], ofItemAtPath: manualURL.path)
@@ -39,9 +41,9 @@ func checkSearchIndex() async throws {
     do {
         let index = try SearchIndex(vault: vault, databaseURL: databaseURL, calendar: calendar)
         let first = try await index.sync()
-        try require(first.added == 6 && first.updated == 0 && first.removed == 0 && first.unchanged == 0, "first sync should add every note, including Inbox")
+        try require(first.added == 7 && first.updated == 0 && first.removed == 0 && first.unchanged == 0, "first sync should add every note, including nested notes and Inbox")
         let second = try await index.sync()
-        try require(second.unchanged == 6 && second.added == 0 && second.updated == 0 && second.removed == 0, "second sync should be all unchanged")
+        try require(second.unchanged == 7 && second.added == 0 && second.updated == 0 && second.removed == 0, "second sync should be all unchanged")
         for (url, data) in beforeNotes {
             let after = try Data(contentsOf: url)
             try require(after == data, "indexing must never modify Markdown")
@@ -57,6 +59,9 @@ func checkSearchIndex() async throws {
         try require(diacritics.contains { $0.notePath == rootPath }, "unicode61 should remove diacritics")
         let fallback = try await index.search("fallbackunique")
         try require(fallback.first?.noteTitle == "No Title" && fallback.first?.blockKind == .loose, "ordinary files should have fallback titles and searchable loose blocks")
+        let nested = try await index.search("nestedindexneedle")
+        try require(nested.count == 1 && nested[0].notePath == "science/math/Nested.md",
+                    "search should index nested notes with their full vault-relative path")
         let rootHit = andHits.first { $0.captureID == rootSave.captureID }!
         let lookedUp = try await index.capture(id: rootSave.captureID)
         try require(rootHit.blockID > 0 && lookedUp?.blockID == rootHit.blockID && lookedUp?.body == rootHit.body && rootHit.body.contains("token bucket"), "hits and capture lookup must expose the block ID and full body")
@@ -80,7 +85,7 @@ func checkSearchIndex() async throws {
         try require(suggestions.map(\.path) == ["Manual.md", active.notePath, rootPath], "heading suggestions should fold diacritics and use modification order")
         try require(suggestions[0].modified == early.addingTimeInterval(120), "suggestions should expose note modification dates")
         let allSuggestions = try await index.headingSuggestions(prefix: "")
-        try require(allSuggestions.count == 5 && allSuggestions.allSatisfy { $0.kind != .inbox }, "empty heading prefix should include all notes except Inbox")
+        try require(allSuggestions.count == 6 && allSuggestions.allSatisfy { $0.kind != .inbox }, "empty heading prefix should include all notes except Inbox")
         let literalWildcard = try await index.headingSuggestions(prefix: "%")
         try require(literalWildcard.isEmpty, "heading prefix wildcard characters must be literal")
         let recent = try await index.recent()
@@ -105,7 +110,7 @@ func checkSearchIndex() async throws {
         let embeddable = try await index.embeddableBlocks()
         let captureKey = rootPath + "#" + rootSave.captureID.uuidString.lowercased()
         let imageKey = ocr[0].embeddingKey
-        try require(Set(embeddable.map(\.key)).count == embeddable.count && embeddable.count == 9,
+        try require(Set(embeddable.map(\.key)).count == embeddable.count && embeddable.count == 10,
                     "embeddable blocks should include captures, images, and loose paragraphs once")
         try require(embeddable.contains { $0.key == captureKey && $0.body == rootHit.body && $0.noteTitle == rootHit.noteTitle && $0.kind == .text },
                     "text embedding metadata should contain the full body, title, and capture key")
@@ -124,7 +129,7 @@ func checkSearchIndex() async throws {
         // One note changes; no-op sync does not discard OCR, and reindexing its owner retains OCR too.
         try checkWrite(try checkRead(fallbackURL) + "\n\nappendedunique", to: fallbackURL)
         let changed = try await index.sync()
-        try require(changed.updated == 1 && changed.unchanged == 5 && changed.added == 0 && changed.removed == 0, "one append should update exactly one note")
+        try require(changed.updated == 1 && changed.unchanged == 6 && changed.added == 0 && changed.removed == 0, "one append should update exactly one note")
         try await index.reindex(note: rootURL)
         let stable = try await index.hits(forEmbeddingKeys: [captureKey, imageKey])
         try require(stable.count == 2 && stable[captureKey]?.body == rootHit.body, "embedding keys should survive row replacement on reindex")
@@ -140,7 +145,7 @@ func checkSearchIndex() async throws {
         let ownHit = try await index.capture(id: appendedID)
         let postReindex = try await index.sync()
         let afterOwnSync = try await index.capture(id: appendedID)
-        try require(postReindex.unchanged == 6 && postReindex.updated == 0 && ownHit?.blockID == afterOwnSync?.blockID,
+        try require(postReindex.unchanged == 7 && postReindex.updated == 0 && ownHit?.blockID == afterOwnSync?.blockID,
                     "sync after our own indexed append must leave rows intact without reindexing")
         try FileManager.default.removeItem(at: manualURL)
         let deleted = try await index.sync()
@@ -148,7 +153,7 @@ func checkSearchIndex() async throws {
         let goneKeys = try await index.hits(forEmbeddingKeys: ["Manual.md#loose-0"])
         let remainingBlocks = try await index.embeddableBlocks()
         try require(goneKeys.isEmpty && !remainingBlocks.contains { $0.key.hasPrefix("Manual.md#") }, "deleted blocks should disappear from semantic enumeration and resolution")
-        try require(deleted.removed == 1 && deleted.unchanged == 5 && gone.isEmpty, "deleted notes and their FTS rows must disappear")
+        try require(deleted.removed == 1 && deleted.unchanged == 6 && gone.isEmpty, "deleted notes and their FTS rows must disappear")
 
         let assetURL = vault.root.appendingPathComponent(imagePath)
         try Data([1, 2, 3, 4, 5]).write(to: assetURL)
@@ -174,7 +179,7 @@ func checkSearchIndex() async throws {
         let reopened = try SearchIndex(vault: vault, databaseURL: databaseURL, calendar: calendar)
         let stats = try await reopened.sync()
         let persisted = try await reopened.search("persistedocr")
-        try require(stats.unchanged == 5 && persisted.count == 1, "a valid cache should reopen with OCR intact")
+        try require(stats.unchanged == 6 && persisted.count == 1, "a valid cache should reopen with OCR intact")
     }
     try removeIndexDatabase(databaseURL)
     do {
@@ -182,7 +187,7 @@ func checkSearchIndex() async throws {
         let stats = try await rebuilt.sync()
         let missing = try await rebuilt.assetsMissingText()
         let lostOCR = try await rebuilt.search("persistedocr")
-        try require(stats.added == 5 && missing == [imagePath] && lostOCR.isEmpty, "a deleted cache must rebuild from Markdown and request fresh OCR")
+        try require(stats.added == 6 && missing == [imagePath] && lostOCR.isEmpty, "a deleted cache must rebuild from Markdown and request fresh OCR")
         try await rebuilt.setImageText(assetPath: imagePath, text: "rebuiltocr", fingerprint: SearchIndex.imageFingerprint(try Data(contentsOf: vault.root.appendingPathComponent(imagePath))))
         let filled = try await rebuilt.assetsMissingText()
         try require(filled.isEmpty, "backfilled OCR should be current after rebuilding")
@@ -192,13 +197,13 @@ func checkSearchIndex() async throws {
     do {
         let recovered = try SearchIndex(vault: vault, databaseURL: databaseURL, calendar: calendar)
         let stats = try await recovered.sync()
-        try require(stats.added == 5, "corrupt files should be replaced with a fresh cache")
+        try require(stats.added == 6, "corrupt files should be replaced with a fresh cache")
     }
     try setIndexVersion(databaseURL, version: 77)
     do {
         let migrated = try SearchIndex(vault: vault, databaseURL: databaseURL, calendar: calendar)
         let stats = try await migrated.sync()
-        try require(stats.added == 5, "unknown schema versions should cause a rebuild")
+        try require(stats.added == 6, "unknown schema versions should cause a rebuild")
     }
     try await checkIndexRankingAndSharedAssets()
     try await checkOCRFingerprintRace()

@@ -65,8 +65,13 @@ func checkVaultWatcher() throws {
     let sessionChange = recorder.waitForChange(timeout: 2.5) { $0.notesChanged.contains("Sessions/S.md") }
     try require(sessionChange != nil, "VaultWatcher did not report Sessions/S.md within 3 seconds")
 
+    try checkWrite("# Nested\n", to: root.appendingPathComponent("science/math/Trigonometry.md"))
+    let nestedChange = recorder.waitForChange(timeout: 2.5) { $0.notesChanged.contains("science/math/Trigonometry.md") }
+    try require(nestedChange != nil, "VaultWatcher did not report a note nested under user folders")
+
     try checkWrite("metadata", to: root.appendingPathComponent(".DS_Store"))
     try checkWrite("temporary", to: root.appendingPathComponent("Foo.md.swp"))
+    try checkWrite("lock", to: root.appendingPathComponent("~$draft.md"))
     try require(recorder.waitForQuiet(for: 0.5), "VaultWatcher reported a hidden or swap file")
 
     try checkWrite("# Bar\n", to: root.appendingPathComponent("Bar.md"))

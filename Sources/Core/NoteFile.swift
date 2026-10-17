@@ -5,6 +5,11 @@ import Foundation
 enum NoteFile {
     private static let attempts = 4
 
+    struct ManagedDirectoryEntry: Sendable {
+        let name: String
+        let isDirectory: Bool
+    }
+
     private struct FileIdentity: Equatable {
         let device: dev_t
         let inode: ino_t
@@ -78,6 +83,54 @@ enum NoteFile {
         }
         guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
         return names
+    }
+
+    /// Lists names and classifies directories from the same validated descriptor.
+    /// Known `d_type` values avoid opening every regular note as a candidate
+    /// directory; unknown values fall back to descriptor-relative `fstatat`.
+    static func listManagedDirectoryEntries(in root: VaultDirectoryAnchor,
+                                            relativePath: String) throws -> [ManagedDirectoryEntry] {
+        let components = relativePath.isEmpty ? [] : try pathComponents(relativePath)
+        let directories = try openDirectory(root: root, components: components, create: false)
+        let descriptor = openat(directories.descriptor, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+        guard let stream = fdopendir(descriptor) else {
+            close(descriptor)
+            throw posixError()
+        }
+        defer { closedir(stream) }
+
+        var entries: [ManagedDirectoryEntry] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(stream) else {
+                if errno != 0 { throw posixError() }
+                break
+            }
+            var value = entry.pointee
+            let capacity = MemoryLayout.size(ofValue: value.d_name)
+            let name = withUnsafePointer(to: &value.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { String(cString: $0) }
+            }
+            guard name != ".", name != ".." else { continue }
+
+            let isDirectory: Bool
+            if value.d_type == DT_DIR {
+                isDirectory = true
+            } else if value.d_type == DT_UNKNOWN {
+                var attributes = stat()
+                guard fstatat(directories.descriptor, name, &attributes, AT_SYMLINK_NOFOLLOW) == 0 else {
+                    if errno == ENOENT { continue }
+                    throw posixError()
+                }
+                isDirectory = attributes.st_mode & S_IFMT == S_IFDIR
+            } else {
+                isDirectory = false
+            }
+            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory))
+        }
+        guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
+        return entries
     }
 
     /// Reads only a bounded prefix from a regular, app-owned, single-link note.
