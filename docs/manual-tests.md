@@ -69,14 +69,20 @@ Use a temporary vault and a disposable test folder under your home directory.
    indexed, and editing it does not make its content searchable. Repeat with a
    disposable note directly under HOME (`/focusnotes-path-check-root`) and an
    unregistered Markdown file beside it; confirm only the registered note's
-   edits become searchable. Remove the test files when finished.
+   edits become searchable. Save a second note in the same external folder, then
+   edit the first and confirm its change is still indexed. Remove the test files
+   when finished.
 4. **Path safety:** Try a title with a `..` component, such as
    `science/../outside`, a leaf beginning `~$` (for example `folder/~$draft`),
    and vault destinations `assets/example` and `ASSETS/example`. Also try the
    leading-slash home-relative spelling of a path inside the vault's `assets/`
    directory. Try destinations crossing a symbolic-link directory or file.
    Confirm each save is rejected, no file outside the allowed destination is
-   changed, and the draft remains available for correction.
+   changed, and the draft remains available for correction. On a case-sensitive
+   test volume, create a root-level `ASSETS/ignored.md` in the temporary vault;
+   confirm it stays out of Browse and Search like the `assets/` tree. When
+   checking watcher events, confirm changes there are classified as assets, not
+   notes.
 5. **Session namespace:** Start a session and save a typed note. Confirm it
    appends under `Sessions/<session title>.md`; it does not create a note at a
    title-derived folder or home-relative path. End the session and confirm a
@@ -184,4 +190,4 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    click-away and Space changes. Opening another focusnotes panel, save, esc/✕, Open as Note and
    app quit still close the note.
 
-Last Updated: `57fd18b`
+Last Updated: `ab5df2f`
