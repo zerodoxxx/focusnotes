@@ -322,6 +322,8 @@ extension AppController {
               try String(contentsOf: duplicateTitle.destination.url, encoding: .utf8).contains("<!-- note:\(duplicateTitle.captureID.uuidString.lowercased()) at=") else {
             throw SelfTestFailure("Controller typed-note collision did not append to the existing note")
         }
+        guard let savedAsNew = try await controller.addNote(rootDraft, newNote: true),
+              savedAsNew.destination.url.lastPathComponent == "independentnoteneedle 2.md" else { throw SelfTestFailure("Save as New Note must keep the collision suffix") }
         try await checkQuickNotePinPersistence()
         let resumed = try await controller.startSession(name: "feedback")
         guard resumed.notePath == session.notePath, resumed.resumed == true else { throw SelfTestFailure("Session did not resume by name") }

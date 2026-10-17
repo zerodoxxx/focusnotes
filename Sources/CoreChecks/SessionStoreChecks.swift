@@ -191,7 +191,26 @@ func checkSessionStore() async throws {
     try require(retained == kept && FileManager.default.fileExists(atPath: stateFile.path), "failed state deletion must keep the session active")
     try await store.end()
     try await checkSessionStartRejectsLinkedDirectory(calendar: calendar, now: now)
+    try await checkSessionResumeRanking(calendar: calendar, now: now)
     print("SessionStore checks passed.")
+}
+
+private func checkSessionResumeRanking(calendar: Calendar, now: Date) async throws {
+    let base = try checkMakeDirectory("session-rank")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault", isDirectory: true))
+    try vault.prepare()
+    // Bar.md is titled "Foo" and Foo.md is titled "Something": "Foo" must resume Bar.md by title, then Foo.md by file name once it exists.
+    try checkWrite("# Foo\n", to: vault.sessionsURL.appendingPathComponent("Bar.md"))
+    let store = SessionStore(stateDirectory: base.appendingPathComponent("State", isDirectory: true),
+                             vault: vault, calendar: calendar, now: { now })
+    let byTitle = try await store.start(name: "Foo")
+    try require(byTitle.notePath == "Sessions/Bar.md" && byTitle.resumed == true,
+                "a session name matching a note title must resume that note, got \(byTitle.notePath)")
+    try checkWrite("# Something\n", to: vault.sessionsURL.appendingPathComponent("Foo.md"))
+    let byFileName = try await store.start(name: "Foo")
+    try require(byFileName.notePath == "Sessions/Foo.md" && byFileName.resumed == true,
+                "a file-name match must beat a title match, got \(byFileName.notePath)")
 }
 
 private func checkSessionStartRejectsLinkedDirectory(calendar: Calendar, now: Date) async throws {

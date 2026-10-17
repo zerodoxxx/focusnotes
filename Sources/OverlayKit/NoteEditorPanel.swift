@@ -391,6 +391,10 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     var onChange: ((String) -> Void)?
     /// The name a new note gets for this text; the host supplies the real rule.
     var titleForText: (String) -> String = NoteEditorHandlers.defaultTitle { didSet { updateTitle() } }
+    /// The title of an existing note that the text names, if saving would append to it; nil otherwise.
+    var existingTitleForText: (String) -> String? = { _ in nil } { didSet { updateTitle() } }
+    /// True while the typed title names an existing note, so saving appends to it rather than creating one.
+    private(set) var appendsToExisting = false
     var onResize: ((NSSize, Bool) -> Void)?
     private func resize(animated: Bool = true) { onResize?(desiredSize, animated) }
     var onAction: ((NoteActionID) -> Void)?
@@ -506,21 +510,37 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         destination = title
         self.isPinned = isPinned
         titlePin.isHidden = !isPinned
-        saveHint.caption.stringValue = title == nil ? "Create note" : "Add to note"
         updateTitle()
         footer.needsLayout = true
         needsLayout = true
         measure() // the caption can raise the minimum width
     }
+    /// Re-evaluate the title after the note snapshot arrives, so "Add to note" can appear late.
+    func refreshTitle() { updateTitle() }
     /// Destination title, else the title the text will be saved under, else a placeholder name.
     private func updateTitle() {
         let text = textView.string
         var value = destination ?? OverlayTheme.quickEmptyTitle
+        var appends = destination != nil
         if destination == nil, let first = text.firstIndex(where: { !$0.isWhitespace }) {
             // Only the head of the note can name it, so keep this cheap for long drafts: skip leading blank
             // lines, then hand over a bounded slice.
-            let named = titleForText(String(text[first...].prefix(2_000)))
-            if !named.isEmpty { value = named }
+            let head = String(text[first...].prefix(2_000))
+            // An existing note with this title wins; otherwise the title the text will be saved under.
+            if let existing = existingTitleForText(head), !existing.isEmpty {
+                value = existing
+                appends = true
+            } else {
+                let named = titleForText(head)
+                if !named.isEmpty { value = named }
+            }
+        }
+        appendsToExisting = destination == nil && appends
+        let caption = appends ? "Add to note" : "Create note"
+        if saveHint.caption.stringValue != caption {
+            saveHint.caption.stringValue = caption
+            footer.needsLayout = true
+            needsLayout = true
         }
         guard title.stringValue != value else { return }
         title.stringValue = value
@@ -624,6 +644,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             textView.insertText("", replacementRange: NSRange(location: 0, length: length)) // undoable; fires textDidChange
         case .browse: toggleBrowse()
         case .pin, .newNote, .openAsNote: onAction?(id)
+        case .saveAsNewNote: if appendsToExisting { onAction?(id) } else { textView.onSave?() } // nothing to escape: plain save
         }
     }
 
@@ -634,7 +655,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     func showActions(query: String = "", selectedIndex: Int? = nil) {
         guard actionMenu == nil else { return }
         detachBrowse()
-        let menu = NoteActionMenuView(items: NoteActionItem.standard(isPinned: isPinned, hasText: !textView.string.isEmpty),
+        let menu = NoteActionMenuView(items: NoteActionItem.standard(isPinned: isPinned, hasText: !textView.string.isEmpty,
+                                                                     appendsToExisting: appendsToExisting),
                                       query: query, selectedIndex: selectedIndex)
         menu.onRun = { [weak self] id in self?.hideActions(); self?.perform(id) }
         menu.onClose = { [weak self] in self?.hideActions() }
@@ -999,18 +1021,25 @@ public struct NoteEditorHandlers {
     public var onError: (Error) -> Void
     /// The title a new note gets for this text, shown in the top band until a destination is chosen.
     public var titleForText: (String) -> String
+    /// The title of the existing note this text would append to, or nil when saving creates a new note.
+    public var existingTitleForText: (String) -> String?
     /// Fast, coalesced persistence path for edits; `onDraft` remains the synchronous flush barrier.
     public var onScheduleDraft: (String) -> Void
+    /// Creates a new note from this text although its title names an existing one (the Save as New Note escape).
+    public var onSaveAsNew: (String) -> Void
 
     public init(onDraft: @escaping (String) throws -> Void, onSubmit: @escaping (String) -> Void,
                 onNew: @escaping (String) -> Void, onOpenAsNote: @escaping (String) -> Void,
                 browseItems: @escaping () -> [BrowseItem], onBrowse: @escaping (BrowseItem, BrowseChoice) -> Void,
                 onTogglePin: @escaping () -> Bool, onClose: @escaping () -> Void, onError: @escaping (Error) -> Void,
                 titleForText: @escaping (String) -> String = NoteEditorHandlers.defaultTitle,
-                onScheduleDraft: ((String) -> Void)? = nil) {
+                onScheduleDraft: ((String) -> Void)? = nil,
+                existingTitleForText: @escaping (String) -> String? = { _ in nil },
+                onSaveAsNew: @escaping (String) -> Void = { _ in }) {
         self.onDraft = onDraft; self.onSubmit = onSubmit; self.onNew = onNew; self.onOpenAsNote = onOpenAsNote
         self.browseItems = browseItems; self.onBrowse = onBrowse; self.onTogglePin = onTogglePin
         self.onClose = onClose; self.onError = onError; self.titleForText = titleForText
+        self.existingTitleForText = existingTitleForText; self.onSaveAsNew = onSaveAsNew
         self.onScheduleDraft = onScheduleDraft ?? { text in
             do { try onDraft(text) } catch { onError(error) }
         }
@@ -1063,6 +1092,7 @@ public final class NoteEditorPanel {
         }
         panel.cancelHandler = { [weak view] in view?.closeOverlay() ?? false }
         view.titleForText = handlers.titleForText
+        view.existingTitleForText = handlers.existingTitleForText
         view.browseItems = handlers.browseItems
         view.onBrowseChoice = { [weak panel, weak view] item, choice in
             if choice == .write { handlers.onBrowse(item, choice); view?.hideBrowse(); return }
@@ -1094,6 +1124,9 @@ public final class NoteEditorPanel {
             case .openAsNote:
                 panel.dismiss()
                 if !panel.isVisible { handlers.onOpenAsNote(text) }
+            case .saveAsNewNote: // the editor view only forwards this while saving would append
+                panel.dismiss()
+                if !panel.isVisible { handlers.onSaveAsNew(text) }
             case .pin:
                 view.setDestination(view.destination, isPinned: handlers.onTogglePin())
             case .browse, .copyMarkdown, .discardDraft:
@@ -1117,4 +1150,7 @@ public final class NoteEditorPanel {
     /// Refresh an open Browse card after its asynchronous note snapshot arrives. Keep its
     /// filter text and selected item when that item is still present in the new snapshot.
     public func refreshBrowseItems() { content?.refreshBrowseItems() }
+
+    /// Re-evaluate the top-band title once the asynchronous note snapshot arrives.
+    public func refreshTitle() { content?.refreshTitle() }
 }

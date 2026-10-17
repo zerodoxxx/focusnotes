@@ -178,9 +178,12 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     }
     let pending = Capture(id: UUID(), createdAt: date, content: .note("Reserved title"), source: CaptureSource())
     let pendingFirst = try await service.prepareNote(pending, calendar: calendar)
-    let pendingNext = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: pending.content, source: CaptureSource()), calendar: calendar)
+    let pendingNext = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: pending.content, source: CaptureSource()), newNote: true, calendar: calendar)
     try require(pendingFirst.destination.url.lastPathComponent == "Reserved title.md" && pendingNext.destination.url.lastPathComponent == "Reserved title 2.md",
                 "unsaved journal destinations must also reserve their filenames")
+    let pendingAgain = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: pending.content, source: CaptureSource()), calendar: calendar)
+    try require(pendingAgain.destination.url.lastPathComponent == "Reserved title.md" && pendingAgain.createsNote == nil,
+                "a later default append must reuse the reserved filename instead of a new root")
     let original = Capture(id: UUID(), createdAt: date, content: .note("# rootnoteneedle\n\nBody **untouched**"), source: CaptureSource())
     let prepared = try await service.prepareNote(original, calendar: calendar)
     try require(prepared.destination.url.lastPathComponent == "rootnoteneedle.md" && prepared.createsNote == true,
@@ -193,6 +196,12 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     let replayContents = try checkRead(prepared.destination.url)
     try require(replayContents == before && !FileManager.default.fileExists(atPath: vault.root.appendingPathComponent("rootnoteneedle 2.md").path),
                 "journaled replay must reuse its chosen path without creating a second file")
+    let plainDefault = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: original.content, source: CaptureSource()), calendar: calendar)
+    try require(plainDefault.destination.url.lastPathComponent == "rootnoteneedle.md" && plainDefault.createsNote == nil,
+                "a default typed note whose title already exists must append to that note")
+    let asNew = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: original.content, source: CaptureSource()), newNote: true, calendar: calendar)
+    try require(asNew.destination.url.lastPathComponent == "rootnoteneedle 2.md" && asNew.createsNote == true,
+                "Save as New Note must keep the numbered-file behaviour")
     let collisionCapture = Capture(id: UUID(), createdAt: date, content: original.content, source: CaptureSource())
     let collision = try await service.prepareNote(collisionCapture, calendar: calendar)
     _ = try await service.save(collision)
@@ -238,6 +247,18 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     _ = try await index.sync()
     let hit = try await index.search("titleonlyneedle").first
     try require(hit?.title == "titleonlyneedle" && hit?.blockKind == .note && hit?.body == "", "marker-only notes must parse and be searchable by their title")
+    let inboxNote = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: .note("Inbox"), source: CaptureSource()), calendar: calendar)
+    try require(inboxNote.destination.url == vault.inboxURL && inboxNote.destination.kind == .inbox && inboxNote.createsNote == nil,
+                "a typed note titled Inbox must route to Inbox.md")
+    let blankFirst = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: .note("\n\nfirst body"), source: CaptureSource()), calendar: calendar)
+    let blankSecond = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: .note("\n\nsecond body"), source: CaptureSource()), calendar: calendar)
+    try require(blankFirst.destination.url.lastPathComponent == "first body.md" && blankSecond.destination.url.lastPathComponent == "second body.md"
+                && blankFirst.createsNote == true && blankSecond.createsNote == true,
+                "a note whose first line is blank must take its title from the first text line")
+    try checkWrite("# Buy milk\n", to: vault.root.appendingPathComponent("Buy milk.md"))
+    let buyMilk = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: .note("Buy milk"), source: CaptureSource()), calendar: calendar)
+    try require(buyMilk.destination.url.lastPathComponent == "Buy milk.md" && buyMilk.createsNote == nil && buyMilk.capture.content == .note("Buy milk"),
+                "a title-only typed note must append to the existing note with that title")
     _ = try await sessions.start(name: "Typed session")
     let inSession = try await service.prepareNote(original, calendar: calendar)
     try require(inSession.destination.kind == .session && inSession.capture.content == original.content && inSession.createsNote != true,

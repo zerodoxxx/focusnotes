@@ -87,9 +87,12 @@ public actor CaptureService {
         ))
     }
 
-    /// Resolve once. Replay saves this preparation without routing again, even
-    /// if a file with the same name or a different session now exists.
-    public func prepareNote(_ capture: Capture, destination: Destination? = nil, calendar: Calendar) async throws -> PreparedCapture {
+    /// Chooses the note for a typed capture, once. Unless `newNote` is set or the title is a
+    /// generated timestamp, a name that matches an existing note, or one reserved earlier in
+    /// this process, appends to it. Otherwise a new path is reserved. Replay saves this
+    /// preparation without routing again, even if a file with the same name or a different
+    /// session now exists.
+    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, calendar: Calendar) async throws -> PreparedCapture {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
         if let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: try Router.destination(
@@ -101,9 +104,40 @@ public actor CaptureService {
             throw note.pathNameError ?? NotePathNameError.invalidComponent
         }
 
+        let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
+        // A title-only note has no body, so its text (the title line) is appended instead.
+        let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let appendCapture = hasBody ? noteCapture : capture
+        let appendsToMatch = !newNote && !note.isGeneratedTitle
+        let isUnqualified = pathName.scope == .vault && pathName.components.count == 1
+
+        if appendsToMatch, isUnqualified {
+            let notes = (try? vault.listNotes()) ?? []
+            if let existing = Router.existing(title: note.title, notes: notes, vault: vault) {
+                return PreparedCapture(capture: appendCapture, destination: existing, noteMarkerIsIdentity: true)
+            }
+        }
+
         var selectedName = pathName
         var location = try vault.resolveNoteName(selectedName)
-        if !FileManager.default.fileExists(atPath: location.url.path), preparedNoteURLs.contains(location.url) {
+        let locationExists = FileManager.default.fileExists(atPath: location.url.path)
+        if appendsToMatch {
+            var target: URL? = locationExists ? location.url : nil
+            if target == nil {
+                if isUnqualified {
+                    target = preparedNoteURLs.filter { url in
+                        let stem = url.deletingPathExtension().lastPathComponent
+                        return NoteTitle.names(note.title, title: stem, stem: stem)
+                    }.min { $0.path < $1.path }
+                } else if preparedNoteURLs.contains(location.url) {
+                    target = location.url
+                }
+            }
+            if let target {
+                let destination = Destination(url: target, title: note.title, kind: .note)
+                return PreparedCapture(capture: appendCapture, destination: destination, noteMarkerIsIdentity: true)
+            }
+        } else if locationExists || preparedNoteURLs.contains(location.url) {
             var suffix = 2
             while true {
                 var components = pathName.components
@@ -119,12 +153,10 @@ public actor CaptureService {
             }
         }
 
-        let createsNote = !FileManager.default.fileExists(atPath: location.url.path)
         let destinationTitle = selectedName == pathName ? note.title : selectedName.displayTitle
         let destination = Destination(url: location.url, title: destinationTitle, kind: .note)
         preparedNoteURLs.insert(destination.url)
-        let body = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
-        return PreparedCapture(capture: body, destination: destination, createsNote: createsNote, noteMarkerIsIdentity: true)
+        return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying
