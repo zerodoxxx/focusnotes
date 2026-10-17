@@ -154,8 +154,10 @@ public struct NoteRef: Sendable, Equatable {
 
 /// Note identity for internal scans that need the managed path but not a title read.
 struct VaultNoteFile: Sendable {
+    let id: String
     let url: URL
     let kind: NoteKind
+    let snapshot: VaultFileSnapshot?
 }
 
 public struct VaultNoteLocation: Sendable, Equatable {
@@ -232,10 +234,9 @@ public struct Vault: Sendable {
     /// Hidden files and directories are skipped.
     public func listNotes() throws -> [NoteRef] {
         var refs: [NoteRef] = []
-        for path in try markdownFilePaths() {
-            let url = root.appendingPathComponent(path)
-            guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: path) else { continue }
-            refs.append(NoteRef(url: url, title: title(of: url, prefix: prefix), kind: noteKind(for: path)))
+        for note in try markdownFilePaths() {
+            guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: note.id) else { continue }
+            refs.append(NoteRef(url: note.url, title: title(of: note.url, prefix: prefix), kind: note.kind))
         }
         for location in try externalNoteLocations() {
             guard let prefix = try? NoteFile.readManagedPrefix(4096, in: homeAnchor, relativePath: location.relativePath) else { continue }
@@ -244,14 +245,20 @@ public struct Vault: Sendable {
         return refs
     }
 
-    /// Lists Markdown paths without opening their contents. Index synchronization
-    /// performs its own descriptor-backed metadata read and does not need titles.
+    /// Lists Markdown paths with no-follow metadata snapshots. Sync reuses these
+    /// snapshots for unchanged files, opening a note only when its fingerprint changed.
     func listNoteFiles() throws -> [VaultNoteFile] {
-        let vaultFiles = try markdownFilePaths().map { path in
-            VaultNoteFile(url: root.appendingPathComponent(path), kind: noteKind(for: path))
-        }
-        let externalFiles = try externalNoteLocations().map { location in
-            VaultNoteFile(url: location.url, kind: .note)
+        let vaultFiles = try markdownFilePaths(includeNoteMetadata: true).filter { $0.snapshot != nil }
+        var externalFiles: [VaultNoteFile] = []
+        for location in try externalNoteLocations() {
+            do {
+                guard let snapshot = try fileSnapshot(noteID: location.id, includingContents: false) else { continue }
+                externalFiles.append(VaultNoteFile(id: location.id, url: location.url, kind: .note, snapshot: snapshot))
+            } catch let error as POSIXError where
+                error.code == .EACCES || error.code == .ELOOP || error.code == .ENOENT ||
+                error.code == .ENOTDIR || error.code == .EPERM {
+                continue
+            }
         }
         return vaultFiles + externalFiles
     }
@@ -621,19 +628,22 @@ public struct Vault: Sendable {
         return .note
     }
 
-    private func markdownFilePaths(in relativeDirectory: String = "") throws -> [String] {
+    private func markdownFilePaths(in relativeDirectory: String = "",
+                                   includeNoteMetadata: Bool = false) throws -> [VaultNoteFile] {
         let entries: [NoteFile.ManagedDirectoryEntry]
         do {
-            entries = try NoteFile.listManagedDirectoryEntries(in: rootAnchor, relativePath: relativeDirectory)
+            entries = try NoteFile.listManagedDirectoryEntries(in: rootAnchor, relativePath: relativeDirectory,
+                                                               includeNoteMetadata: includeNoteMetadata)
         } catch let error as POSIXError where error.code == .ENOENT {
             return []
         }
-        return try markdownFilePaths(in: relativeDirectory, entries: entries)
+        return try markdownFilePaths(in: relativeDirectory, entries: entries, includeNoteMetadata: includeNoteMetadata)
     }
 
     private func markdownFilePaths(in relativeDirectory: String,
-                                   entries: [NoteFile.ManagedDirectoryEntry]) throws -> [String] {
-        var paths: [String] = []
+                                   entries: [NoteFile.ManagedDirectoryEntry],
+                                   includeNoteMetadata: Bool) throws -> [VaultNoteFile] {
+        var notes: [VaultNoteFile] = []
         for entry in entries.sorted(by: { $0.name < $1.name }) {
             let name = entry.name
             guard !name.hasPrefix(".") else { continue }
@@ -643,20 +653,24 @@ public struct Vault: Sendable {
             if entry.isDirectory {
                 let children: [NoteFile.ManagedDirectoryEntry]
                 do {
-                    children = try NoteFile.listManagedDirectoryEntries(in: rootAnchor, relativePath: path)
+                    children = try NoteFile.listManagedDirectoryEntries(in: rootAnchor, relativePath: path,
+                                                                       includeNoteMetadata: includeNoteMetadata)
                 } catch let error as POSIXError where
                     error.code == .ENOTDIR || error.code == .ELOOP || error.code == .EPERM ||
                     error.code == .EACCES || error.code == .ENOENT {
                     continue
                 }
-                paths.append(contentsOf: try markdownFilePaths(in: path, entries: children))
+                notes.append(contentsOf: try markdownFilePaths(in: path, entries: children,
+                                                               includeNoteMetadata: includeNoteMetadata))
             } else if isMarkdownNoteName(name) {
-                // The listing hint never authorizes file access: listNotes and
-                // SearchIndex validate each leaf through their descriptor reads.
-                paths.append(path)
+                // Only the optional no-follow stat can authorize reuse of
+                // metadata; full contents still require a descriptor read.
+                let snapshot = includeNoteMetadata ? entry.noteSnapshot : nil
+                notes.append(VaultNoteFile(id: path, url: root.appendingPathComponent(path),
+                                           kind: noteKind(for: path), snapshot: snapshot))
             }
         }
-        return paths.sorted()
+        return notes.sorted { $0.id < $1.id }
     }
 
     private func isMarkdownNoteName(_ name: String) -> Bool {

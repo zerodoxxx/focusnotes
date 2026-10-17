@@ -61,7 +61,7 @@ public actor SearchIndex {
     }
 
     public func sync() throws -> SyncStats {
-        let refs = try vault.listNoteFiles() // Paths and kinds only; titles are irrelevant to indexing.
+        let refs = try vault.listNoteFiles() // Note IDs, kinds, and managed metadata; titles are read only for changed files.
         let rows = try database.prepare("SELECT path, mtime, size FROM notes")
         var previous: [String: Fingerprint] = [:]
         while try rows.step() {
@@ -71,22 +71,8 @@ public actor SearchIndex {
         var updated = 0
         var unchanged = 0
         for ref in refs {
-            guard let location = try? vault.managedLocation(of: ref.url) else { continue }
-            let path = location.note.id
-            // This descriptor-backed snapshot validates each path and reads only
-            // metadata. Invalid links and special files are skipped as by listNotes().
-            let metadata: VaultFileSnapshot?
-            do {
-                metadata = try vault.fileSnapshot(noteID: path, includingContents: false)
-            } catch let error as POSIXError where
-                error.code == .EACCES || error.code == .ELOOP || error.code == .ENOENT ||
-                error.code == .ENOTDIR || error.code == .EPERM {
-                // Keep listNotes()'s behavior for unreadable, missing, linked, or
-                // otherwise rejected candidates. Other I/O failures abort sync so
-                // an operational error cannot silently discard a cached row.
-                continue
-            }
-            guard let metadata else { continue }
+            let path = ref.id
+            guard let metadata = ref.snapshot else { continue }
             let old = previous[path]
             if old == Self.fingerprint(metadata) {
                 previous.removeValue(forKey: path)
@@ -95,7 +81,7 @@ public actor SearchIndex {
                 guard let snapshot = try vault.fileSnapshot(noteID: path), let contents = snapshot.contents else { continue }
                 let fingerprint = Self.fingerprint(snapshot)
                 try index(contents: contents, path: path, kind: ref.kind,
-                          titleFallback: location.url.deletingPathExtension().lastPathComponent,
+                          titleFallback: ref.url.deletingPathExtension().lastPathComponent,
                           fingerprint: fingerprint)
                 previous.removeValue(forKey: path)
                 if old == nil { added += 1 } else { updated += 1 }
