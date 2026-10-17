@@ -6,7 +6,7 @@ public enum NoteTitle {
         title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
-    /// Comparison key for matching a heading to a note title.
+    /// Comparison key for matching note titles.
     public static func matchKey(_ title: String) -> String {
         cleanTitle(title)
             .folding(

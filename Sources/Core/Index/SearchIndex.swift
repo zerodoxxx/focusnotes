@@ -267,7 +267,7 @@ public actor SearchIndex {
         return hits
     }
 
-    public func headingSuggestions(prefix: String, limit: Int = 8) throws -> [NoteSuggestion] {
+    public func titleSuggestions(prefix: String, limit: Int = 8) throws -> [NoteSuggestion] {
         guard limit > 0 else { return [] }
         let key = NoteTitle.matchKey(prefix)
         // The lower bound uses title_key's index; the prefix check treats wildcards literally.

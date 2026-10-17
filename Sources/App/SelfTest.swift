@@ -38,7 +38,7 @@ extension AppController {
               try await pipeline.index.capture(id: textPending.id) == nil else {
             throw SelfTestFailure("Staged, uncommitted capture was not journaled at its default destination")
         }
-        guard let textTask = commitPending(heading: "Demo Heading") else { throw SelfTestFailure("Text was not pending") }
+        guard let textTask = commitPending(noteTitle: "Demo Heading") else { throw SelfTestFailure("Text was not pending") }
         let text = try await textTask.value
 
         let png = try await AppMedia.demoPNG()
@@ -58,7 +58,7 @@ extension AppController {
         let sessionCount = try await endSession(session)
         let ownExternal = PendingCapture(trigger: .selection, content: .text("coalescedownneedle app append"),
                                          source: CapturePipeline.source(context), subtitle: "App append")
-        let ownJob = await pipeline.prepare(ownExternal, heading: "External Edit")
+        let ownJob = await pipeline.prepare(ownExternal, noteTitle: "External Edit")
         try await pipeline.journal.store(ownJob)
         _ = try await pipeline.commit(ownJob)
         let external = Capture(id: UUID(), createdAt: Date(), content: .text("watcherexternalneedle appended by another editor"),
@@ -654,7 +654,7 @@ extension AppController {
         let state = base.appendingPathComponent("State")
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: state, calendar: pipeline.calendar)
         let good = CapturePipeline.selection(text: "goodjournalneedle survives corrupt neighbor", context: context)
-        try await live.journal.store(live.prepare(good, heading: nil))
+        try await live.journal.store(live.prepare(good, noteTitle: nil))
         let unsaved = state.appendingPathComponent("unsaved")
         let corruptStem = "00000000-0000-4000-8000-000000000000"
         let corruptData = Data("{broken JSON".utf8)
@@ -663,7 +663,7 @@ extension AppController {
         var missingCaptures: [PendingCapture] = []
         for text in ["missingpngneedle recovered OCR", ""] {
             let missing = PendingCapture(trigger: .region, content: .image(png: png, ocr: text), source: CapturePipeline.source(context), subtitle: "Image")
-            try await live.journal.store(live.prepare(missing, heading: nil))
+            try await live.journal.store(live.prepare(missing, noteTitle: nil))
             try FileManager.default.removeItem(at: unsaved.appendingPathComponent(missing.id.uuidString.lowercased() + ".png"))
             missingCaptures.append(missing)
         }

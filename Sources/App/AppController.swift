@@ -262,7 +262,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let context = suppliedContext ?? FrontmostContext.capture()
         guard context.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         if fromHotkey, let pending, pending.trigger == trigger, pendingToastID == pending.id, toast.isVisible {
-            showHeading(for: pending.id)
+            showTitlePicker(for: pending.id)
             return
         }
         _ = commitPending()
@@ -340,7 +340,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func journalAcquisition(_ capture: PendingCapture) {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
-        let preparation = Task.detached(priority: .userInitiated) { await pipeline.prepare(capture, heading: nil) }
+        let preparation = Task.detached(priority: .userInitiated) { await pipeline.prepare(capture, noteTitle: nil) }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
             try await pipeline.journal.store(preparation.value)
@@ -369,7 +369,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let destination = await recovery?.value.prepared.destination
-            return await pipeline.prepare(capture, heading: nil, destination: destination)
+            return await pipeline.prepare(capture, noteTitle: nil, destination: destination)
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
@@ -377,7 +377,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         stagedJob = (capture.id, preparation, persistence)
         pending = capture
-        // Persist the default job before showing the toast or accepting a heading.
+        // Persist the default job before showing the toast or accepting a note title.
         do { try await persistence.value }
         catch { report(error, title: "Couldn't journal capture") }
         guard pending?.id == capture.id else { return }
@@ -391,7 +391,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     @discardableResult
-    func commitPending(heading: String? = nil, announce: Bool = false) -> Task<SavedCapture, Error>? {
+    func commitPending(noteTitle: String? = nil, announce: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
         pending = nil
         pendingToastID = nil
@@ -406,9 +406,9 @@ final class AppController: NSObject, NSMenuDelegate {
         let preparation = Task.detached(priority: .userInitiated) {
             let destination: Destination?
             if let recovery { destination = await recovery.value.prepared.destination }
-            else if heading == nil { destination = await staged?.preparation.value.prepared.destination }
+            else if noteTitle == nil { destination = await staged?.preparation.value.prepared.destination }
             else { destination = nil }
-            return await pipeline.prepare(capture, heading: heading, destination: destination)
+            return await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
@@ -487,7 +487,7 @@ final class AppController: NSObject, NSMenuDelegate {
             await waitForCommits()
             guard !shutdownFinished else { return }
             // A journal write itself may have failed earlier. Retry the exact prepared
-            // capture, never its heading or destination routing.
+            // capture, never its title or destination routing.
             for (id, preparation) in preparedJobs {
                 let job = await preparation.value
                 do {
@@ -514,7 +514,7 @@ final class AppController: NSObject, NSMenuDelegate {
         return task
     }
 
-    private func showHeading(for id: UUID) {
+    private func showTitlePicker(for id: UUID) {
         pendingToastID = nil
         toast.dismiss(expire: false)
         enqueue { controller in
@@ -522,9 +522,9 @@ final class AppController: NSObject, NSMenuDelegate {
             guard controller.pending?.id == id else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
             guard controller.pending?.id == id, !controller.isTerminating else { return }
-            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, onAccept: { [weak controller] heading in
+            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, onAccept: { [weak controller] noteTitle in
                 guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending(heading: heading, announce: true)
+                _ = controller?.commitPending(noteTitle: noteTitle, announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 guard controller?.pending?.id == id else { return }
                 _ = controller?.commitPending()
@@ -535,11 +535,11 @@ final class AppController: NSObject, NSMenuDelegate {
     private func suggestionSnapshot(sessionsOnly: Bool) async -> [NoteSuggestion] {
         do {
             // InputPanel's provider is synchronous. A sorted snapshot allows the same prefix
-            // filtering as headingSuggestions, without blocking the main actor on SQLite.
-            return try await pipeline.index.headingSuggestions(prefix: "", limit: Int.max)
+            // filtering as titleSuggestions, without blocking the main actor on SQLite.
+            return try await pipeline.index.titleSuggestions(prefix: "", limit: Int.max)
                 .filter { !sessionsOnly || $0.kind == .session }
         } catch {
-            logger.error("Heading suggestions failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+            logger.error("Title suggestions failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
             return []
         }
     }
@@ -660,7 +660,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !controller.isTerminating else { return }
             let pipeline = controller.pipeline
             let active = await pipeline.sessions.current()
-            let sessionDestination = active.map { Router.destination(heading: nil, activeSession: $0, notes: [], vault: pipeline.vault) }
+            let sessionDestination = active.map { Router.destination(noteTitle: nil, activeSession: $0, notes: [], vault: pipeline.vault) }
             do {
                 let restored = try pipeline.drafts.loadSnapshot()
                 let draft = restored.text
@@ -830,7 +830,7 @@ final class AppController: NSObject, NSMenuDelegate {
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
             let active = await controller.pipeline.sessions.current()
-            let destination = Router.destination(heading: nil, activeSession: active, notes: [], vault: controller.pipeline.vault)
+            let destination = Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: controller.pipeline.vault)
             controller.presentInput(placeholder: "Subheading", title: "Add subheading", secondary: "In \(destination.title)",
                                     suggestions: [], onSubmit: { [weak controller] text in
                 controller?.enqueue { controller in
@@ -854,7 +854,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let preparation = Task.detached(priority: .userInitiated) {
             let prepared: PreparedCapture
             if let destination { prepared = PreparedCapture(capture: capture, destination: destination) }
-            else { prepared = await pipeline.service.prepare(capture, heading: nil) }
+            else { prepared = await pipeline.service.prepare(capture, noteTitle: nil) }
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
         preparedJobs[capture.id] = preparation

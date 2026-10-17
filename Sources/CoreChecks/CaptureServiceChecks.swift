@@ -18,7 +18,7 @@ func checkCaptureService() async throws {
     let png = Data([0x89, 0x50, 0x4E, 0x47])
 
     // No active session: text goes to Inbox.md.
-    let inboxSave = try await service.saveText("Hello inbox", source: CaptureSource(appName: "Safari"), heading: nil)
+    let inboxSave = try await service.saveText("Hello inbox", source: CaptureSource(appName: "Safari"), noteTitle: nil)
     try require(inboxSave.captureID == captureID, "saveText should return the capture id")
     try require(inboxSave.destination.kind == .inbox, "no active session should route to Inbox")
     try require(
@@ -32,7 +32,7 @@ func checkCaptureService() async throws {
     // Active session: text goes to the session note, not Inbox.md.
     _ = try await sessions.start(name: "Design")
     let sessionURL = vault.sessionsURL.appendingPathComponent("Design.md")
-    let sessionSave = try await service.saveText("Into session", source: CaptureSource(appName: "Xcode"), heading: nil)
+    let sessionSave = try await service.saveText("Into session", source: CaptureSource(appName: "Xcode"), noteTitle: nil)
     try require(sessionSave.destination.kind == .session, "an active session should route to the session note")
     try require(
         sessionSave.destination.url.path == sessionURL.path,
@@ -47,14 +47,14 @@ func checkCaptureService() async throws {
     let inboxAfterSession = try checkRead(vault.inboxURL)
     try require(!inboxAfterSession.contains("Into session"), "session text must not go to Inbox.md")
 
-    // A heading overrides the active session.
-    let headingSave = try await service.saveText("Heading wins", source: CaptureSource(), heading: "Inbox")
-    try require(headingSave.destination.kind == .inbox, "heading Inbox should beat the active session")
-    let inboxAfterHeading = try checkRead(vault.inboxURL)
-    try require(inboxAfterHeading.contains("Heading wins"), "heading text should land in Inbox.md")
+    // An explicit note title overrides the active session.
+    let titleSave = try await service.saveText("Heading wins", source: CaptureSource(), noteTitle: "Inbox")
+    try require(titleSave.destination.kind == .inbox, "title Inbox should beat the active session")
+    let inboxAfterTitle = try checkRead(vault.inboxURL)
+    try require(inboxAfterTitle.contains("Heading wins"), "capture should land in Inbox.md")
 
     // An image in the session note links to ../assets/ and the PNG exists.
-    let imageSave = try await service.saveImage(png: png, source: CaptureSource(appName: "Preview"), heading: nil)
+    let imageSave = try await service.saveImage(png: png, source: CaptureSource(appName: "Preview"), noteTitle: nil)
     try require(imageSave.destination.kind == .session, "an image with an active session should route to the session note")
     let sessionWithImage = try checkRead(sessionURL)
     guard let linkStart = sessionWithImage.range(of: "![](../assets/") else {
@@ -76,15 +76,15 @@ func checkCaptureService() async throws {
     try require(assetData == png, "saved PNG bytes differ from the input")
 
     // An image in Inbox.md links to assets/ directly.
-    let inboxImage = try await service.saveImage(png: png, source: CaptureSource(), heading: "Inbox")
-    try require(inboxImage.destination.kind == .inbox, "heading Inbox should route the image to Inbox.md")
+    let inboxImage = try await service.saveImage(png: png, source: CaptureSource(), noteTitle: "Inbox")
+    try require(inboxImage.destination.kind == .inbox, "title Inbox should route the image to Inbox.md")
     let inboxWithImage = try checkRead(vault.inboxURL)
     try require(inboxWithImage.contains("![](assets/"), "Inbox image link should point at assets/ directly")
     try require(!inboxWithImage.contains("![](../"), "Inbox image link must not use ../")
     // A failed write and replay both reuse the prepared identity and destination.
     let retryID = UUID()
     let retryCapture = Capture(id: retryID, createdAt: now, content: .text("retry identity"), source: CaptureSource(appName: "Test"))
-    let prepared = await service.prepare(retryCapture, heading: "Retry Destination")
+    let prepared = await service.prepare(retryCapture, noteTitle: "Retry Destination")
     try FileManager.default.createDirectory(at: prepared.destination.url, withIntermediateDirectories: false)
     do {
         _ = try await service.save(prepared)
@@ -119,7 +119,7 @@ private func checkDirectCaptureMethodsRejectLinks(base: URL, calendar: Calendar,
     let textWriter = NoteWriter(vault: textVault, calendar: calendar)
     let textService = CaptureService(vault: textVault, sessions: textSessions, writer: textWriter, now: { now })
     do {
-        _ = try await textService.saveText("must not escape", source: CaptureSource(), heading: nil)
+        _ = try await textService.saveText("must not escape", source: CaptureSource(), noteTitle: nil)
         throw CheckFailure.failed("direct saveText must reject a linked Inbox.md")
     } catch is CheckFailure { throw CheckFailure.failed("direct saveText unexpectedly accepted a linked Inbox.md") }
     catch {}
@@ -137,7 +137,7 @@ private func checkDirectCaptureMethodsRejectLinks(base: URL, calendar: Calendar,
     let imageWriter = NoteWriter(vault: imageVault, calendar: calendar)
     let imageService = CaptureService(vault: imageVault, sessions: imageSessions, writer: imageWriter, now: { now })
     do {
-        _ = try await imageService.saveImage(png: png, source: CaptureSource(), heading: nil)
+        _ = try await imageService.saveImage(png: png, source: CaptureSource(), noteTitle: nil)
         throw CheckFailure.failed("direct saveImage must reject a linked assets directory")
     } catch is CheckFailure { throw CheckFailure.failed("direct saveImage unexpectedly accepted a linked assets directory") }
     catch {}

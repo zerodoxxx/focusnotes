@@ -46,15 +46,15 @@ public actor CaptureService {
         self.makeID = makeID
     }
 
-    public func saveText(_ text: String, source: CaptureSource, heading: String?) async throws -> SavedCapture {
-        let destination = try await route(heading: heading)
+    public func saveText(_ text: String, source: CaptureSource, noteTitle: String?) async throws -> SavedCapture {
+        let destination = try await route(noteTitle: noteTitle)
         let capture = Capture(id: makeID(), createdAt: now(), content: .text(text), source: source)
         try await writer.append(capture, to: destination.url, title: destination.title)
         return SavedCapture(captureID: capture.id, destination: destination)
     }
 
-    public func saveImage(png: Data, source: CaptureSource, heading: String?) async throws -> SavedCapture {
-        let destination = try await route(heading: heading)
+    public func saveImage(png: Data, source: CaptureSource, noteTitle: String?) async throws -> SavedCapture {
+        let destination = try await route(noteTitle: noteTitle)
         let createdAt = now()
         let assetPath = try await writer.saveImage(png: png, createdAt: createdAt)
         let capture = Capture(id: makeID(), createdAt: createdAt, content: .image(assetPath: assetPath), source: source)
@@ -64,11 +64,11 @@ public actor CaptureService {
 
     /// Resolve once, before writing. An unavailable vault must not prevent journaling a
     /// capture; when notes cannot be listed, Router still resolves a fixed destination.
-    public func prepare(_ capture: Capture, heading: String?) async -> PreparedCapture {
+    public func prepare(_ capture: Capture, noteTitle: String?) async -> PreparedCapture {
         let notes = (try? vault.listNotes()) ?? []
         let active = await sessions.current()
         return PreparedCapture(capture: capture, destination: Router.destination(
-            heading: heading, activeSession: active, notes: notes, vault: vault
+            noteTitle: noteTitle, activeSession: active, notes: notes, vault: vault
         ))
     }
 
@@ -78,9 +78,9 @@ public actor CaptureService {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
         if let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: Router.destination(
-                heading: nil, activeSession: active, notes: [], vault: vault))
+                noteTitle: nil, activeSession: active, notes: [], vault: vault))
         }
-        guard case .note(let markdown) = capture.content else { return await prepare(capture, heading: nil) }
+        guard case .note(let markdown) = capture.content else { return await prepare(capture, noteTitle: nil) }
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
         let destination = Destination(url: vault.uniqueNoteURL(forTitle: note.title, excluding: preparedNoteURLs), title: note.title, kind: .note)
         preparedNoteURLs.insert(destination.url)
@@ -99,10 +99,10 @@ public actor CaptureService {
         return SavedCapture(captureID: prepared.capture.id, destination: prepared.destination)
     }
 
-    private func route(heading: String?) async throws -> Destination {
+    private func route(noteTitle: String?) async throws -> Destination {
         try vault.prepare()
         let notes = try vault.listNotes()
         let active = await sessions.current()
-        return Router.destination(heading: heading, activeSession: active, notes: notes, vault: vault)
+        return Router.destination(noteTitle: noteTitle, activeSession: active, notes: notes, vault: vault)
     }
 }

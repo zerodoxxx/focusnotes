@@ -146,12 +146,12 @@ func runBehaviorChecks() async throws {
 
     var acceptedBeforeClose = false
     var submittedAfterClose = false
-    input.present(placeholder: "Add to note…", initialText: "Chosen heading", suggestions: { _ in [] }, onAccept: { text in
-        acceptedBeforeClose = text == "Chosen heading" && input.isVisible
+    input.present(placeholder: "Add to note…", initialText: "Chosen title", suggestions: { _ in [] }, onAccept: { text in
+        acceptedBeforeClose = text == "Chosen title" && input.isVisible
     }, onSubmit: { _ in submittedAfterClose = !input.isVisible }, onCancel: {})
     let acceptingPanel = try currentPanel()
     try key(36)
-    try require(acceptedBeforeClose && submittedAfterClose, "Heading acceptance must precede dismissal and final callbacks")
+    try require(acceptedBeforeClose && submittedAfterClose, "Note title acceptance must precede dismissal and final callbacks")
     try require(!acceptingPanel.isVisible && !acceptingPanel.isKeyWindow, "Input retained key status during closing")
 
     let toast = ToastController()

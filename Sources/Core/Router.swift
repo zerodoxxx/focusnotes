@@ -14,16 +14,16 @@ public struct Destination: Codable, Sendable, Equatable {
 
 public enum Router {
     /// Picks the note a capture goes to.
-    /// 1. A non-empty heading matches a note, then a session, then Inbox, else creates a new root note.
+    /// 1. A non-empty note title matches a note, then a session, then Inbox, else creates a new root note.
     /// 2. Otherwise the active session's note.
     /// 3. Otherwise Inbox.md.
     public static func destination(
-        heading: String?,
+        noteTitle: String?,
         activeSession: Session?,
         notes: [NoteRef],
         vault: Vault
     ) -> Destination {
-        let cleaned = NoteTitle.cleanTitle(heading ?? "")
+        let cleaned = NoteTitle.cleanTitle(noteTitle ?? "")
         if !cleaned.isEmpty {
             let key = NoteTitle.matchKey(cleaned)
             if let note = notes.first(where: { $0.kind == .note && NoteTitle.matchKey($0.title) == key }) {

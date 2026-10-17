@@ -51,8 +51,8 @@ func matched() -> [SearchSection] {
 let suggestions = [
     Suggestion(title: "System Design", secondary: "Session · Oct 9", symbolName: "record.circle"),
     Suggestion(title: "MLE Interview Prep", secondary: "Session · Oct 8", symbolName: "record.circle"),
-    Suggestion(title: "Rate limiting", secondary: "Heading · System Design", symbolName: "doc.text"),
-    Suggestion(title: "Distributed systems", secondary: "Heading · System Design", symbolName: "doc.text")
+    Suggestion(title: "Rate limiting", secondary: "Note · System Design", symbolName: "doc.text"),
+    Suggestion(title: "Distributed systems", secondary: "Note · System Design", symbolName: "doc.text")
 ]
 
 struct GalleryError: Error, CustomStringConvertible {
