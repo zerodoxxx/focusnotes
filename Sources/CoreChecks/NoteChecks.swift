@@ -93,7 +93,24 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     try require(longNested.pathName?.components.last == longNestedLeaf && longNested.title.hasSuffix("…"),
                 "long folder-qualified typed names must resolve the full leaf before display truncation")
     let unsafeTyped = TypedNote(markdown: "# science/../escape\nBody", createdAt: date, calendar: calendar)
-    try require(unsafeTyped.pathName == nil, "typed note traversal must fail path validation")
+    try require(unsafeTyped.pathName == nil && unsafeTyped.pathNameError == .invalidComponent,
+                "typed note traversal must retain its path validation error")
+    for path in ["folder/ ../outside", "folder/. /outside"] {
+        let typed = TypedNote(markdown: "# \(path)\nBody", createdAt: date, calendar: calendar)
+        try require(typed.pathName == nil && typed.pathNameError == .invalidComponent,
+                    "whitespace must not turn a traversal component into an ordinary flat name: \(path)")
+    }
+    for (name, stem) in [
+        ("Read https://example.com", "Read https---example.com"),
+        ("TODO/", "TODO-"),
+        ("a//b", "a--b"),
+        ("pros / cons of X", "pros - cons of X")
+    ] {
+        let typed = TypedNote(markdown: "# \(name)\n\nFallback body", createdAt: date, calendar: calendar)
+        try require(typed.pathName?.scope == .vault && typed.pathName?.components == [stem] && typed.title == name &&
+                    typed.body == "\nFallback body",
+                    "malformed relative slash input should retain an ordinary note name: \(name)")
+    }
     for markdown in ["- title", "* title", "+ title", "1. title", "- [ ] title", "- [x] title", "> title", "`title`", "    title", "```title"] {
         try require(TypedNote(markdown: markdown, createdAt: date, calendar: calendar).body == markdown,
                     "list/task/quote/code first lines must remain in the body")
@@ -110,6 +127,46 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
                 "truncated title must not remove the first line")
     let sessions = SessionStore(stateDirectory: base.appendingPathComponent("State"), vault: vault, calendar: calendar, now: { date })
     let service = CaptureService(vault: vault, sessions: sessions, writer: writer, now: { date })
+    for (index, item) in [
+        ("Read https://example.com", "Read https---example.com.md"),
+        ("TODO/", "TODO-.md"),
+        ("a//b", "a--b.md"),
+        ("pros / cons of X", "pros - cons of X.md")
+    ].enumerated() {
+        let capture = Capture(id: UUID(), createdAt: date,
+                              content: .note("# \(item.0)\n\nFallback body \(index)"), source: CaptureSource())
+        let preparedFallback = try await service.prepareNote(capture, calendar: calendar)
+        try require(preparedFallback.destination.url.lastPathComponent == item.1,
+                    "malformed relative slash input should prepare a flat safe filename: \(item.0)")
+        _ = try await service.save(preparedFallback)
+        let fallbackContents = try checkRead(preparedFallback.destination.url)
+        try require(fallbackContents.hasPrefix("# \(item.0)\n\n<!-- note:"),
+                    "malformed relative slash input should save as an ordinary note: \(item.0)")
+    }
+    let tooDeepName = Array(repeating: "x", count: 33).joined(separator: "/")
+    let tooLongComponent = String(repeating: "x", count: 120)
+    let tooLongName = Array(repeating: tooLongComponent, count: 8).joined(separator: "/")
+    for (rawName, expectedError) in [
+        ("science/../escape", NotePathNameError.invalidComponent),
+        ("folder/ ../outside", NotePathNameError.invalidComponent),
+        ("folder/. /outside", NotePathNameError.invalidComponent),
+        ("/Desktop/../escape", NotePathNameError.invalidComponent),
+        ("folder/name\u{0000}", NotePathNameError.invalidComponent),
+        ("folder/~$draft", NotePathNameError.invalidComponent),
+        (tooDeepName, NotePathNameError.tooDeep),
+        (tooLongName, NotePathNameError.tooLong)
+    ] {
+        let typed = TypedNote(markdown: "# \(rawName)\nBody", createdAt: date, calendar: calendar)
+        try require(typed.pathName == nil && typed.pathNameError == expectedError,
+                    "explicit invalid path should retain its specific validation error: \(expectedError)")
+        let invalidCapture = Capture(id: UUID(), createdAt: date, content: .note("# \(rawName)\nBody"), source: CaptureSource())
+        do {
+            _ = try await service.prepareNote(invalidCapture, calendar: calendar)
+            throw CheckFailure.failed("invalid explicit path unexpectedly prepared: \(rawName)")
+        } catch let error as NotePathNameError {
+            try require(error == expectedError, "typed note path should throw \(expectedError), got \(error)")
+        }
+    }
     let pending = Capture(id: UUID(), createdAt: date, content: .note("Reserved title"), source: CaptureSource())
     let pendingFirst = try await service.prepareNote(pending, calendar: calendar)
     let pendingNext = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: pending.content, source: CaptureSource()), calendar: calendar)

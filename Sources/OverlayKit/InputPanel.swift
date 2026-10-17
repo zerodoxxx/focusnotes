@@ -4,8 +4,9 @@ public struct Suggestion: Sendable {
     public var title: String
     public var secondary: String?
     public var symbolName: String?
-    public init(title: String, secondary: String? = nil, symbolName: String? = nil) {
-        self.title = title; self.secondary = secondary; self.symbolName = symbolName
+    public var value: String?
+    public init(title: String, secondary: String? = nil, symbolName: String? = nil, value: String? = nil) {
+        self.title = title; self.secondary = secondary; self.symbolName = symbolName; self.value = value
     }
 }
 
@@ -97,17 +98,20 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
     private var submit: ((String) -> Void)?
     private var accept: ((String) -> Void)?
     private var cancel: (() -> Void)?
+    private var selectionOnly = false
     private var suggestions: [Suggestion] = []
     private var selection: Int?
     private var submittedText: String?
     public var isVisible: Bool { panel?.isVisible == true }
     public override init() { super.init() }
 
-    public func present(placeholder: String, initialText: String = "", title: String? = nil, secondary: String? = nil, suggestions: @escaping (String) -> [Suggestion],
+    public func present(placeholder: String, initialText: String = "", title: String? = nil, secondary: String? = nil,
+                        selectionOnly: Bool = false, suggestions: @escaping (String) -> [Suggestion],
                         onAccept: ((String) -> Void)? = nil,
                         onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         panel?.dismiss(animated: false)
         provider = suggestions; accept = onAccept; submit = onSubmit; cancel = onCancel
+        self.selectionOnly = selectionOnly
         submittedText = nil; selection = nil
         self.suggestions = suggestions(initialText)
         let view = InputPanelView(placeholder: placeholder, text: initialText, suggestions: self.suggestions, selection: nil, title: title, secondary: secondary)
@@ -158,7 +162,9 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
             return true
         case 36, 76:
             guard let content else { return true }
-            let text = selection.map { suggestions[$0].title } ?? content.field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if selectionOnly, selection == nil { return true }
+            let text = selection.map { suggestions[$0].value ?? suggestions[$0].title }
+                ?? content.field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             submittedText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
             if let submittedText { accept?(submittedText) }
             panel?.dismiss()
@@ -171,7 +177,7 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
         let onSubmit = submit
         let onCancel = cancel
         content?.field.delegate = nil
-        content = nil; panel = nil; provider = nil; accept = nil; submit = nil; cancel = nil
+        content = nil; panel = nil; provider = nil; accept = nil; submit = nil; cancel = nil; selectionOnly = false
         suggestions = []; selection = nil; submittedText = nil
         if let text { onSubmit?(text) } else { onCancel?() }
     }

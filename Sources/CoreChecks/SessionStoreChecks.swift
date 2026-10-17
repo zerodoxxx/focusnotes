@@ -45,7 +45,13 @@ func checkSessionStore() async throws {
                 "case-insensitive resume must keep the existing filename and title")
     let cleaned = try await store.start(name: "A/B")
     let cleanedResume = try await store.start(name: "a:b")
-    try require(cleaned.notePath == cleanedResume.notePath && cleanedResume.resumed == true, "resume must use filename cleaning")
+    try require(cleaned.notePath == "Sessions/A/B.md" && cleaned.resumed == false,
+                "a slash in a session name must resolve as a qualified path")
+    try require(cleanedResume.notePath == "Sessions/a-b.md" && cleanedResume.resumed == false,
+                "a colon in a bare session name must use filename cleaning without colliding with folders")
+    let explicitCleanedResume = try await store.start(name: "A/B")
+    try require(explicitCleanedResume.notePath == cleaned.notePath && explicitCleanedResume.resumed == true,
+                "a folder-qualified session name must resume the exact nested note")
     let legacy = vault.sessionsURL.appendingPathComponent("2026-10-12 Legacy.md")
     try checkWrite("# Legacy\n\nold bytes\n", to: legacy)
     let oldSession = Session(name: "Legacy", notePath: "Sessions/2026-10-12 Legacy.md", startedAt: now)
@@ -58,6 +64,73 @@ func checkSessionStore() async throws {
 
     let resumedLegacy = try await store.start(name: "legacy")
     try require(resumedLegacy.notePath == oldSession.notePath && resumedLegacy.resumed == true, "resuming an old dated note must keep its path")
+
+    let nestedNote = vault.sessionsURL.appendingPathComponent("archive/Standup.md")
+    let nestedBytes = "# Standup\n\narchived notes\n"
+    try checkWrite(nestedBytes, to: nestedNote)
+    let nestedResume = try await store.start(name: "Standup")
+    try require(nestedResume.notePath == "Sessions/archive/Standup.md" && nestedResume.resumed == true,
+                "a bare nested session match must resume its full path")
+    let nestedAfterResume = try checkRead(nestedNote)
+    try require(nestedAfterResume == nestedBytes, "resuming a nested session must preserve its note")
+    try require(!FileManager.default.fileExists(atPath: vault.sessionsURL.appendingPathComponent("Standup.md").path),
+                "resuming a nested session must not create a top-level duplicate")
+
+    let ambiguousVault = Vault(root: base.appendingPathComponent("AmbiguousVault", isDirectory: true))
+    try ambiguousVault.prepare()
+    let olderNote = ambiguousVault.sessionsURL.appendingPathComponent("Standup.md")
+    let newerNote = ambiguousVault.sessionsURL.appendingPathComponent("archive/Standup.md")
+    let tiedNote = ambiguousVault.sessionsURL.appendingPathComponent("z-archive/Standup.md")
+    try checkWrite("# Root Standup\n", to: olderNote)
+    try checkWrite("# Archived Standup\n", to: newerNote)
+    try checkWrite("# Z Standup\n", to: tiedNote)
+    let olderModified = now.addingTimeInterval(-86_400)
+    let newerModified = now.addingTimeInterval(-3_600)
+    try FileManager.default.setAttributes([.modificationDate: olderModified], ofItemAtPath: olderNote.path)
+    try FileManager.default.setAttributes([.modificationDate: newerModified], ofItemAtPath: newerNote.path)
+    try FileManager.default.setAttributes([.modificationDate: newerModified], ofItemAtPath: tiedNote.path)
+    let olderActual = try FileManager.default.attributesOfItem(atPath: olderNote.path)[.modificationDate] as? Date
+    let newerActual = try FileManager.default.attributesOfItem(atPath: newerNote.path)[.modificationDate] as? Date
+    let tiedActual = try FileManager.default.attributesOfItem(atPath: tiedNote.path)[.modificationDate] as? Date
+    guard let olderActual, let newerActual, let tiedActual else {
+        throw CheckFailure.failed("session ambiguity fixtures must expose modification dates")
+    }
+    try require(olderActual < newerActual && newerActual == tiedActual,
+                "the ambiguity fixture must contain one older note and two equal-time notes")
+    let ambiguousState = base.appendingPathComponent("AmbiguousState", isDirectory: true)
+    let ambiguousStore = SessionStore(stateDirectory: ambiguousState, vault: ambiguousVault, calendar: calendar, now: clock)
+    do {
+        _ = try await ambiguousStore.start(name: "Standup")
+        throw CheckFailure.failed("duplicate bare session names must require an explicit selection")
+    } catch SessionStoreError.ambiguous(let candidates) {
+        let paths = candidates.map(\.notePath)
+        try require(paths == ["Sessions/archive/Standup.md", "Sessions/z-archive/Standup.md", "Sessions/Standup.md"],
+                    "ambiguous sessions must be newest first with a stable path tie-break, got \(paths)")
+        try require(candidates.map(\.name) == ["Archived Standup", "Z Standup", "Root Standup"],
+                    "ambiguous sessions must expose their note titles")
+    } catch is CheckFailure {
+        throw CheckFailure.failed("duplicate bare session names were not reported as ambiguous")
+    }
+    let ambiguousCurrent = await ambiguousStore.current()
+    try require(ambiguousCurrent == nil, "an ambiguous session must not become active")
+    try require(!FileManager.default.fileExists(atPath: ambiguousState.appendingPathComponent("session.json").path),
+                "an ambiguous session must not persist active state")
+    let rootBytesAfterAmbiguity = try checkRead(olderNote)
+    let archivedBytesAfterAmbiguity = try checkRead(newerNote)
+    let tiedBytesAfterAmbiguity = try checkRead(tiedNote)
+    try require(rootBytesAfterAmbiguity == "# Root Standup\n" &&
+                archivedBytesAfterAmbiguity == "# Archived Standup\n" &&
+                tiedBytesAfterAmbiguity == "# Z Standup\n",
+                "an ambiguous session must not alter or create notes")
+
+    let qualifiedResume = try await ambiguousStore.start(name: "archive/Standup")
+    try require(qualifiedResume.notePath == "Sessions/archive/Standup.md" && qualifiedResume.resumed == true,
+                "a folder-qualified session name must resume directly without ambiguity")
+    let qualifiedCreate = try await ambiguousStore.start(name: "new-group/Planning")
+    try require(qualifiedCreate.notePath == "Sessions/new-group/Planning.md" && qualifiedCreate.resumed == false,
+                "a missing folder-qualified name must create its nested session note")
+    let qualifiedBytes = try checkRead(ambiguousVault.sessionsURL.appendingPathComponent("new-group/Planning.md"))
+    try require(qualifiedBytes == "# Planning\n", "a qualified session note must use its leaf name as the title")
 
     let blank = try await store.start(name: "   ")
     try require(blank.name == "Session", "a blank name should become Session, got \(blank.name)")

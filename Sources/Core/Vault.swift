@@ -230,6 +230,20 @@ public struct Vault: Sendable {
         try NoteFile.prepareInbox(Data(CaptureFormat.noteHeader(title: Self.inboxTitle).utf8), in: rootAnchor)
     }
 
+    /// Validates the optional external-note registry without making vault-only
+    /// operations depend on its availability. App startup uses this to surface
+    /// a damaged or newer-version registry to the user.
+    public func validateExternalNoteRegistry() throws {
+        externalNoteRegistry?.invalidateCache()
+        do {
+            _ = try externalNoteRegistry?.snapshot()
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch {
+            throw ExternalNoteRegistryError.unreadableRegistry
+        }
+    }
+
     /// Lists Markdown notes recursively under the vault, except files inside `assets/`.
     /// Hidden files and directories are skipped.
     public func listNotes() throws -> [NoteRef] {
@@ -528,9 +542,37 @@ public struct Vault: Sendable {
 
     /// Returns explicitly registered HOME-relative notes. This is a bounded
     /// list: the app never scans HOME to discover external notes.
-    func externalNoteLocations() throws -> [VaultNoteLocation] {
+    func externalRegistrySnapshot() throws -> ExternalNoteRegistry.Snapshot? {
+        do {
+            return try externalNoteRegistry?.snapshot()
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch {
+            throw ExternalNoteRegistryError.unreadableRegistry
+        }
+    }
+
+    func invalidateExternalRegistryCache() {
+        externalNoteRegistry?.invalidateCache()
+    }
+
+    func openExternalRegistryWatchDescriptors() throws -> ExternalNoteRegistry.WatchDescriptors? {
+        try externalNoteRegistry?.openWatchDescriptors()
+    }
+
+    func externalRegistryFingerprint() throws -> ExternalNoteRegistry.Fingerprint? {
+        do {
+            return try externalNoteRegistry?.currentFingerprint()
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch {
+            throw ExternalNoteRegistryError.unreadableRegistry
+        }
+    }
+
+    func externalNoteLocations(snapshot: ExternalNoteRegistry.Snapshot? = nil) throws -> [VaultNoteLocation] {
         guard let externalNoteRegistry else { return [] }
-        guard let registeredPaths = try? externalNoteRegistry.paths() else { return [] }
+        guard let registeredPaths = try? (snapshot ?? externalNoteRegistry.snapshot()).paths else { return [] }
         var locations: [VaultNoteLocation] = []
         for path in registeredPaths {
             let url = homeRoot.appendingPathComponent(path)
@@ -557,6 +599,84 @@ public struct Vault: Sendable {
             }
         }
         return paths.sorted().map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Opens a registered external note's immediate parent directory through
+    /// the retained HOME anchor, rejecting symlinks at every path component.
+    /// The returned descriptor is owned by the caller and suitable for vnode
+    /// events without granting read access to the directory contents.
+    func openExternalWatchDirectory(relativePath: String) -> Int32? {
+        let components: [String]
+        if relativePath.isEmpty {
+            components = []
+        } else {
+            let values = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard values.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+                return nil
+            }
+            components = values
+        }
+
+        guard var current = try? homeAnchor.duplicateRoot(createIfMissing: false) else { return nil }
+        for component in components {
+            let next = component.withCString {
+                openat(current, $0, O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard next >= 0 else {
+                close(current)
+                return nil
+            }
+            var opened = stat()
+            var named = stat()
+            let isSafe = fstat(next, &opened) == 0 &&
+                fstatat(current, component, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+                opened.st_mode & S_IFMT == S_IFDIR && opened.st_uid == getuid() &&
+                opened.st_dev == named.st_dev && opened.st_ino == named.st_ino
+            close(current)
+            guard isSafe else {
+                close(next)
+                return nil
+            }
+            current = next
+        }
+
+        // The anchor is opened read-only for descriptor-relative operations.
+        // Reopen `.` as an event-only descriptor, including for a direct child
+        // of HOME, so each vnode source has the narrowest practical access.
+        let eventDescriptor = openat(current, ".", O_EVTONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        close(current)
+        return eventDescriptor >= 0 ? eventDescriptor : nil
+    }
+
+    /// Opens one registered external note without following symlinks. The
+    /// caller owns the returned descriptor and closes it in the source's cancel
+    /// handler.
+    func openExternalWatchFile(_ location: VaultNoteLocation) -> Int32? {
+        guard location.scope == .home else { return nil }
+        let components = location.relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard let name = components.last,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+            return nil
+        }
+        let parentPath = components.dropLast().joined(separator: "/")
+        guard let parent = openExternalWatchDirectory(relativePath: parentPath) else { return nil }
+        defer { close(parent) }
+
+        let descriptor = name.withCString {
+            openat(parent, $0, O_EVTONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { return nil }
+        var opened = stat()
+        var named = stat()
+        let isSafe = fstat(descriptor, &opened) == 0 &&
+            fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+            opened.st_mode & S_IFMT == S_IFREG && opened.st_uid == getuid() && opened.st_nlink == 1 &&
+            opened.st_dev == named.st_dev && opened.st_ino == named.st_ino
+        guard isSafe else {
+            close(descriptor)
+            return nil
+        }
+        return descriptor
     }
 
     /// Records an explicitly used external note before its append. Retrying a

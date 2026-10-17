@@ -6,6 +6,8 @@ public struct TypedNote: Sendable {
     public let rawName: String
     /// Parsed path, when the extracted name is safe to use as a destination.
     public let pathName: NotePathName?
+    /// The validation failure when an explicit path cannot be used as a destination.
+    public let pathNameError: NotePathNameError?
     public let title: String
     public let body: String
 
@@ -18,13 +20,35 @@ public struct TypedNote: Sendable {
         let extractedName = stripped.isEmpty
             ? "Note " + CaptureFormat.localStamp(createdAt, pattern: "yyyy-MM-dd HH.mm", calendar: calendar)
             : stripped
-        let parsedName = try? NoteTitle.pathName(for: extractedName)
-        let isFolderQualified = extractedName.hasPrefix("/") || extractedName.contains("/")
+        let parsedName: NotePathName?
+        let parseError: NotePathNameError?
+        do {
+            parsedName = try NoteTitle.pathName(for: extractedName)
+            parseError = nil
+        } catch let error as NotePathNameError {
+            parsedName = nil
+            parseError = error
+        } catch {
+            parsedName = nil
+            parseError = .invalidComponent
+        }
+        let flatFallback = Self.canFallBackToFlatName(
+            extractedName,
+            error: parseError,
+            hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(extractedName)
+        )
+        let resolvedName = flatFallback
+            ? NotePathName(scope: .vault, components: [NoteTitle.fileStem(for: extractedName)])
+            : parsedName
+        let isFolderQualified = parsedName.map {
+            !flatFallback && ($0.scope == .home || $0.components.count > 1)
+        } ?? false
         let rawLeaf = isFolderQualified
             ? String(extractedName.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
             : extractedName
         rawName = extractedName
-        pathName = parsedName
+        pathName = resolvedName
+        pathNameError = resolvedName == nil ? parseError : nil
         title = Self.boundedTitle(isFolderQualified ? NoteTitle.cleanTitle(rawLeaf) : extractedName)
 
         // Only the physical first line is eligible. Lists, quotes and code are
@@ -40,6 +64,27 @@ public struct TypedNote: Sendable {
                 body = CaptureFormat.noteBody(remainder)
             } else { body = "" }
         } else { body = CaptureFormat.noteBody(markdown) }
+    }
+
+    private static func canFallBackToFlatName(
+        _ rawName: String,
+        error: NotePathNameError?,
+        hasWhitespaceAroundSlash: Bool
+    ) -> Bool {
+        guard !rawName.hasPrefix("/"),
+              !rawName.contains("\0") else { return false }
+        if let error, error != .invalidComponent { return false }
+        let components = rawName.split(separator: "/", omittingEmptySubsequences: false)
+            .map { NoteTitle.cleanTitle(String($0)) }
+        guard !components.contains(where: { $0 == "." || $0 == ".." }) else { return false }
+        if let finalComponent = components.last(where: { !$0.isEmpty }),
+           NoteTitle.fileStem(for: finalComponent).hasPrefix("~$") { return false }
+        if error == nil { return hasWhitespaceAroundSlash }
+        return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
+    }
+
+    private static func hasWhitespaceAroundSlash(_ rawName: String) -> Bool {
+        rawName.range(of: #"\s/|/\s"#, options: .regularExpression) != nil
     }
 
     private static func strip(_ line: String) -> String {

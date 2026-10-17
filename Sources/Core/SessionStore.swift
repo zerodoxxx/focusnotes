@@ -15,9 +15,42 @@ public struct Session: Codable, Sendable, Equatable {
     }
 }
 
+/// A session that can be selected when a bare name matches more than one note.
+public struct SessionCandidate: Sendable, Equatable {
+    public let name: String
+    /// Vault-relative path, including the `Sessions/` prefix.
+    public let notePath: String
+    public let modifiedAt: Date
+
+    public init(name: String, notePath: String, modifiedAt: Date) {
+        self.name = name
+        self.notePath = notePath
+        self.modifiedAt = modifiedAt
+    }
+}
+
+public enum SessionStoreError: Error, Sendable, LocalizedError {
+    case ambiguous([SessionCandidate])
+    case candidateNoLongerExists(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .ambiguous:
+            return "Several sessions match this name."
+        case .candidateNoLongerExists(let path):
+            return "The selected session no longer exists at \(path)."
+        }
+    }
+}
+
 /// Holds the active session and persists it to `stateDirectory/session.json`.
 public actor SessionStore {
     private static let stateFileName = "session.json"
+
+    private struct ExistingSession {
+        let note: NoteRef
+        let notePath: String
+    }
 
     private let stateDirectory: URL
     private let vault: Vault
@@ -45,60 +78,53 @@ public actor SessionStore {
         session
     }
 
-    /// Starts a session, replacing any active one. Resumes the same cleaned filename, regardless of case or date.
+    /// Starts a session, resuming a unique matching filename or creating a note.
+    /// Qualified names such as `archive/Standup` are rooted inside `Sessions/`.
     public func start(name: String) throws -> Session {
-        let cleaned = NoteTitle.cleanTitle(name)
-        let title = cleaned.isEmpty ? "Session" : cleaned
-
         try vault.prepare()
-        let current = now()
-        let stem = NoteTitle.fileStem(for: title)
-        let existing = try vault.listNotes().filter { $0.kind == .session }
-            .sorted { left, right in
-                let leftStem = left.url.deletingPathExtension().lastPathComponent
-                let rightStem = right.url.deletingPathExtension().lastPathComponent
-                let leftExact = leftStem.caseInsensitiveCompare(stem) == .orderedSame
-                let rightExact = rightStem.caseInsensitiveCompare(stem) == .orderedSame
-                if leftExact != rightExact { return leftExact }
-                return left.url.lastPathComponent > right.url.lastPathComponent
-            }
-            .first { note in
-                let existingStem = note.url.deletingPathExtension().lastPathComponent
-                if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return true }
-                // Legacy dated notes remain in place and can be resumed by their title.
-                let prefix = existingStem.prefix(11)
-                guard prefix.count == 11, prefix.last == " ", prefix.dropLast().enumerated().allSatisfy({
-                    [4, 7].contains($0.offset) ? $0.element == "-" : $0.element.isNumber
-                }) else { return false }
-                return String(existingStem.dropFirst(11)).caseInsensitiveCompare(stem) == .orderedSame
-            }
-        let fileName = existing?.url.lastPathComponent ?? "\(stem).md"
-        var displayTitle: String?
-        if existing != nil {
-            let relativePath = "\(Vault.sessionsDirectoryName)/\(fileName)"
-            if let prefix = try NoteFile.readManagedPrefix(4096, in: vault.rootAnchor, relativePath: relativePath) {
-                let firstLineData = prefix.prefix { $0 != 0x0A }
-                var firstLine = String(decoding: firstLineData, as: UTF8.self)
-                if firstLine.hasPrefix("\u{FEFF}") { firstLine.removeFirst() }
-                if firstLine.hasPrefix("# ") {
-                    displayTitle = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
-                }
-            }
-        }
-        let sessionTitle = displayTitle.flatMap { $0.isEmpty ? nil : $0 } ?? title
-        beforeNoteWrite("\(Vault.sessionsDirectoryName)/\(fileName)")
-        try NoteFile.create(Data(CaptureFormat.noteHeader(title: title).utf8), in: vault.rootAnchor,
-                            relativePath: "\(Vault.sessionsDirectoryName)/\(fileName)")
+        let cleaned = NoteTitle.cleanTitle(name)
 
-        var started = Session(
-            name: sessionTitle,
-            notePath: "\(Vault.sessionsDirectoryName)/\(fileName)",
-            startedAt: current
-        )
-        started.resumed = existing != nil
-        try persist(started)
-        session = started
-        return started
+        if cleaned.contains("/") {
+            let pathName = try NoteTitle.pathName(for: cleaned)
+            guard pathName.scope == .vault else { throw NotePathNameError.invalidComponent }
+            let sessionPath = NotePathName(
+                scope: .vault,
+                components: [Vault.sessionsDirectoryName] + pathName.components
+            )
+            let location = try vault.resolveNoteName(sessionPath)
+            let existing = try existingSessions().first { $0.notePath == location.relativePath }
+            return try start(
+                title: pathName.leafName,
+                notePath: location.relativePath,
+                existing: existing
+            )
+        }
+
+        let title = cleaned.isEmpty ? "Session" : cleaned
+        let stem = NoteTitle.fileStem(for: title)
+        let matches = try existingSessions().filter { note in
+            let existingStem = note.note.url.deletingPathExtension().lastPathComponent
+            if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return true }
+            return Self.isDatedSession(existingStem, matching: stem)
+        }
+
+        if matches.count > 1 {
+            throw SessionStoreError.ambiguous(try candidates(from: matches))
+        }
+
+        let existing = matches.first
+        let notePath = existing?.notePath ?? "\(Vault.sessionsDirectoryName)/\(stem).md"
+        return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
+    }
+
+    /// Resumes the exact candidate shown to the user. A deleted or changed
+    /// candidate fails without creating a replacement note.
+    public func resume(_ candidate: SessionCandidate) throws -> Session {
+        try vault.prepare()
+        guard let existing = try existingSessions().first(where: { $0.notePath == candidate.notePath }) else {
+            throw SessionStoreError.candidateNoLongerExists(candidate.notePath)
+        }
+        return try start(title: existing.note.title, notePath: existing.notePath, existing: existing)
     }
 
     /// Ends the active session and deletes the state file.
@@ -109,6 +135,74 @@ public actor SessionStore {
             // Ending an already ended session is harmless. Other I/O errors retain it.
         }
         session = nil
+    }
+
+    private func existingSessions() throws -> [ExistingSession] {
+        try vault.listNotes().filter { $0.kind == .session }.map { note in
+            ExistingSession(note: note, notePath: try vault.noteID(for: note.url))
+        }
+    }
+
+    private func candidates(from matches: [ExistingSession]) throws -> [SessionCandidate] {
+        var modifiedByPath: [String: Date] = [:]
+        for file in try vault.listNoteFiles() where file.kind == .session {
+            guard let snapshot = file.snapshot else { continue }
+            modifiedByPath[file.id] = snapshot.modifiedAt
+        }
+
+        return matches.map { match in
+            SessionCandidate(
+                name: match.note.title,
+                notePath: match.notePath,
+                modifiedAt: modifiedByPath[match.notePath] ?? .distantPast
+            )
+        }.sorted { left, right in
+            if left.modifiedAt != right.modifiedAt { return left.modifiedAt > right.modifiedAt }
+            return left.notePath < right.notePath
+        }
+    }
+
+    private func start(title: String, notePath: String, existing: ExistingSession?) throws -> Session {
+        let current = now()
+        let displayTitle: String
+        if let existing {
+            displayTitle = try readTitle(at: notePath) ?? existing.note.title
+        } else {
+            displayTitle = title
+        }
+        let directory = (notePath as NSString).deletingLastPathComponent
+        if directory != Vault.sessionsDirectoryName {
+            try NoteFile.prepareManagedDirectory(directory, in: vault.rootAnchor)
+        }
+        beforeNoteWrite(notePath)
+        try NoteFile.create(Data(CaptureFormat.noteHeader(title: title).utf8), in: vault.rootAnchor,
+                            relativePath: notePath)
+
+        var started = Session(name: displayTitle, notePath: notePath, startedAt: current)
+        started.resumed = existing != nil
+        try persist(started)
+        session = started
+        return started
+    }
+
+    private func readTitle(at notePath: String) throws -> String? {
+        guard let prefix = try NoteFile.readManagedPrefix(4096, in: vault.rootAnchor, relativePath: notePath) else {
+            return nil
+        }
+        let firstLineData = prefix.prefix { $0 != 0x0A }
+        var firstLine = String(decoding: firstLineData, as: UTF8.self)
+        if firstLine.hasPrefix("\u{FEFF}") { firstLine.removeFirst() }
+        guard firstLine.hasPrefix("# ") else { return nil }
+        let title = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
+        return title.isEmpty ? nil : title
+    }
+
+    private static func isDatedSession(_ existingStem: String, matching stem: String) -> Bool {
+        let prefix = existingStem.prefix(11)
+        guard prefix.count == 11, prefix.last == " ", prefix.dropLast().enumerated().allSatisfy({
+            [4, 7].contains($0.offset) ? $0.element == "-" : $0.element.isNumber
+        }) else { return false }
+        return String(existingStem.dropFirst(11)).caseInsensitiveCompare(stem) == .orderedSame
     }
 
     private var stateFileURL: URL {

@@ -18,15 +18,16 @@ private final class VaultChangeRecorder: @unchecked Sendable {
         return recorded
     }
 
-    func waitForChange(timeout: TimeInterval, matching predicate: (VaultChange) -> Bool) -> VaultChange? {
+    func waitForChange(after offset: Int = 0, timeout: TimeInterval,
+                       matching predicate: (VaultChange) -> Bool) -> VaultChange? {
         let deadline = Date().addingTimeInterval(timeout)
         condition.lock()
         defer { condition.unlock() }
-        while let change = recorded.first(where: predicate) {
+        while let change = recorded.dropFirst(offset).first(where: predicate) {
             return change
         }
         while condition.wait(until: deadline) {
-            if let change = recorded.first(where: predicate) {
+            if let change = recorded.dropFirst(offset).first(where: predicate) {
                 return change
             }
         }
@@ -99,5 +100,241 @@ func checkVaultWatcher() throws {
     try checkWrite("# After stop\n", to: root.appendingPathComponent("After stop.md"))
     try require(recorder.waitForQuiet(for: 0.5), "VaultWatcher delivered a change after stop()")
     try require(recorder.changes().count == countAfterStop, "VaultWatcher callback count changed after stop()")
+
+    try checkBoundedExternalWatcher()
     print("Vault watcher checks passed.")
+}
+
+private func checkBoundedExternalWatcher() throws {
+    let base = try checkMakeDirectory("bounded-external-watcher")
+    defer { checkRemoveDirectory(base) }
+
+    let home = base.appendingPathComponent("Home", isDirectory: true)
+    let state = base.appendingPathComponent("State", isDirectory: true)
+    let root = home.appendingPathComponent("Vault", isDirectory: true)
+    let registryURL = state.appendingPathComponent("external-notes.json")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+
+    let direct = home.appendingPathComponent("Direct.md")
+    let deep = home.appendingPathComponent("Projects/Research/Science/Deep.md")
+    let added = home.appendingPathComponent("Added/Folder/Added.md")
+    let late = home.appendingPathComponent("Late/Folder/Late.md")
+    try checkWrite("# Direct\n\ninitial\n", to: direct)
+    try checkWrite("# Deep\n\ninitial\n", to: deep)
+    try checkWrite("# Added\n\ninitial\n", to: added)
+    try checkWrite("# Late\n\ninitial\n", to: late)
+    try checkWrite(
+        #"{"version":1,"paths":["Direct.md","Projects/Research/Science/Deep.md"]}"#,
+        to: registryURL
+    )
+
+    let vault = Vault(root: root, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    // Prime the in-memory registry cache, then replace it before watcher
+    // subscription. Startup must close this stale-cache race itself.
+    _ = try vault.listNotes()
+    try Data(
+        #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Projects/Research/Science/Deep.md"]}"#.utf8
+    ).write(to: registryURL, options: .atomic)
+    let directID = try vault.noteID(for: direct)
+    let deepID = try vault.noteID(for: deep)
+    let addedID = try vault.noteID(for: added)
+    let lateID = try vault.noteID(for: late)
+    let recorder = VaultChangeRecorder()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
+    defer { watcher.stop() }
+    watcher.start()
+    try require(watcher.isRunning, "bounded external watcher should start with a temp HOME registry")
+    let initialGeneration = watcher.streamGenerationForChecks
+
+    var offset = recorder.changes().count
+    try checkWrite("# Added\n\nloaded at startup\n", to: added)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(addedID) } != nil,
+                "startup must reload a cached registry changed before vnode subscription")
+
+    offset = recorder.changes().count
+    try checkWrite("# Direct\n\nupdated\n", to: direct)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(directID) } != nil,
+                "a direct-HOME registered note should produce a vnode change")
+
+    offset = recorder.changes().count
+    try checkWrite("# Deep\n\nupdated\n", to: deep)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "a registered note at depth three or more should produce a vnode change")
+
+    offset = recorder.changes().count
+    try Data("# Deep\n\natomic replacement\n".utf8).write(to: deep, options: .atomic)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "an atomic replacement should be detected and its vnode rearmed")
+
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: deep)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "deleting a registered note should report its exact external ID")
+
+    offset = recorder.changes().count
+    try checkWrite("# Deep\n\nrecreated\n", to: deep)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "the immediate-parent source should detect recreation after the file vnode is gone")
+
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: home.appendingPathComponent("Projects", isDirectory: true))
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "removing a registered note's parent tree should report that exact note")
+    for directory in ["Projects", "Projects/Research", "Projects/Research/Science"] {
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(directory, isDirectory: true),
+            withIntermediateDirectories: false
+        )
+        try require(recorder.waitForQuiet(for: 0.25),
+                    "recreating a missing parent should rearm the next nearest-parent probe")
+    }
+    offset = recorder.changes().count
+    try checkWrite("# Deep\n\nparent tree recreated\n", to: deep)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "the watcher should find a registered note after its full parent tree is recreated")
+
+    // Delete and recreate the same immediate-parent spelling before the
+    // debounce flush. A vnode bound to the deleted directory must be replaced
+    // even though the registered parent path string is unchanged.
+    let immediateParent = deep.deletingLastPathComponent()
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: immediateParent)
+    try FileManager.default.createDirectory(at: immediateParent, withIntermediateDirectories: false)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "replacing an immediate parent at the same path should report its registered note")
+    offset = recorder.changes().count
+    try checkWrite("# Deep\n\nsame-path parent recreated\n", to: deep)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(deepID) } != nil,
+                "the watcher should rearm a parent vnode after same-path directory replacement")
+
+    let unregisteredHomeSibling = home.appendingPathComponent("Unregistered.md")
+    let unregisteredDeepSibling = deep.deletingLastPathComponent().appendingPathComponent("Unregistered.md")
+    let nestedNoise = home.appendingPathComponent("Library/Caches/Level/Churn.data")
+    offset = recorder.changes().count
+    try checkWrite("# Unregistered\n", to: unregisteredHomeSibling)
+    try checkWrite("# Unregistered\n", to: unregisteredDeepSibling)
+    try checkWrite("nested churn", to: nestedNoise)
+    try require(recorder.waitForQuiet(for: 0.7),
+                "unregistered siblings and unrelated nested HOME churn must not produce callbacks")
+    try require(recorder.changes().count == offset,
+                "unrelated HOME activity must not force a full vault sync")
+
+    // Simulate a second process atomically adding one exact path to the
+    // registry. The registry-parent vnode must invalidate the in-memory map.
+    offset = recorder.changes().count
+    try Data(
+        #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Late/Folder/Late.md","Projects/Research/Science/Deep.md"]}"#.utf8
+    ).write(to: registryURL, options: .atomic)
+    let membershipRefresh = recorder.waitForChange(after: offset, timeout: 3.0) { $0.needsFullSync }
+    try require(membershipRefresh != nil, "an external registry membership change should request a full sync")
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "external membership changes must keep the vault FSEvents stream stable")
+
+    offset = recorder.changes().count
+    try checkWrite("# Late\n\nupdated\n", to: late)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(lateID) } != nil,
+                "a newly registered note should receive a vnode source after membership refresh")
+
+    offset = recorder.changes().count
+    try Data(#"{"version":2,"paths":["Added/Folder/Added.md"]}"#.utf8)
+        .write(to: registryURL, options: .atomic)
+    let registryWarning = recorder.waitForChange(after: offset, timeout: 3.0) {
+        $0.externalRegistryError == .unsupportedVersion(2)
+    }
+    try require(registryWarning != nil, "a runtime registry version change should emit a typed warning")
+
+    offset = recorder.changes().count
+    try checkWrite("unrelated state file", to: state.appendingPathComponent("session.json"))
+    try require(recorder.waitForQuiet(for: 0.7),
+                "unrelated app-state writes must not re-read or report the unchanged damaged registry")
+    try require(recorder.changes().count == offset,
+                "the same malformed registry fingerprint should not emit duplicate warnings")
+
+    offset = recorder.changes().count
+    try Data(
+        #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Late/Folder/Late.md","Projects/Research/Science/Deep.md"]}"#.utf8
+    ).write(to: registryURL, options: .atomic)
+    let recovery = recorder.waitForChange(after: offset, timeout: 3.0) {
+        $0.needsFullSync && $0.externalRegistryRecovered
+    }
+    try require(recovery != nil, "a valid registry replacement should request reconciliation and clear its warning")
+    offset = recorder.changes().count
+    try checkWrite("# Late\n\nrecovered\n", to: late)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(lateID) } != nil,
+                "external vnode sources should return after a valid registry recovery")
+
+    let registryTarget = base.appendingPathComponent("registry-target.json")
+    let validRegistry = Data(
+        #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Late/Folder/Late.md","Projects/Research/Science/Deep.md"]}"#.utf8
+    )
+    try validRegistry.write(to: registryTarget)
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: registryURL)
+    try FileManager.default.createSymbolicLink(at: registryURL, withDestinationURL: registryTarget)
+    let unsafeWarning = recorder.waitForChange(after: offset, timeout: 3.0) {
+        $0.needsFullSync && $0.externalRegistryError == .unreadableRegistry
+    }
+    try require(unsafeWarning != nil, "a runtime registry symlink should fail closed and emit one warning")
+
+    offset = recorder.changes().count
+    try checkWrite("unrelated state file", to: state.appendingPathComponent("session.json"))
+    try require(recorder.waitForQuiet(for: 0.7),
+                "unrelated app-state writes must not repeat an unchanged unreadable-registry warning")
+    try require(recorder.changes().count == offset,
+                "the same unreadable registry state should not trigger repeated full syncs")
+
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: registryURL)
+    let missingRecovery = recorder.waitForChange(after: offset, timeout: 3.0) {
+        $0.needsFullSync && $0.externalRegistryRecovered
+    }
+    try require(missingRecovery != nil, "removing an unreadable registry should recover to a valid empty registry")
+
+    offset = recorder.changes().count
+    try validRegistry.write(to: registryURL)
+    let safeRecovery = recorder.waitForChange(after: offset, timeout: 3.0) { $0.needsFullSync }
+    try require(safeRecovery != nil, "adding a valid registry after removal should restore watcher membership")
+    offset = recorder.changes().count
+    try checkWrite("# Late\n\nrestored after unsafe registry\n", to: late)
+    try require(recorder.waitForChange(after: offset, timeout: 3.0) { $0.notesChanged.contains(lateID) } != nil,
+                "the external note vnode sources should resume after registry repair")
+
+    try checkWarmRegistryCacheRejectsUnsafeReplacement(base: base)
+}
+
+private func checkWarmRegistryCacheRejectsUnsafeReplacement(base: URL) throws {
+    let home = base.appendingPathComponent("WarmCacheHome", isDirectory: true)
+    let root = home.appendingPathComponent("Vault", isDirectory: true)
+    let state = base.appendingPathComponent("WarmCacheState", isDirectory: true)
+    let registryURL = state.appendingPathComponent("external-notes.json")
+    let note = home.appendingPathComponent("Desktop/Registered.md")
+    try checkWrite("# Registered\n\nold cached entry\n", to: note)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+    try checkWrite(#"{"version":1,"paths":["Desktop/Registered.md"]}"#, to: registryURL)
+
+    let vault = Vault(root: root, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    let warmListing = try vault.listNotes()
+    try require(warmListing.contains { $0.url.standardizedFileURL == note.standardizedFileURL },
+                "the warm-cache fixture should initially list the registered HOME note")
+
+    let target = base.appendingPathComponent("warm-registry-target.json")
+    try checkWrite(#"{"version":1,"paths":["Desktop/Registered.md"]}"#, to: target)
+    try FileManager.default.removeItem(at: registryURL)
+    try FileManager.default.createSymbolicLink(at: registryURL, withDestinationURL: target)
+    do {
+        try vault.validateExternalNoteRegistry()
+        throw CheckFailure.failed("fresh registry validation should reject an unsafe replacement")
+    } catch let error as ExternalNoteRegistryError {
+        try require(error == .unreadableRegistry, "an unsafe registry replacement should have the typed unreadable error")
+    }
+
+    let refreshed = try vault.listNotes()
+    try require(refreshed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
+                "vault-only listing should continue when the external registry is unreadable")
+    try require(!refreshed.contains { $0.url.standardizedFileURL == note.standardizedFileURL },
+                "a warmed registry cache must not expose external notes after an unsafe replacement")
 }

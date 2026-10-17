@@ -83,19 +83,17 @@ func checkExternalNoteRegistry() async throws {
     try require(!listedAfterReopen.contains { $0.url.standardizedFileURL == unregistered.url.standardizedFileURL },
                 "reopening a Vault must not scan unrelated files in HOME")
 
-    // The app refreshes watcher roots after a successful save. Exercise the
-    // same refresh once the new registered parent directory exists. A changed
-    // root set must start a replacement and request reconciliation for events
-    // that could have occurred during the transition.
+    // The app refreshes external vnode membership after a successful save.
+    // The recursive FSEvents stream remains attached to the vault root.
     watcher.refreshExternalRoots()
-    try require(watcher.streamGenerationForChecks == initialGeneration + 1,
-                "adding an external parent should replace the active watcher stream")
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "adding an external note must not replace the vault FSEvents stream")
     let rootRefresh = recorder.waitForChange(timeout: 3.0) { $0.needsFullSync }
-    try require(rootRefresh != nil, "adding an external watch root should request a bounded full sync")
+    try require(rootRefresh != nil, "adding external vnode sources should request a bounded full sync")
     let activeGeneration = watcher.streamGenerationForChecks
     watcher.refreshExternalRoots()
     try require(watcher.streamGenerationForChecks == activeGeneration,
-                "refreshing the same external roots should preserve the replacement stream")
+                "refreshing unchanged external membership should preserve the vault stream")
     try checkWrite("# Registered\n\nexternalregistryneedle updated", to: registered.url)
     let externalChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains(registered.id) }
     watcher.stop()
@@ -128,6 +126,9 @@ func checkExternalNoteRegistry() async throws {
                                             service: service, calendar: calendar, now: now)
     try await checkHomeNoteInsideVaultIsListedOnce(home: home, base: base, calendar: calendar, now: now)
     try await checkDirectHomeWatcherFiltering(base: base, now: now, calendar: calendar)
+    try await checkExternalRegistryCorruptionPreserved(base: base, now: now, calendar: calendar)
+    try checkTamperedExternalRegistryPathsRejected(base: base)
+    try checkExternalDirectorySymlinkRejected(base: base)
     try await checkExternalRegistrySymlinkRejected(base: base, now: now, calendar: calendar)
     print("External note registry checks passed (persistence, scoped indexing, watcher refresh, and path safety).")
 }
@@ -270,14 +271,9 @@ private func checkExternalRegistrySymlinkRejected(base: URL, now: Date, calendar
     let vault = Vault(root: home.appendingPathComponent("Vault", isDirectory: true),
                       externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
     try vault.prepare()
-    let listed: [NoteRef]
-    do {
-        listed = try vault.listNotes()
-    } catch {
-        // Failing closed is also safe: the registry symlink must never reveal
-        // its target's registered paths.
-        listed = []
-    }
+    let listed = try vault.listNotes()
+    try require(listed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
+                "listing should still succeed from the vault when the registry is a symlink")
     try require(!listed.contains { $0.url.standardizedFileURL == leakedNote.standardizedFileURL },
                 "a symlinked registry must not expose paths from its outside target")
 
@@ -297,12 +293,147 @@ private func checkExternalRegistrySymlinkRejected(base: URL, now: Date, calendar
         throw CheckFailure.failed("external registration must reject a symlinked registry file")
     } catch is CheckFailure {
         throw CheckFailure.failed("external registration must reject a symlinked registry file")
-    } catch {}
+    } catch let error as ExternalNoteRegistryError {
+        try require(error == .unreadableRegistry, "symlinked registries should report an unreadable-registry error")
+    } catch {
+        throw CheckFailure.failed("symlinked registry failed for an unexpected reason: \(error)")
+    }
 
     try require(!FileManager.default.fileExists(atPath: blockedURL.path),
                 "a failed symlinked-registry save must not write its external note")
     let targetContents = try checkRead(registryTarget)
     try require(targetContents == originalRegistry, "registry symlink operations must leave the target file unchanged")
+}
+
+private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, calendar: Calendar) async throws {
+    let cases: [(String, Data, ExternalNoteRegistryError)] = [
+        ("Malformed", Data(#"{"version":1,"paths":["Desktop/a.md","Desktop/b.md"]}x"#.utf8), .malformedRegistry),
+        ("NewerVersion", Data(#"{"version":2,"paths":["Desktop/a.md","Desktop/b.md"]}"#.utf8), .unsupportedVersion(2))
+    ]
+
+    for (label, originalBytes, expectedError) in cases {
+        let caseRoot = base.appendingPathComponent("Registry\(label)", isDirectory: true)
+        let home = caseRoot.appendingPathComponent("Home", isDirectory: true)
+        let desktop = home.appendingPathComponent("Desktop", isDirectory: true)
+        try FileManager.default.createDirectory(at: desktop, withIntermediateDirectories: true)
+        let vaultRoot = home.appendingPathComponent("Vault", isDirectory: true)
+        let registryURL = caseRoot.appendingPathComponent("State/external-notes.json")
+        try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try originalBytes.write(to: registryURL)
+
+        let first = desktop.appendingPathComponent("a.md")
+        let second = desktop.appendingPathComponent("b.md")
+        try checkWrite("# A\n", to: first)
+        try checkWrite("# B\n", to: second)
+
+        let vault = Vault(root: vaultRoot, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+        try vault.prepare()
+        let listed = try vault.listNotes()
+        try require(listed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
+                    "a damaged registry should not prevent vault-only note listing")
+        try require(!listed.contains { $0.url.standardizedFileURL == first.standardizedFileURL ||
+                                       $0.url.standardizedFileURL == second.standardizedFileURL },
+                    "notes from an unreadable registry should be omitted from listing")
+
+        let service = externalCaptureService(
+            vault: vault,
+            stateDirectory: caseRoot.appendingPathComponent("CaptureState"),
+            now: now,
+            calendar: calendar
+        )
+        let destination = desktop.appendingPathComponent("c.md")
+        let prepared = try await service.prepareNote(
+            externalNoteCapture("/Desktop/c", body: "must not overwrite a damaged registry", now: now),
+            calendar: calendar
+        )
+        let saveError: Error?
+        do {
+            _ = try await service.save(prepared)
+            saveError = nil
+        } catch {
+            saveError = error
+        }
+        guard let registryError = saveError as? ExternalNoteRegistryError else {
+            throw CheckFailure.failed("saving with a \(label.lowercased()) registry must throw ExternalNoteRegistryError")
+        }
+        try require(registryError == expectedError, "the registry should report its specific corruption or version error")
+        let finalBytes = try Data(contentsOf: registryURL)
+        try require(finalBytes == originalBytes, "a failed external save must preserve the registry bytes exactly")
+        try require(!FileManager.default.fileExists(atPath: destination.path),
+                    "a failed registry read must stop the external note write before append")
+    }
+}
+
+private func checkTamperedExternalRegistryPathsRejected(base: URL) throws {
+    let home = base.appendingPathComponent("TamperedRegistryHome", isDirectory: true)
+    let desktop = home.appendingPathComponent("Desktop", isDirectory: true)
+    try FileManager.default.createDirectory(at: desktop, withIntermediateDirectories: true)
+
+    let traversalTarget = home.deletingLastPathComponent().appendingPathComponent("TraversalEscape.md")
+    let absoluteTarget = base.appendingPathComponent("AbsoluteEscape.md")
+    let absolutePathCandidate = home.appendingPathComponent(absoluteTarget.path).standardizedFileURL
+    try checkWrite("# Traversal escape\n", to: traversalTarget)
+    try checkWrite("# Absolute escape\n", to: absoluteTarget)
+    try checkWrite("# Absolute path candidate\n", to: absolutePathCandidate)
+
+    let backslashPath = "Desktop/Back\\slash.md"
+    let controlPath = "Desktop/Bad\u{0007}.md"
+    let textPath = "Desktop/NotMarkdown.txt"
+    try checkWrite("# Backslash path\n", to: home.appendingPathComponent(backslashPath))
+    try checkWrite("# Control path\n", to: home.appendingPathComponent(controlPath))
+    try checkWrite("Not markdown\n", to: home.appendingPathComponent(textPath))
+    let safePath = "Desktop/Allowed.md"
+    let safeNote = home.appendingPathComponent(safePath)
+    try checkWrite("# Allowed\n", to: safeNote)
+
+    let paths = ["../TraversalEscape.md", absoluteTarget.path, backslashPath, controlPath, textPath, safePath]
+    let registryURL = base.appendingPathComponent("TamperedRegistryState/external-notes.json")
+    try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let registryData = try JSONSerialization.data(withJSONObject: ["version": 1, "paths": paths])
+    try registryData.write(to: registryURL)
+
+    let vault = Vault(root: home.appendingPathComponent("Vault", isDirectory: true),
+                      externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    let listed = try vault.listNotes()
+    try require(listed.contains { $0.url.standardizedFileURL == safeNote.standardizedFileURL },
+                "a safe entry should remain available beside tampered registry entries")
+    for rejectedURL in [traversalTarget, absoluteTarget, absolutePathCandidate, home.appendingPathComponent(backslashPath),
+                        home.appendingPathComponent(controlPath), home.appendingPathComponent(textPath)] {
+        try require(!listed.contains { $0.url.standardizedFileURL == rejectedURL.standardizedFileURL },
+                    "tampered registry paths must not expose traversal, absolute, backslash, control, or non-Markdown targets")
+    }
+}
+
+private func checkExternalDirectorySymlinkRejected(base: URL) throws {
+    let home = base.appendingPathComponent("DirectorySymlinkHome", isDirectory: true)
+    let desktop = home.appendingPathComponent("Desktop", isDirectory: true)
+    try FileManager.default.createDirectory(at: desktop, withIntermediateDirectories: true)
+    let outsideDirectory = base.appendingPathComponent("DirectorySymlinkOutside", isDirectory: true)
+    try FileManager.default.createDirectory(at: outsideDirectory, withIntermediateDirectories: true)
+    let outsideNote = outsideDirectory.appendingPathComponent("Outside.md")
+    try checkWrite("# Outside\n\nthis must stay outside the registry scope", to: outsideNote)
+
+    let escapedDirectory = home.appendingPathComponent("Escaped", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: escapedDirectory, withDestinationURL: outsideDirectory)
+    let safeNote = desktop.appendingPathComponent("Allowed.md")
+    try checkWrite("# Allowed\n", to: safeNote)
+
+    let registryURL = base.appendingPathComponent("DirectorySymlinkState/external-notes.json")
+    try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let registryData = try JSONSerialization.data(withJSONObject: ["version": 1, "paths": ["Escaped/Outside.md", "Desktop/Allowed.md"]])
+    try registryData.write(to: registryURL)
+
+    let vault = Vault(root: home.appendingPathComponent("Vault", isDirectory: true),
+                      externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    let listed = try vault.listNotes()
+    try require(listed.contains { $0.url.standardizedFileURL == safeNote.standardizedFileURL },
+                "listing should succeed and retain a valid registered note beside a symlink escape")
+    let escapedNoteURL = escapedDirectory.appendingPathComponent("Outside.md")
+    try require(!listed.contains { $0.url.standardizedFileURL == escapedNoteURL.standardizedFileURL ||
+                                   $0.url.standardizedFileURL == outsideNote.standardizedFileURL },
+                "registered paths crossing a directory symlink must not expose the outside note")
 }
 
 private func externalCaptureService(vault: Vault, stateDirectory: URL, now: Date, calendar: Calendar) -> CaptureService {

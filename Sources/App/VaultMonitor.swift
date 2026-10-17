@@ -50,6 +50,16 @@ final class VaultMonitor: @unchecked Sendable {
     func sync() async { await refresh.run(notes: true, assets: false) }
     func backfill() async { await refresh.run(notes: false, assets: true, fullAssetValidation: true) }
 
+    func setExternalRegistryErrorHandler(
+        _ handler: @escaping @Sendable (ExternalNoteRegistryError) -> Void
+    ) async {
+        await refresh.setExternalRegistryErrorHandler(handler)
+    }
+
+    func setExternalRegistryRecoveryHandler(_ handler: @escaping @Sendable () -> Void) async {
+        await refresh.setExternalRegistryRecoveryHandler(handler)
+    }
+
     func refreshExternalRoots() {
         lock.withLock {
             guard !stopped else { return }
@@ -60,6 +70,8 @@ final class VaultMonitor: @unchecked Sendable {
 
 private actor VaultRefresh {
     private let operation: @Sendable (VaultRefreshRequest) async -> Void
+    private var externalRegistryErrorHandler: (@Sendable (ExternalNoteRegistryError) -> Void)?
+    private var externalRegistryRecoveryHandler: (@Sendable () -> Void)?
     private var worker: Task<Void, Never>?
     private var notesDirty = false
     private var assetsDirty = false
@@ -69,7 +81,23 @@ private actor VaultRefresh {
 
     init(operation: @escaping @Sendable (VaultRefreshRequest) async -> Void) { self.operation = operation }
 
+    func setExternalRegistryErrorHandler(
+        _ handler: @escaping @Sendable (ExternalNoteRegistryError) -> Void
+    ) {
+        externalRegistryErrorHandler = handler
+    }
+
+    func setExternalRegistryRecoveryHandler(_ handler: @escaping @Sendable () -> Void) {
+        externalRegistryRecoveryHandler = handler
+    }
+
     func changed(_ change: VaultChange) {
+        if let error = change.externalRegistryError {
+            externalRegistryErrorHandler?(error)
+        }
+        if change.externalRegistryRecovered {
+            externalRegistryRecoveryHandler?()
+        }
         let notes = change.needsFullSync || !change.notesChanged.isEmpty
         let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Self.isKnownAssetPath)
         let fullAssetValidation = change.needsFullSync || (!change.assetsChanged.isEmpty && !pathsAreKnownAssets)

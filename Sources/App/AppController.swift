@@ -159,6 +159,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var screenRecordingItem: NSMenuItem?
     private var semanticModels: SemanticModelsMenu?
     private var powerMonitor: PowerMonitor?
+    private var reportedExternalRegistryWarnings = Set<String>()
     private var menuTracking = false
     private var menuAction: (@MainActor () -> Void)?
     private var requestedScreenCapture = false
@@ -201,6 +202,21 @@ final class AppController: NSObject, NSMenuDelegate {
                 UserDefaults.standard.set(true, forKey: guideKey)
                 permissionGuide.show(for: .accessibility)
             }
+        }
+        await pipeline.monitor.setExternalRegistryErrorHandler { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.reportExternalRegistryProblem(error, forSave: false)
+            }
+        }
+        await pipeline.monitor.setExternalRegistryRecoveryHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.reportedExternalRegistryWarnings.removeAll()
+            }
+        }
+        do {
+            try pipeline.vault.validateExternalNoteRegistry()
+        } catch {
+            reportExternalRegistryProblem(error, forSave: false)
         }
         let indexing = Task.detached(priority: .utility) {
             // Observe first: events received during the initial scan queue another pass.
@@ -340,7 +356,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func journalAcquisition(_ capture: PendingCapture) {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
-        let preparation = Task.detached(priority: .userInitiated) { try await pipeline.prepare(capture, heading: nil) }
+        let preparation = Task.detached(priority: .userInitiated) { try await pipeline.prepare(capture, noteTitle: nil) }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
             try await pipeline.journal.store(try await preparation.value)
@@ -369,7 +385,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let recovered = try? await recovery?.value
-            return try await pipeline.prepare(capture, heading: nil, destination: recovered?.prepared.destination)
+            return try await pipeline.prepare(capture, noteTitle: nil, destination: recovered?.prepared.destination)
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
@@ -406,9 +422,9 @@ final class AppController: NSObject, NSMenuDelegate {
         let preparation = Task.detached(priority: .userInitiated) {
             let destination: Destination?
             if let recovery { destination = try? await recovery.value.prepared.destination }
-            else if heading == nil { destination = try? await staged?.preparation.value.prepared.destination }
+            else if noteTitle == nil { destination = try? await staged?.preparation.value.prepared.destination }
             else { destination = nil }
-            return try await pipeline.prepare(capture, heading: heading, destination: destination)
+            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
@@ -433,13 +449,13 @@ final class AppController: NSObject, NSMenuDelegate {
                     self?.showToast(Toast(style: .success, title: "Saved to \(saved.destination.title)", duration: 1.6))
                 }
             } catch {
-                if heading != nil, case .failure = await preparation.result, let staged {
+                if noteTitle != nil, case .failure = await preparation.result, let staged {
                     self?.preparedJobs.removeValue(forKey: capture.id)
                     self?.stagedJob = staged
                     self?.pending = capture
                     self?.pendingToastID = capture.id
                 }
-                self?.report(error, title: "Couldn't save capture")
+                self?.reportUserSaveFailure(error, title: "Couldn't save capture")
             }
             if self?.commitGeneration == generation { self?.commitTail = nil }
         }
@@ -550,7 +566,8 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func presentInput(placeholder: String, title: String? = nil, secondary: String? = nil, suggestions: [NoteSuggestion],
+    private func presentInput(placeholder: String, title: String? = nil, secondary: String? = nil,
+                              suggestions: [NoteSuggestion],
                               onAccept: ((String) -> Void)? = nil,
                               onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         guard !isTerminating else { return }
@@ -561,8 +578,11 @@ final class AppController: NSObject, NSMenuDelegate {
             let key = NoteTitle.matchKey(prefix)
             return suggestions.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }.prefix(8).map {
                 let session = $0.kind == .session
+                let date = Self.stamp($0.modified, pattern: "MMM d, yyyy", calendar: calendar)
+                let detail = "\(session ? "Session" : "Note") · \(date)"
+                let pathDetail = session ? "\(detail) · \($0.path)" : detail
                 return Suggestion(title: $0.title,
-                                  secondary: "\(session ? "Session" : "Note") · \(Self.stamp($0.modified, pattern: "MMM d", calendar: calendar))",
+                                  secondary: pathDetail,
                                   symbolName: session ? "record.circle" : "doc.text")
             }
         }, onAccept: onAccept, onSubmit: { [weak self] text in
@@ -620,7 +640,9 @@ final class AppController: NSObject, NSMenuDelegate {
                         _ = controller.commitPending()
                         await controller.waitForCommits()
                         do { _ = try await controller.startSession(name: name) }
-                        catch { controller.report(error, title: "Couldn't start session") }
+                        catch SessionStoreError.ambiguous(let candidates) {
+                            controller.presentSessionCandidates(candidates)
+                        } catch { controller.report(error, title: "Couldn't start session") }
                     }
                 }, onCancel: {})
             }
@@ -630,11 +652,48 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func startSession(name: String) async throws -> Session {
         let session = try await pipeline.sessions.start(name: name)
+        return try await activateSession(session)
+    }
+
+    private func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
+        let session = try await pipeline.sessions.resume(candidate)
+        return try await activateSession(session)
+    }
+
+    private func activateSession(_ session: Session) async throws -> Session {
         activeSession = session
         refreshStatus()
         try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath))
         showToast(Toast(style: .session, title: "Session \(session.resumed == true ? "resumed" : "started") · \(session.name)", subtitle: "Captures go here until ⌥⇧A"))
         return session
+    }
+
+    private func presentSessionCandidates(_ candidates: [SessionCandidate]) {
+        let calendar = pipeline.calendar
+        let choices = candidates.map {
+            Suggestion(title: $0.name,
+                       secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: "MMM d, yyyy", calendar: calendar)) · \($0.notePath)",
+                       symbolName: "record.circle",
+                       value: $0.notePath)
+        }
+        let panel = InputPanelController()
+        input = panel
+        panel.present(placeholder: "Select a session…",
+                      title: "Multiple sessions found with the given name",
+                      selectionOnly: true,
+                      suggestions: { prefix in
+            let key = NoteTitle.matchKey(prefix)
+            return choices.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }
+        }, onSubmit: { [weak self] path in
+            self?.inputClosed()
+            guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
+            self.enqueue { controller in
+                _ = controller.commitPending()
+                await controller.waitForCommits()
+                do { _ = try await controller.resumeSession(candidate) }
+                catch { controller.report(error, title: "Couldn't resume session") }
+            }
+        }, onCancel: { [weak self] in self?.inputClosed() })
     }
 
     @discardableResult
@@ -668,8 +727,13 @@ final class AppController: NSObject, NSMenuDelegate {
             let active = await pipeline.sessions.current()
             let sessionDestination: Destination?
             if let active {
-                do { sessionDestination = try Router.destination(heading: nil, activeSession: active, notes: [], vault: pipeline.vault) }
-                catch { controller.report(error, title: "Couldn't resolve note destination"); return }
+                do {
+                    sessionDestination = try Router.destination(noteTitle: nil, activeSession: active,
+                                                                 notes: [], vault: pipeline.vault)
+                } catch {
+                    controller.report(error, title: "Couldn't resolve note destination")
+                    return
+                }
             } else { sessionDestination = nil }
             do {
                 let restored = try pipeline.drafts.loadSnapshot()
@@ -697,7 +761,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onSubmit: { [weak controller] text in
                         controller?.enqueue { controller in
                             do { _ = try await save(text, controller: controller) }
-                            catch { controller.report(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     },
                     onNew: { [weak controller, weak editor] text in
@@ -712,7 +776,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             do {
                                 _ = try await save(text, controller: controller)
                                 controller.openNoteEditor()
-                            } catch { controller.report(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     },
                     onOpenAsNote: { [weak controller] text in
@@ -724,7 +788,7 @@ final class AppController: NSObject, NSMenuDelegate {
                                     controller.openNote(url); return
                                 }
                                 controller.showToast(Toast(style: .warning, title: "Nothing to open yet", subtitle: "Write something first"))
-                            } catch { controller.report(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     },
                     browseItems: {
@@ -850,8 +914,13 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !controller.isTerminating else { return }
             let active = await controller.pipeline.sessions.current()
             let destination: Destination
-            do { destination = try Router.destination(heading: nil, activeSession: active, notes: [], vault: controller.pipeline.vault) }
-            catch { controller.report(error, title: "Couldn't resolve note destination"); return }
+            do {
+                destination = try Router.destination(noteTitle: nil, activeSession: active,
+                                                     notes: [], vault: controller.pipeline.vault)
+            } catch {
+                controller.report(error, title: "Couldn't resolve note destination")
+                return
+            }
             controller.presentInput(placeholder: "Subheading", title: "Add subheading", secondary: "In \(destination.title)",
                                     suggestions: [], onSubmit: { [weak controller] text in
                 controller?.enqueue { controller in
@@ -875,7 +944,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let preparation = Task.detached(priority: .userInitiated) {
             let prepared: PreparedCapture
             if let destination { prepared = PreparedCapture(capture: capture, destination: destination) }
-            else { prepared = try await pipeline.service.prepare(capture, heading: nil) }
+            else { prepared = try await pipeline.service.prepare(capture, noteTitle: nil) }
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
         preparedJobs[capture.id] = preparation
@@ -1042,6 +1111,49 @@ final class AppController: NSObject, NSMenuDelegate {
     private func report(_ error: Error, title: String) {
         logger.error("\(title, privacy: .public) (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
         showToast(Toast(style: .warning, title: title))
+    }
+
+    private func reportUserSaveFailure(_ error: Error, title: String) {
+        if let registryError = error as? ExternalNoteRegistryError {
+            reportExternalRegistryProblem(registryError, forSave: true)
+        } else {
+            report(error, title: title)
+        }
+    }
+
+    private func reportExternalRegistryProblem(_ error: Error, forSave: Bool) {
+        let key: String
+        if let registryError = error as? ExternalNoteRegistryError {
+            key = String(reflecting: registryError)
+        } else {
+            key = AppErrorLog.summary(error)
+        }
+        if !forSave, !reportedExternalRegistryWarnings.insert(key).inserted { return }
+
+        let title = forSave ? "Couldn't save external note" : "External notes unavailable"
+        let subtitle: String
+        if let registryError = error as? ExternalNoteRegistryError {
+            switch registryError {
+            case .malformedRegistry:
+                subtitle = forSave
+                    ? "The registry is damaged. Its existing entries were preserved; this note was not saved."
+                    : "The registry is damaged. Existing entries were preserved; external saves are paused. Vault notes still work."
+            case .unsupportedVersion(let version):
+                subtitle = forSave
+                    ? "The registry uses version \(version). Its entries were preserved; this note was not saved."
+                    : "The registry uses version \(version). Existing entries were preserved; update this app. Vault notes still work."
+            case .unreadableRegistry:
+                subtitle = forSave
+                    ? "The registry could not be read safely. Its entries were preserved; this note was not saved."
+                    : "The registry could not be read safely. Existing entries were preserved; external notes are unavailable. Vault notes still work."
+            }
+        } else {
+            subtitle = forSave
+                ? "The registry could not be read; its contents were left unchanged and this note was not saved."
+                : "The registry could not be read. External notes are unavailable; vault notes still work."
+        }
+        logger.error("\(title, privacy: .public) (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+        showToast(Toast(style: .warning, title: title, subtitle: subtitle))
     }
 
     private func installStatusItem() {

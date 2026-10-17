@@ -3,10 +3,12 @@ import Darwin
 import Foundation
 
 func checkNoteWriter() async throws {
-    let root = try checkMakeDirectory("writer")
-    defer { checkRemoveDirectory(root) }
+    let base = try checkMakeDirectory("writer")
+    defer { checkRemoveDirectory(base) }
+    let root = base.appendingPathComponent("Vault", isDirectory: true)
+    let home = base.appendingPathComponent("Home", isDirectory: true)
     let calendar = checkCalendar()
-    let vault = Vault(root: root)
+    let vault = Vault(root: root, homeDirectoryURL: home)
     try vault.prepare()
     let writer = NoteWriter(vault: vault, calendar: calendar)
     let when = checkDate(2026, 10, 13, 14, 30)
@@ -81,7 +83,8 @@ func checkNoteWriter() async throws {
     )
     let assetData = try Data(contentsOf: root.appendingPathComponent(assetPath))
     try require(assetData == png, "saved PNG bytes differ")
-    try await checkImageLinksForManagedLocations(vault: vault, writer: writer, assetPath: assetPath, calendar: calendar, when: when)
+    try await checkImageLinksForManagedLocations(vault: vault, home: home, writer: writer,
+                                                 assetPath: assetPath, calendar: calendar, when: when)
     try await checkSourceGrouping(vault: vault, calendar: calendar, capture: capture)
     try await checkPartialCaptureReplay(vault: vault, calendar: calendar, capture: capture)
     try await checkAtomicReplacement(vault: vault, calendar: calendar, capture: capture)
@@ -92,13 +95,9 @@ func checkNoteWriter() async throws {
     print("NoteWriter checks passed.")
 }
 
-private func checkImageLinksForManagedLocations(vault: Vault, writer: NoteWriter, assetPath: String,
+private func checkImageLinksForManagedLocations(vault: Vault, home: URL, writer: NoteWriter, assetPath: String,
                                                 calendar: Calendar, when: Date) async throws {
-    let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-    let homeFolder = home.appendingPathComponent(".app-check-\(UUID().uuidString)", isDirectory: true)
-    defer { checkRemoveDirectory(homeFolder) }
-
-    let homeNote = homeFolder.appendingPathComponent("Deep/Visual Notes.md")
+    let homeNote = home.appendingPathComponent("Deep/Visual Notes.md")
     try checkWrite("# Visual Notes\n\nExisting text\n", to: homeNote)
     let capture = Capture(id: UUID(), createdAt: when, content: .image(assetPath: assetPath), source: CaptureSource())
     let destination = Destination(url: homeNote, title: "Visual Notes", kind: .note)
@@ -120,18 +119,29 @@ private func checkImageLinksForManagedLocations(vault: Vault, writer: NoteWriter
     try require(homeParsed.blocks.contains { $0.kind == .image && $0.assetPath == assetPath },
                 "home-relative note image links should map back to the vault asset path")
 
-    let nestedNote = vault.root.appendingPathComponent("Projects/Deep/Nested.md")
+    let rootNote = vault.root.appendingPathComponent("Root image note.md")
+    var rootCapture = capture
+    rootCapture.id = UUID()
+    try await writer.append(rootCapture, to: rootNote, title: "Root image note")
+    let rootText = try checkRead(rootNote)
+    let rootLink = try markdownImageTarget(in: rootText)
+    let resolvedRootAsset = URL(string: rootLink, relativeTo: rootNote.deletingLastPathComponent())!.standardizedFileURL
+    try require(rootLink == assetPath && resolvedRootAsset.path == expectedAsset.path,
+                "root note image link should use the vault-relative assets path")
+
+    let nestedNote = vault.root.appendingPathComponent("Projects/Research/Deep/Nested.md")
     var nestedCapture = capture
     nestedCapture.id = UUID()
     try await writer.append(nestedCapture, to: nestedNote, title: "Nested")
     let nestedText = try checkRead(nestedNote)
     let nestedLink = try markdownImageTarget(in: nestedText)
     let resolvedNestedAsset = URL(string: nestedLink, relativeTo: nestedNote.deletingLastPathComponent())!.standardizedFileURL
-    try require(resolvedNestedAsset.path == expectedAsset.path, "nested vault note image link should resolve to the vault-managed asset")
+    try require(nestedLink == "../../../\(assetPath)" && resolvedNestedAsset.path == expectedAsset.path,
+                "depth-three nested note image link should walk back to the vault assets directory")
 
     let outside = vault.root.appendingPathComponent("Outside note.md")
     try checkWrite("outside bytes\n", to: outside)
-    let linked = homeFolder.appendingPathComponent("Linked.md")
+    let linked = home.appendingPathComponent("Linked.md")
     try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: outside)
     do {
         try await writer.appendIfMissing(capture, to: Destination(url: linked, title: "Linked", kind: .note))

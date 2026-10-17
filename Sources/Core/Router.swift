@@ -23,7 +23,7 @@ public enum Router {
         notes: [NoteRef],
         vault: Vault
     ) throws -> Destination {
-        let cleaned = NoteTitle.cleanTitle(heading ?? "")
+        let cleaned = NoteTitle.cleanTitle(noteTitle ?? "")
         if !cleaned.isEmpty {
             let pathName = try NoteTitle.pathName(for: cleaned)
             let qualifiedPath = pathName.scope == .home || pathName.components.count > 1

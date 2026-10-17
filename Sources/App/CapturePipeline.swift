@@ -73,7 +73,7 @@ struct CapturePipeline: Sendable {
         )
     }
 
-    func prepare(_ capture: PendingCapture, heading: String?, destination: Destination? = nil) async throws -> CaptureJob {
+    func prepare(_ capture: PendingCapture, noteTitle: String?, destination: Destination? = nil) async throws -> CaptureJob {
         let content: CaptureContent
         let png: Data?
         let ocr: String?
@@ -90,7 +90,7 @@ struct CapturePipeline: Sendable {
         let value = Capture(id: capture.id, createdAt: capture.createdAt, content: content, source: capture.source)
         let prepared: PreparedCapture
         if let destination { prepared = PreparedCapture(capture: value, destination: destination) }
-        else { prepared = try await service.prepare(value, heading: heading) }
+        else { prepared = try await service.prepare(value, noteTitle: noteTitle) }
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 

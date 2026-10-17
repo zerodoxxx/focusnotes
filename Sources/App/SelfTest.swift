@@ -58,7 +58,7 @@ extension AppController {
         let sessionCount = try await endSession(session)
         let ownExternal = PendingCapture(trigger: .selection, content: .text("coalescedownneedle app append"),
                                          source: CapturePipeline.source(context), subtitle: "App append")
-        let ownJob = try await pipeline.prepare(ownExternal, heading: "External Edit")
+        let ownJob = try await pipeline.prepare(ownExternal, noteTitle: "External Edit")
         try await pipeline.journal.store(ownJob)
         _ = try await pipeline.commit(ownJob)
         let external = Capture(id: UUID(), createdAt: Date(), content: .text("watcherexternalneedle appended by another editor"),

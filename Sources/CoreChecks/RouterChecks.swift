@@ -25,8 +25,8 @@ func checkRouter() throws {
         startedAt: checkDate(2026, 10, 13, 9, 0)
     )
 
-    func route(_ heading: String?, _ session: Session?) throws -> Destination {
-        try Router.destination(heading: heading, activeSession: session, notes: notes, vault: vault)
+    func route(_ noteTitle: String?, _ session: Session?) throws -> Destination {
+        try Router.destination(noteTitle: noteTitle, activeSession: session, notes: notes, vault: vault)
     }
 
     func expect(
