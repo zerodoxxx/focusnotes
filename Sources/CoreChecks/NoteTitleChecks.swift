@@ -48,5 +48,11 @@ func checkNoteTitle() throws {
         try require(first != second && second.lastPathComponent.utf8.count <= 255, "Unicode title should allow collision suffixes")
         try checkWrite("# Unicode 2\n", to: second)
     }
+    try require(NoteTitle.names("Rate  Limiting", title: "rate limiting", stem: "other"),
+                "names should match a title ignoring case and extra spaces")
+    try require(NoteTitle.names("foo", title: "Bar", stem: "Foo"), "names should match a file name ignoring case")
+    try require(NoteTitle.names("Foo: bar", title: "x", stem: "Foo- bar"),
+                "names should match the file name that a title produces")
+    try require(!NoteTitle.names("   ", title: "", stem: ""), "a blank query should name nothing")
     print("NoteTitle checks passed.")
 }

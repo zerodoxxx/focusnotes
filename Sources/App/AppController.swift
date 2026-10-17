@@ -669,8 +669,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave)
                 let calendar = pipeline.calendar
                 func relativePath(_ destination: Destination?) -> String? { destination.flatMap { pipeline.vault.relativePath(of: $0.url) } }
-                @MainActor func save(_ text: String, controller: AppController) async throws -> SavedCapture? {
-                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave)
+                @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
+                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote)
                 }
                 let initiallyPinned = relativePath(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 editor.present(destination: sessionDestination?.title, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
@@ -759,6 +759,18 @@ final class AppController: NSObject, NSMenuDelegate {
                             state.pinOnSave = false
                             editor?.setDestination(state.destination?.title, isPinned: relativePath(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
+                    },
+                    existingTitleForText: { text in
+                        let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
+                        if note.isGeneratedTitle { return nil }
+                        let refs = state.suggestions.map { NoteRef(url: pipeline.vault.url(forRelativePath: $0.path), title: $0.title, kind: $0.kind) }
+                        return Router.existing(title: note.title, notes: refs, vault: pipeline.vault)?.title
+                    },
+                    onSaveAsNew: { [weak controller] text in
+                        controller?.enqueue { controller in
+                            do { _ = try await save(text, controller: controller, newNote: true) }
+                            catch { controller.report(error, title: "Couldn't add note; draft kept") }
+                        }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
                     guard let controller else { return }
@@ -766,6 +778,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     guard !controller.isTerminating, let state else { return }
                     state.suggestions = list
                     editor?.refreshBrowseItems()
+                    editor?.refreshTitle()
                 }
             } catch { controller.report(error, title: "Couldn't restore draft") }
         }
@@ -776,8 +789,9 @@ final class AppController: NSObject, NSMenuDelegate {
 
     /// Used by both ⌥⇧N and the permission-free self-test. Persist text before any
     /// suspension; failed saves retain the draft and the exact journaled identity.
+    /// `newNote` forces a new note (Save as New Note) even when the title names an existing one.
     @discardableResult
-    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false) async throws -> SavedCapture? {
+    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false) async throws -> SavedCapture? {
         guard !isTerminating else { return nil }
         try pipeline.drafts.store(rawText, pinOnSave: pinOnSave)
         let text = CaptureFormat.noteBody(rawText)
@@ -792,12 +806,15 @@ final class AppController: NSObject, NSMenuDelegate {
         for candidate in Array(preparedJobs.values) {
             let job = await candidate.value
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
-                if destination == nil || job.prepared.destination == destination { retry = candidate; break }
+                if destination == nil || job.prepared.destination == destination {
+                    if newNote && job.prepared.createsNote != true { continue }
+                    retry = candidate; break
+                }
             }
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = await pipeline.service.prepareNote(capture, destination: destination, calendar: pipeline.calendar)
+            let prepared = await pipeline.service.prepareNote(capture, destination: destination, newNote: newNote, calendar: pipeline.calendar)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText)
         }
         let preparedNote = await preparation.value.prepared

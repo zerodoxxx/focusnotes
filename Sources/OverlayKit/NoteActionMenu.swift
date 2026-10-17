@@ -9,9 +9,12 @@ struct NoteActionItem {
     /// Rows in different groups are divided by a separator.
     var group: Int
 
-    @MainActor static func standard(isPinned: Bool, hasText: Bool) -> [NoteActionItem] {
+    /// `appendsToExisting`: the typed title names an existing note, so saving would append; the escape row is then live.
+    @MainActor static func standard(isPinned: Bool, hasText: Bool, appendsToExisting: Bool = false) -> [NoteActionItem] {
         [
             NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: "⌘N", isEnabled: true, group: 0),
+            NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: "⌥⌘↩",
+                           isEnabled: appendsToExisting, group: 0),
             NoteActionItem(id: .pin, title: isPinned ? "Remove from Pinned" : "Add to Pinned", symbolName: isPinned ? "pin.slash" : "pin",
                            shortcut: "⇧⌘P", isEnabled: true, group: 0),
             NoteActionItem(id: .openAsNote, title: "Open as Note", symbolName: "arrow.up.left.and.arrow.down.right",
