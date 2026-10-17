@@ -104,9 +104,13 @@ private func checkCaseInsensitiveAssetsExclusion() throws {
 }
 
 private func checkNoteNameResolution() throws {
-    let root = try checkMakeDirectory("vault-note-name-resolution")
-    defer { checkRemoveDirectory(root) }
-    let vault = Vault(root: root)
+    let base = try checkMakeDirectory("vault-note-name-resolution")
+    defer { checkRemoveDirectory(base) }
+    let root = base.appendingPathComponent("Vault", isDirectory: true)
+    let home = base.appendingPathComponent("Home", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    let vault = Vault(root: root, homeDirectoryURL: home)
     try vault.prepare()
 
     let math = root.appendingPathComponent("Science", isDirectory: true)
@@ -141,7 +145,7 @@ private func checkNoteNameResolution() throws {
 
     let homeName = "Codex Issue 8 \(UUID().uuidString)"
     let homeLocation = try vault.resolveNoteName("/\(homeName)/Nested/Theory")
-    let homeRoot = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.resolvingSymlinksInPath()
+    let homeRoot = home.standardizedFileURL.resolvingSymlinksInPath()
     let expectedHomeURL = homeRoot.appendingPathComponent(homeName, isDirectory: true)
         .appendingPathComponent("Nested", isDirectory: true)
         .appendingPathComponent("Theory.md")

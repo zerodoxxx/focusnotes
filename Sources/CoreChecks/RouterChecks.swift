@@ -2,9 +2,13 @@ import Core
 import Foundation
 
 func checkRouter() throws {
-    let root = try checkMakeDirectory("router")
-    defer { checkRemoveDirectory(root) }
-    let vault = Vault(root: root)
+    let base = try checkMakeDirectory("router")
+    defer { checkRemoveDirectory(base) }
+    let root = base.appendingPathComponent("Vault", isDirectory: true)
+    let home = base.appendingPathComponent("Home", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    let vault = Vault(root: root, homeDirectoryURL: home)
     try vault.prepare()
     // Foo.md has a title that differs from its file name; a filename collision still appends.
     try checkWrite("# Something Else\n", to: root.appendingPathComponent("Foo.md"))
@@ -77,7 +81,7 @@ func checkRouter() throws {
     } catch is NotePathNameError {}
     let homeHeading = "/CodexRouter-\(UUID().uuidString)/science/math/trigonometry"
     let homeDestination = try route(homeHeading, nil)
-    try require(homeDestination.url.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.path + "/CodexRouter-"),
+    try require(homeDestination.url.path.hasPrefix(home.path + "/CodexRouter-"),
                 "leading slash heading should resolve under the user's home directory")
     try require(homeDestination.title == "trigonometry", "home-relative destination title should use its final path component")
     print("Router checks passed.")
