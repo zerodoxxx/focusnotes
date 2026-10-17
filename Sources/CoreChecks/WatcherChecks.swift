@@ -1,4 +1,4 @@
-import Core
+@_spi(Checks) import Core
 import Foundation
 
 private final class VaultChangeRecorder: @unchecked Sendable {
@@ -56,6 +56,10 @@ func checkVaultWatcher() throws {
     try require(!watcher.isRunning, "VaultWatcher should not report running before start")
     watcher.start()
     try require(watcher.isRunning, "VaultWatcher should report a successfully started stream")
+    let initialGeneration = watcher.streamGenerationForChecks
+    watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "refreshing unchanged roots should preserve the active FSEvents stream")
 
     try checkWrite("# Foo\n", to: root.appendingPathComponent("Foo.md"))
     let fooChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains("Foo.md") }

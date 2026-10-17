@@ -647,7 +647,8 @@ public struct Vault: Sendable {
         for entry in entries.sorted(by: { $0.name < $1.name }) {
             let name = entry.name
             guard !name.hasPrefix(".") else { continue }
-            if relativeDirectory.isEmpty && name == Self.assetsDirectoryName { continue }
+            if relativeDirectory.isEmpty &&
+                name.caseInsensitiveCompare(Self.assetsDirectoryName) == .orderedSame { continue }
 
             let path = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
             if entry.isDirectory {
