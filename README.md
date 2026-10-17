@@ -86,6 +86,8 @@ Prefix the path with `/` to resolve it from your home folder: `/Desktop/science/
 saves to `~/Desktop/science/math/trigonometry.md`. If the target note already exists,
 Focusnotes appends to it. Folder and filename matching ignores case. External note paths
 used this way are tracked for search and file updates; Focusnotes does not scan your home folder.
+Paths into the reserved `assets/` folder and note names whose final component starts with `~$` are
+rejected.
 
 Timestamps and source details are stored in HTML comments, so the visible text stays clean:
 
