@@ -6,9 +6,12 @@ func checkRouter() throws {
     defer { checkRemoveDirectory(root) }
     let vault = Vault(root: root)
     try vault.prepare()
-    // Foo.md has a title that differs from its file name, so "Foo" is not a title match.
+    // Foo.md is titled "Something Else", so "Something Else" matches it by title and "Foo" by file name.
     try checkWrite("# Something Else\n", to: root.appendingPathComponent("Foo.md"))
     try checkWrite("# Bar\n", to: root.appendingPathComponent("Bar.md"))
+    // Zed.md is titled "Qux" and Qux.md is titled "Other": "Qux" must match Zed.md by title, not Qux.md by file name.
+    try checkWrite("# Qux\n", to: root.appendingPathComponent("Zed.md"))
+    try checkWrite("# Other\n", to: root.appendingPathComponent("Qux.md"))
     try checkWrite("# 2026-10-13 Design\n", to: vault.sessionsURL.appendingPathComponent("2026-10-13 Design.md"))
     try checkWrite("# Standup\n", to: vault.sessionsURL.appendingPathComponent("2026-10-13 Standup.md"))
     let notes = try vault.listNotes()
@@ -41,8 +44,10 @@ func checkRouter() throws {
                "heading match ignores case and extra spaces")
     try expect(route("Something Else", nil), path: "Foo.md", title: "Something Else", kind: .note,
                "heading matches a note by its title, not its file name")
-    try expect(route("Foo", nil), path: "Foo 2.md", title: "Foo", kind: .note,
-               "heading with no title match targets a new root note, avoiding Foo.md")
+    try expect(route("Foo", nil), path: "Foo.md", title: "Something Else", kind: .note,
+               "heading matches a note by its file name")
+    try expect(route("Qux", nil), path: "Zed.md", title: "Qux", kind: .note,
+               "a title match beats a file-name match")
     try expect(route("New Thing", nil), path: "New Thing.md", title: "New Thing", kind: .note,
                "unknown heading targets a new root note")
     try expect(route("2026-10-13 Design", nil), path: "Sessions/2026-10-13 Design.md",

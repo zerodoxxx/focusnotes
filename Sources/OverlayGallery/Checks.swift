@@ -259,6 +259,7 @@ func runBehaviorChecks() async throws {
     try await checkStickyNotes()
     try await checkNoteEditorBehavior()
     try await checkNoteOverlays()
+    try await checkSaveAsNewShortcut()
     try checkCardButtonClicks()
     try checkQuickNoteDesign()
     try await checkFloatingCards()
@@ -769,6 +770,22 @@ private func checkFooterFit() async throws {
     }
 }
 
+/// Option-Command-Return saves the text as a new note even when it names an existing one.
+@MainActor
+private func checkSaveAsNewShortcut() async throws {
+    let editor = NoteEditorPanel()
+    let text = "# groceries\n- milk"
+    var saved: [String] = []
+    editor.present(destination: nil, isPinned: false, draft: text, handlers: NoteEditorHandlers(
+        onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in }, onOpenAsNote: { _ in },
+        browseItems: { [] }, onBrowse: { _, _ in }, onTogglePin: { true }, onClose: {}, onError: { _ in },
+        existingTitleForText: { _ in "Groceries" }, onSaveAsNew: { saved.append($0) }))
+    let panel = try currentPanel()
+    try key(36, modifiers: [.command, .option])
+    try await settle()
+    try require(saved == [text] && !panel.isVisible, "Option-Command-Return must save as a new note and close the editor")
+}
+
 /// Spec checks for the quick-note surface: title line, top-band chrome, footer copy, caret geometry.
 @MainActor
 private func checkQuickNoteDesign() throws {
@@ -792,6 +809,10 @@ private func checkQuickNoteDesign() throws {
     let footerLabels = { (view: NSView) in descendants(view).compactMap { $0 as? NSTextField }.map(\.stringValue) }
     try require(footerLabels(OverlayPreview.noteEditor()).contains("Create note"), "Footer without a destination")
     try require(footerLabels(OverlayPreview.noteEditor(destination: "Trip planning")).contains("Add to note"), "Footer with a destination")
+    try require(shown(OverlayPreview.noteEditor(text: "# groceries\n- milk", appendsTo: "Groceries")) == "Groceries", "Text naming a note must title the note with that note's title")
+    try require(footerLabels(OverlayPreview.noteEditor(text: "# groceries\n- milk", appendsTo: "Groceries")).contains("Add to note"), "Footer when the text names a note")
+    try require(shown(OverlayPreview.noteEditor(text: "# groceries\n- milk")) == "groceries", "Text without a matching note keeps its own title")
+    try require(footerLabels(OverlayPreview.noteEditor(text: "# groceries\n- milk")).contains("Create note"), "Footer when the text names no note")
 
     // Top band: five 26pt buttons; the right three are adjacent inside one capsule; the title stays clear of all of them.
     let band = OverlayPreview.noteEditor(destination: String(repeating: "Wide title ", count: 12), revealed: true)
@@ -863,10 +884,19 @@ private func checkCardDesign() throws {
     let pinnedMenu = OverlayPreview.noteEditor(isPinned: true, overlay: .actions())
     try require(descendants(pinnedMenu).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Remove from Pinned" },
                 "Pinned notes must offer Remove from Pinned")
-    try require(rows.count == 5 && rows.allSatisfy { abs($0.frame.height - 32) < 0.01 }, "Actions rows are 32pt")
+    try require(rows.count == 6 && rows.allSatisfy { abs($0.frame.height - 32) < 0.01 }, "Actions rows are 32pt")
+    // Save as New Note is enabled only when the text names an existing note; a disabled row refuses a press.
+    let saveRow = rows.first { $0.accessibilityLabel() == "Save as New Note" }
+    try require(saveRow?.isAccessibilityEnabled() == false && saveRow?.accessibilityPerformPress() == false,
+                "Save as New Note must be disabled when the text names no note")
+    let collision = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true, overlay: .actions(), appendsTo: "Groceries")
+    collision.layoutSubtreeIfNeeded()
+    let collisionRows = named(collision, "ActionRowView")
+    let collisionSave = collisionRows.first { $0.accessibilityLabel() == "Save as New Note" }
+    try require(collisionRows.count == 6 && collisionSave?.isAccessibilityEnabled() == true, "Save as New Note must be enabled when the text names a note")
     try require(named(menu, "SeparatorView").count == 2, "Actions card: header separator plus one group separator")
     let groups = rows.map { menu.convert($0.bounds, from: $0).minY }.sorted()
-    try require(groups[2] - groups[1] > 32.5, "A gap must separate the two action groups")
+    try require(groups[3] - groups[2] > 32.5, "A gap must separate the two action groups")
     try require(menu.layer?.cornerRadius == 12, "Cards use a 12pt radius")
 
     let many = (0..<12).map { BrowseItem(id: "n\($0)", title: "Note \($0)", detail: "Note · Oct \($0 + 1)", symbolName: "doc.text", isPinned: $0 < 2) }
@@ -1210,15 +1240,15 @@ private func checkFloatingCards() async throws {
     try key(40, modifiers: .command)
     guard let menu = named(mouseRoot, "NoteActionMenuView").first else { throw GalleryError("Actions missing") }
     let rows = named(menu, "ActionRowView")
-    try require(rows.count == 5 && !descendants(menu).compactMap({ $0 as? NSTextField }).contains { $0.stringValue == "Browse Notes" },
-                "Actions must contain five rows and no Browse Notes")
-    let pinPoint = mouseRoot.convert(NSPoint(x: rows[1].bounds.midX, y: rows[1].bounds.midY), from: rows[1])
+    try require(rows.count == 6 && !descendants(menu).compactMap({ $0 as? NSTextField }).contains { $0.stringValue == "Browse Notes" },
+                "Actions must contain six rows and no Browse Notes")
+    let pinPoint = mouseRoot.convert(NSPoint(x: rows[2].bounds.midX, y: rows[2].bounds.midY), from: rows[2])
     try move(mousePanel, root: mouseRoot, to: pinPoint)
-    try require(OverlayPreview.selectedCardID(in: menu) == "pin" && rows[1].accessibilityValue() as? String == "Selected", "Hover must select the Actions row")
-    let disabledPoint = mouseRoot.convert(NSPoint(x: rows[4].bounds.midX, y: rows[4].bounds.midY), from: rows[4])
+    try require(OverlayPreview.selectedCardID(in: menu) == "pin" && rows[2].accessibilityValue() as? String == "Selected", "Hover must select the Actions row")
+    let disabledPoint = mouseRoot.convert(NSPoint(x: rows[5].bounds.midX, y: rows[5].bounds.midY), from: rows[5])
     try move(mousePanel, root: mouseRoot, to: disabledPoint)
-    try require(OverlayPreview.selectedCardID(in: menu) == "pin" && rows[4].accessibilityValue() as? String != "Selected", "Disabled rows must not highlight on hover")
-    try require(!rows[4].accessibilityPerformPress(), "Disabled Actions must do nothing")
+    try require(OverlayPreview.selectedCardID(in: menu) == "pin" && rows[5].accessibilityValue() as? String != "Selected", "Disabled rows must not highlight on hover")
+    try require(!rows[5].accessibilityPerformPress(), "Disabled Actions must do nothing")
     try key(35, modifiers: .command)
     guard let browse = named(mouseRoot, "NoteBrowseView").first else { throw GalleryError("Browse missing") }
     let browseRows = named(browse, "BrowseRowView")

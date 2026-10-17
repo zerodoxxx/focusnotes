@@ -316,8 +316,10 @@ extension AppController {
         guard await live.replayUnsaved() == 1, try live.drafts.load().isEmpty,
               try Data(contentsOf: created.destination.url) == rootBytes,
               !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path) else { throw SelfTestFailure("New-note replay changed its path/bytes or retained the original draft") }
-        guard let duplicateTitle = try await controller.addNote(rootDraft),
-              duplicateTitle.destination.url.lastPathComponent == "independentnoteneedle 2.md" else { throw SelfTestFailure("Controller collision suffix failed") }
+        guard let appended = try await controller.addNote(rootDraft),
+              appended.destination.url == created.destination.url else { throw SelfTestFailure("Typed note naming an existing note must append to it") }
+        guard let savedAsNew = try await controller.addNote(rootDraft, newNote: true),
+              savedAsNew.destination.url.lastPathComponent == "independentnoteneedle 2.md" else { throw SelfTestFailure("Save as New Note must keep the collision suffix") }
         try await checkQuickNotePinPersistence()
         let resumed = try await controller.startSession(name: "feedback")
         guard resumed.notePath == session.notePath, resumed.resumed == true else { throw SelfTestFailure("Session did not resume by name") }

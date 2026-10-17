@@ -72,9 +72,11 @@ public actor CaptureService {
         ))
     }
 
-    /// Choose a new root path once. Replay saves this preparation without routing
-    /// again, even if a file with the same title or a different session now exists.
-    public func prepareNote(_ capture: Capture, destination: Destination? = nil, calendar: Calendar) async -> PreparedCapture {
+    /// Chooses the note for a typed capture, once. Unless `newNote` is set or the title is a
+    /// generated timestamp, a title that names an existing note, or one reserved earlier in
+    /// this process, appends to it. Otherwise a new root path is reserved. Replay saves this
+    /// preparation without routing again.
+    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, calendar: Calendar) async -> PreparedCapture {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
         if let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: Router.destination(
@@ -82,10 +84,26 @@ public actor CaptureService {
         }
         guard case .note(let markdown) = capture.content else { return await prepare(capture, heading: nil) }
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
+        let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
+        if !newNote, !note.isGeneratedTitle {
+            let notes = (try? vault.listNotes()) ?? []
+            // A title-only note has no body, so its text (the title line) is appended instead.
+            let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let appendCapture = hasBody ? noteCapture : capture
+            if let existing = Router.existing(title: note.title, notes: notes, vault: vault) {
+                return PreparedCapture(capture: appendCapture, destination: existing)
+            }
+            let reservedURLs = preparedNoteURLs.filter { url in
+                let stem = url.deletingPathExtension().lastPathComponent
+                return NoteTitle.names(note.title, title: stem, stem: stem)
+            }
+            if let reserved = reservedURLs.min(by: { $0.path < $1.path }) {
+                return PreparedCapture(capture: appendCapture, destination: Destination(url: reserved, title: note.title, kind: .note))
+            }
+        }
         let destination = Destination(url: vault.uniqueNoteURL(forTitle: note.title, excluding: preparedNoteURLs), title: note.title, kind: .note)
         preparedNoteURLs.insert(destination.url)
-        let body = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
-        return PreparedCapture(capture: body, destination: destination, createsNote: true)
+        return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true)
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying

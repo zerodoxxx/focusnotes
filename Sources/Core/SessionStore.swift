@@ -45,7 +45,8 @@ public actor SessionStore {
         session
     }
 
-    /// Starts a session, replacing any active one. Resumes the same cleaned filename, regardless of case or date.
+    /// Starts a session, replacing any active one. Resumes a session note by its exact file name
+    /// (regardless of case), then by its title or file name, then by a legacy dated file name.
     public func start(name: String) throws -> Session {
         let cleaned = NoteTitle.cleanTitle(name)
         let title = cleaned.isEmpty ? "Session" : cleaned
@@ -54,24 +55,22 @@ public actor SessionStore {
         let current = now()
         let stem = NoteTitle.fileStem(for: title)
         let existing = try vault.listNotes().filter { $0.kind == .session }
-            .sorted { left, right in
-                let leftStem = left.url.deletingPathExtension().lastPathComponent
-                let rightStem = right.url.deletingPathExtension().lastPathComponent
-                let leftExact = leftStem.caseInsensitiveCompare(stem) == .orderedSame
-                let rightExact = rightStem.caseInsensitiveCompare(stem) == .orderedSame
-                if leftExact != rightExact { return leftExact }
-                return left.url.lastPathComponent > right.url.lastPathComponent
-            }
-            .first { note in
+            .compactMap { note -> (rank: Int, note: NoteRef)? in
                 let existingStem = note.url.deletingPathExtension().lastPathComponent
-                if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return true }
+                if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return (rank: 0, note: note) }
+                if NoteTitle.names(title, title: note.title, stem: existingStem) { return (rank: 1, note: note) }
                 // Legacy dated notes remain in place and can be resumed by their title.
                 let prefix = existingStem.prefix(11)
                 guard prefix.count == 11, prefix.last == " ", prefix.dropLast().enumerated().allSatisfy({
                     [4, 7].contains($0.offset) ? $0.element == "-" : $0.element.isNumber
-                }) else { return false }
-                return String(existingStem.dropFirst(11)).caseInsensitiveCompare(stem) == .orderedSame
+                }) else { return nil }
+                guard String(existingStem.dropFirst(11)).caseInsensitiveCompare(stem) == .orderedSame else { return nil }
+                return (rank: 2, note: note)
             }
+            .min { left, right in
+                if left.rank != right.rank { return left.rank < right.rank }
+                return left.note.url.lastPathComponent > right.note.url.lastPathComponent
+            }?.note
         let fileName = existing?.url.lastPathComponent ?? "\(stem).md"
         var displayTitle: String?
         if existing != nil {

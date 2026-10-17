@@ -4,6 +4,8 @@ import Foundation
 public struct TypedNote: Sendable {
     public let title: String
     public let body: String
+    /// True when the first line has no text, so the title is a creation stamp.
+    public let isGeneratedTitle: Bool
 
     public init(markdown: String, createdAt: Date, calendar: Calendar) {
         let withoutComments = Self.replace(#"<!--[\s\S]*?(?:-->|$)"#, in: markdown, with: "")
@@ -11,6 +13,7 @@ public struct TypedNote: Sendable {
             !$0.trimmingCharacters(in: .whitespaces).isEmpty
         } ?? ""
         let stripped = Self.strip(first)
+        isGeneratedTitle = stripped.isEmpty
         if stripped.isEmpty {
             title = "Note " + CaptureFormat.localStamp(createdAt, pattern: "yyyy-MM-dd HH.mm", calendar: calendar)
         } else if stripped.count > 60 {
