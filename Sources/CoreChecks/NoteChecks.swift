@@ -259,6 +259,52 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     let buyMilk = try await service.prepareNote(Capture(id: UUID(), createdAt: date, content: .note("Buy milk"), source: CaptureSource()), calendar: calendar)
     try require(buyMilk.destination.url.lastPathComponent == "Buy milk.md" && buyMilk.createsNote == nil && buyMilk.capture.content == .note("Buy milk"),
                 "a title-only typed note must append to the existing note with that title")
+    // Tiering: a root note beats a same-titled subfolder note, for the router and for typed saves.
+    try checkWrite("# Tierfoo\n", to: vault.root.appendingPathComponent("Tierfoo.md"))
+    try FileManager.default.createDirectory(at: vault.root.appendingPathComponent("Tierarchive"), withIntermediateDirectories: true)
+    try checkWrite("# Tierfoo\n", to: vault.root.appendingPathComponent("Tierarchive/Tierfoo.md"))
+    func typed(_ markdown: String) -> Capture {
+        Capture(id: UUID(), createdAt: date, content: .note(markdown), source: CaptureSource())
+    }
+    let tiered = try await service.prepareNote(typed("Tierfoo\n\nbody"), calendar: calendar)
+    try require(tiered.destination.url == vault.root.appendingPathComponent("Tierfoo.md"),
+                "a bare name must prefer the root note over a same-titled subfolder note")
+    // Qualified paths: Save as New numbers the leaf, a qualified name never matches by title.
+    let qualifiedDefault = try await service.prepareNote(typed("Tierarchive/Tierfoo\n\nbody"), calendar: calendar)
+    try require(qualifiedDefault.destination.url == vault.root.appendingPathComponent("Tierarchive/Tierfoo.md") && qualifiedDefault.createsNote == nil,
+                "a qualified name must append to its exact existing path")
+    let qualifiedNew = try await service.prepareNote(typed("Tierarchive/Tierfoo\n\nbody"), newNote: true, calendar: calendar)
+    try require(qualifiedNew.destination.url == vault.root.appendingPathComponent("Tierarchive/Tierfoo 2.md") && qualifiedNew.createsNote == true,
+                "Save as New Note on an existing qualified path must number the leaf")
+    try checkWrite("# Titled\n", to: vault.root.appendingPathComponent("Tierarchive/Tierother.md"))
+    let qualifiedTitle = try await service.prepareNote(typed("Tierarchive/Titled\n\nbody"), calendar: calendar)
+    try require(qualifiedTitle.destination.url == vault.root.appendingPathComponent("Tierarchive/Titled.md") && qualifiedTitle.createsNote == true,
+                "a qualified name must not match another note by title")
+    let reservedQualified = try await service.prepareNote(typed("Tierarchive/Reservedq\n\nbody"), calendar: calendar)
+    let reservedQualifiedAgain = try await service.prepareNote(typed("Tierarchive/Reservedq\n\nmore"), calendar: calendar)
+    try require(reservedQualified.createsNote == true && reservedQualifiedAgain.destination.url == reservedQualified.destination.url
+                && reservedQualifiedAgain.createsNote == nil,
+                "a qualified name must append to its reserved path")
+    // Generated timestamp titles never match, so the second in the same minute is suffixed.
+    let stampFirst = try await service.prepareNote(typed("\n\n"), calendar: calendar)
+    let stampSecond = try await service.prepareNote(typed("\n\n"), calendar: calendar)
+    try require(stampFirst.createsNote == true && stampSecond.createsNote == true
+                && stampSecond.destination.url.lastPathComponent == stampFirst.destination.url.deletingPathExtension().lastPathComponent + " 2.md",
+                "a second generated-title note in the same minute must get a numbered file")
+    // The shared resolver agrees with prepareNote.
+    let notesNow = try vault.listNotes()
+    let reservedNow = service.reservedNoteURLs
+    func resolver(_ markdown: String) throws -> Destination? {
+        try CaptureService.appendTarget(for: TypedNote(markdown: markdown, createdAt: date, calendar: calendar),
+                                        notes: notesNow, reserved: reservedNow, vault: vault)
+    }
+    let rTier = try resolver("Tierfoo"), rQual = try resolver("Tierarchive/Tierfoo")
+    let rReserved = try resolver("Tierarchive/Titled"), rNone = try resolver("Tierarchive/Nothingthere"), rStamp = try resolver("\n\n")
+    try require(rTier?.url == vault.root.appendingPathComponent("Tierfoo.md"), "resolver: unqualified prefers the root note")
+    try require(rQual?.url == vault.root.appendingPathComponent("Tierarchive/Tierfoo.md"), "resolver: qualified existing path")
+    try require(rReserved?.url == vault.root.appendingPathComponent("Tierarchive/Titled.md"), "resolver: reserved qualified path")
+    try require(rNone == nil, "resolver: unmatched qualified path")
+    try require(rStamp == nil, "resolver: generated titles never match")
     _ = try await sessions.start(name: "Typed session")
     let inSession = try await service.prepareNote(original, calendar: calendar)
     try require(inSession.destination.kind == .session && inSession.capture.content == original.content && inSession.createsNote != true,

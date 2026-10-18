@@ -27,6 +27,17 @@ public struct SavedCapture: Sendable, Equatable {
     }
 }
 
+/// Note URLs reserved by unsaved typed notes. Locked so the editor can read it without awaiting.
+final class ReservedNoteURLs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls = Set<URL>()
+
+    var snapshot: Set<URL> { lock.lock(); defer { lock.unlock() }; return urls }
+    func contains(_ url: URL) -> Bool { snapshot.contains(url) }
+    func insert(_ url: URL) { lock.lock(); urls.insert(url); lock.unlock() }
+    func remove(_ url: URL) { lock.lock(); urls.remove(url); lock.unlock() }
+}
+
 /// Single entry point for saving captures: routes, writes the asset if any, then appends the block.
 public actor CaptureService {
     private let vault: Vault
@@ -34,7 +45,10 @@ public actor CaptureService {
     private let writer: NoteWriter
     private let now: @Sendable () -> Date
     private let makeID: @Sendable () -> UUID
-    private var preparedNoteURLs = Set<URL>()
+    private let preparedNoteURLs = ReservedNoteURLs()
+
+    /// URLs reserved by typed notes that are prepared but not yet saved.
+    public nonisolated var reservedNoteURLs: Set<URL> { preparedNoteURLs.snapshot }
 
     public init(
         vault: Vault,
@@ -109,35 +123,17 @@ public actor CaptureService {
         let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let appendCapture = hasBody ? noteCapture : capture
         let appendsToMatch = !newNote && !note.isGeneratedTitle
-        let isUnqualified = pathName.scope == .vault && pathName.components.count == 1
-
-        if appendsToMatch, isUnqualified {
+        if appendsToMatch {
             let notes = (try? vault.listNotes()) ?? []
-            if let existing = Router.existing(title: note.title, notes: notes, vault: vault) {
-                return PreparedCapture(capture: appendCapture, destination: existing, noteMarkerIsIdentity: true)
+            if let target = try Self.appendTarget(for: note, notes: notes, reserved: preparedNoteURLs.snapshot, vault: vault) {
+                return PreparedCapture(capture: appendCapture, destination: target, noteMarkerIsIdentity: true)
             }
         }
 
         var selectedName = pathName
         var location = try vault.resolveNoteName(selectedName)
         let locationExists = FileManager.default.fileExists(atPath: location.url.path)
-        if appendsToMatch {
-            var target: URL? = locationExists ? location.url : nil
-            if target == nil {
-                if isUnqualified {
-                    target = preparedNoteURLs.filter { url in
-                        let stem = url.deletingPathExtension().lastPathComponent
-                        return NoteTitle.names(note.title, title: stem, stem: stem)
-                    }.min { $0.path < $1.path }
-                } else if preparedNoteURLs.contains(location.url) {
-                    target = location.url
-                }
-            }
-            if let target {
-                let destination = Destination(url: target, title: note.title, kind: .note)
-                return PreparedCapture(capture: appendCapture, destination: destination, noteMarkerIsIdentity: true)
-            }
-        } else if locationExists || preparedNoteURLs.contains(location.url) {
+        if !appendsToMatch, locationExists || preparedNoteURLs.contains(location.url) {
             var suffix = 2
             while true {
                 var components = pathName.components
@@ -157,6 +153,32 @@ public actor CaptureService {
         let destination = Destination(url: location.url, title: destinationTitle, kind: .note)
         preparedNoteURLs.insert(destination.url)
         return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
+    }
+
+    /// The existing or reserved note a default (not Save as New) typed save would append to, if any.
+    /// Bare names match by title or file name (root notes first), then an existing file at the resolved
+    /// path, then a reserved URL. Qualified names match only their exact path. Generated titles never match.
+    public static func appendTarget(for note: TypedNote, notes: [NoteRef], reserved: Set<URL>, vault: Vault) throws -> Destination? {
+        guard !note.isGeneratedTitle else { return nil }
+        guard let pathName = note.pathName else {
+            throw note.pathNameError ?? NotePathNameError.invalidComponent
+        }
+        let isUnqualified = pathName.scope == .vault && pathName.components.count == 1
+        if isUnqualified, let existing = Router.existing(title: note.title, notes: notes, vault: vault) { return existing }
+        let location = try vault.resolveNoteName(pathName)
+        if FileManager.default.fileExists(atPath: location.url.path) {
+            return Destination(url: location.url, title: note.title, kind: .note)
+        }
+        var target: URL?
+        if isUnqualified {
+            target = reserved.filter { url in
+                let stem = url.deletingPathExtension().lastPathComponent
+                return NoteTitle.names(note.title, title: stem, stem: stem)
+            }.sorted { $0.path < $1.path }.min { Router.tier(of: $0, vault: vault) < Router.tier(of: $1, vault: vault) }
+        } else if reserved.contains(location.url) {
+            target = location.url
+        }
+        return target.map { Destination(url: $0, title: note.title, kind: .note) }
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying

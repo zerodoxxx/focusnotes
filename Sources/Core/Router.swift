@@ -18,10 +18,10 @@ public enum Router {
     public static func existing(title: String, notes: [NoteRef], vault: Vault) -> Destination? {
         let cleaned = NoteTitle.cleanTitle(title)
         guard !cleaned.isEmpty else { return nil }
-        if let note = bestMatch(cleaned, kind: .note, in: notes) {
+        if let note = bestMatch(cleaned, kind: .note, in: notes, vault: vault) {
             return Destination(url: note.url, title: note.title, kind: .note)
         }
-        if let session = bestMatch(cleaned, kind: .session, in: notes) {
+        if let session = bestMatch(cleaned, kind: .session, in: notes, vault: vault) {
             return Destination(url: session.url, title: session.title, kind: .session)
         }
         if NoteTitle.matchKey(cleaned) == NoteTitle.matchKey(Vault.inboxTitle) {
@@ -66,14 +66,26 @@ public enum Router {
         return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
     }
 
-    /// The first note of `kind` that the query names. A title match is preferred over a file-name match.
-    private static func bestMatch(_ query: String, kind: NoteKind, in notes: [NoteRef]) -> NoteRef? {
+    /// Lookup rank of a note: 0 for a vault-root note, 1 for a nested vault note, 2 for HOME/external notes.
+    static func tier(of url: URL, vault: Vault) -> Int {
+        let root = vault.root.resolvingSymlinksInPath().standardizedFileURL.path
+        let parent = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+        if parent == root { return 0 }
+        return parent.hasPrefix(root + "/") ? 1 : 2
+    }
+
+    /// The best note of `kind` that the query names. A title match beats a file-name match;
+    /// within a match kind, root notes beat nested notes, which beat external notes, then list order.
+    private static func bestMatch(_ query: String, kind: NoteKind, in notes: [NoteRef], vault: Vault) -> NoteRef? {
         let key = NoteTitle.matchKey(query)
         let matches = notes.filter { note in
             note.kind == kind && NoteTitle.names(
                 query, title: note.title, stem: note.url.deletingPathExtension().lastPathComponent
             )
         }
-        return matches.first { NoteTitle.matchKey($0.title) == key } ?? matches.first
+        func best(_ candidates: [NoteRef]) -> NoteRef? {
+            candidates.min { tier(of: $0.url, vault: vault) < tier(of: $1.url, vault: vault) }
+        }
+        return best(matches.filter { NoteTitle.matchKey($0.title) == key }) ?? best(matches)
     }
 }
