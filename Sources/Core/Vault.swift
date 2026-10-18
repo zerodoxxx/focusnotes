@@ -223,6 +223,16 @@ public struct Vault: Sendable {
         root.appendingPathComponent(Self.assetsDirectoryName, isDirectory: true)
     }
 
+    private func withExternalRegistryErrorMapping<T>(_ operation: () throws -> T) throws -> T {
+        do {
+            return try operation()
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch {
+            throw ExternalNoteRegistryError.unreadableRegistry
+        }
+    }
+
     /// Creates the folder layout and `Inbox.md` if missing. Never overwrites existing files.
     public func prepare() throws {
         try rootAnchor.prepareRoot()
@@ -235,12 +245,8 @@ public struct Vault: Sendable {
     /// newer-version registry can be surfaced before external notes are used.
     public func validateExternalNoteRegistry() throws {
         externalNoteRegistry?.invalidateCache()
-        do {
+        try withExternalRegistryErrorMapping {
             _ = try externalNoteRegistry?.snapshot()
-        } catch let error as ExternalNoteRegistryError {
-            throw error
-        } catch {
-            throw ExternalNoteRegistryError.unreadableRegistry
         }
     }
 
@@ -549,12 +555,8 @@ public struct Vault: Sendable {
     /// Returns explicitly registered HOME-relative notes. This is a bounded
     /// list: the app never scans HOME to discover external notes.
     func externalRegistrySnapshot() throws -> ExternalNoteRegistry.Snapshot? {
-        do {
+        try withExternalRegistryErrorMapping {
             return try externalNoteRegistry?.snapshot()
-        } catch let error as ExternalNoteRegistryError {
-            throw error
-        } catch {
-            throw ExternalNoteRegistryError.unreadableRegistry
         }
     }
 
@@ -567,24 +569,15 @@ public struct Vault: Sendable {
     }
 
     func externalRegistryFingerprint() throws -> ExternalNoteRegistry.Fingerprint? {
-        do {
+        try withExternalRegistryErrorMapping {
             return try externalNoteRegistry?.currentFingerprint()
-        } catch let error as ExternalNoteRegistryError {
-            throw error
-        } catch {
-            throw ExternalNoteRegistryError.unreadableRegistry
         }
     }
 
     func externalNoteLocations(snapshot: ExternalNoteRegistry.Snapshot? = nil) throws -> [VaultNoteLocation] {
         guard let externalNoteRegistry else { return [] }
-        let registeredPaths: [String]
-        do {
-            registeredPaths = try (snapshot ?? externalNoteRegistry.snapshot()).paths
-        } catch let error as ExternalNoteRegistryError {
-            throw error
-        } catch {
-            throw ExternalNoteRegistryError.unreadableRegistry
+        let registeredPaths = try withExternalRegistryErrorMapping {
+            try (snapshot ?? externalNoteRegistry.snapshot()).paths
         }
         var locations: [VaultNoteLocation] = []
         for path in registeredPaths {

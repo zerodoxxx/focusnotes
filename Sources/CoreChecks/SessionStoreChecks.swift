@@ -58,6 +58,24 @@ func checkSessionStore() async throws {
         try require(flat.notePath == expected && !flat.notePath.dropFirst("Sessions/".count).contains("/"),
                     "invalid or whitespace-qualified session name \(name.debugDescription) must stay flat, got \(flat.notePath)")
     }
+    let beforeInvalidPaths = await store.current()
+    for name in ["/outside", " /outside", "science/../escape", "science/\0name", "science/~$draft"] {
+        do {
+            _ = try await store.start(name: name)
+            throw CheckFailure.failed("unsafe or HOME-relative session path unexpectedly started: \(name.debugDescription)")
+        } catch let error as NotePathNameError {
+            try require(error == .invalidComponent,
+                        "unsafe or HOME-relative session path should retain its validation error: \(name.debugDescription)")
+        } catch is CheckFailure {
+            throw CheckFailure.failed("unsafe or HOME-relative session path was accepted: \(name.debugDescription)")
+        }
+        let flatName = NoteTitle.fileStem(for: NoteTitle.cleanTitle(name))
+        try require(!FileManager.default.fileExists(atPath: vault.sessionsURL.appendingPathComponent("\(flatName).md").path),
+                    "unsafe or HOME-relative session path must not create a flat note: \(name.debugDescription)")
+    }
+    let afterInvalidPaths = await store.current()
+    try require(afterInvalidPaths == beforeInvalidPaths,
+                "an unsafe or HOME-relative session path must not change the active session")
     let legacy = vault.sessionsURL.appendingPathComponent("2026-10-12 Legacy.md")
     try checkWrite("# Legacy\n\nold bytes\n", to: legacy)
     let oldSession = Session(name: "Legacy", notePath: "Sessions/2026-10-12 Legacy.md", startedAt: now)

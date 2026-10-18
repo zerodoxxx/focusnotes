@@ -94,20 +94,12 @@ public actor SessionStore {
             let pathName: NotePathName
             switch parsed {
             case .success(let value):
-                if Self.canFallBackToFlatName(
-                    name,
-                    error: nil,
-                    hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(name)
-                ) {
+                if NoteTitle.canFallBackToFlatName(name, error: nil) {
                     return try startFlat(title: cleaned, existingSessions: existingSessions())
                 }
                 pathName = value
             case .failure(let error):
-                guard Self.canFallBackToFlatName(
-                    name,
-                    error: error,
-                    hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(name)
-                ) else { throw error }
+                guard NoteTitle.canFallBackToFlatName(name, error: error) else { throw error }
                 return try startFlat(title: cleaned, existingSessions: existingSessions())
             }
             guard pathName.scope == .vault else { throw NotePathNameError.invalidComponent }
@@ -143,26 +135,6 @@ public actor SessionStore {
         let existing = matches.first
         let notePath = existing?.notePath ?? "\(Vault.sessionsDirectoryName)/\(stem).md"
         return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
-    }
-
-    private static func canFallBackToFlatName(
-        _ rawName: String,
-        error: NotePathNameError?,
-        hasWhitespaceAroundSlash: Bool
-    ) -> Bool {
-        guard !rawName.hasPrefix("/"), !rawName.contains("\0") else { return false }
-        if let error, error != .invalidComponent { return false }
-        let components = rawName.split(separator: "/", omittingEmptySubsequences: false)
-            .map { NoteTitle.cleanTitle(String($0)) }
-        guard !components.contains(where: { $0 == "." || $0 == ".." }) else { return false }
-        if let finalComponent = components.last(where: { !$0.isEmpty }),
-           NoteTitle.fileStem(for: finalComponent).hasPrefix("~$") { return false }
-        if error == nil { return hasWhitespaceAroundSlash }
-        return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
-    }
-
-    private static func hasWhitespaceAroundSlash(_ rawName: String) -> Bool {
-        rawName.range(of: #"\s/|/\s"#, options: .regularExpression) != nil
     }
 
     /// Resumes the exact candidate shown to the user. A deleted or changed

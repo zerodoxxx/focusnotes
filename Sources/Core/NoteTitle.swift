@@ -96,15 +96,24 @@ public enum NoteTitle {
             }
             components.append(fileStem(for: component))
         }
-        guard let leafName = components.last, !leafName.hasPrefix("~$") else {
-            throw NotePathNameError.invalidComponent
-        }
-
-        let relativePath = components.joined(separator: "/")
-        guard relativePath.utf8.count <= NotePathName.maximumRelativePathBytes else {
-            throw NotePathNameError.tooLong
-        }
         return try NotePathName.validated(scope: scope, components: components)
+    }
+
+    /// Returns whether a malformed or whitespace-qualified path should retain
+    /// the legacy behavior of treating the full input as one flat filename.
+    static func canFallBackToFlatName(_ rawName: String, error: NotePathNameError?) -> Bool {
+        let cleanedName = cleanTitle(rawName)
+        guard !cleanedName.hasPrefix("/"), !rawName.contains("\0") else { return false }
+        if let error, error != .invalidComponent { return false }
+        let components = rawName.split(separator: "/", omittingEmptySubsequences: false)
+            .map { cleanTitle(String($0)) }
+        guard !components.contains(where: { $0 == "." || $0 == ".." }) else { return false }
+        if let finalComponent = components.last(where: { !$0.isEmpty }),
+           fileStem(for: finalComponent).hasPrefix("~$") { return false }
+
+        let hasWhitespaceAroundSlash = rawName.range(of: #"\s/|/\s"#, options: .regularExpression) != nil
+        if error == nil { return hasWhitespaceAroundSlash }
+        return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
     }
 
     /// File name stem (without `.md`) for a note title. Never empty.

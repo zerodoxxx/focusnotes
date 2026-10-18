@@ -32,11 +32,7 @@ public struct TypedNote: Sendable {
             parsedName = nil
             parseError = .invalidComponent
         }
-        let flatFallback = Self.canFallBackToFlatName(
-            extractedName,
-            error: parseError,
-            hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(extractedName)
-        )
+        let flatFallback = NoteTitle.canFallBackToFlatName(extractedName, error: parseError)
         let resolvedName = flatFallback
             ? try? NotePathName.validated(scope: .vault, components: [NoteTitle.fileStem(for: extractedName)])
             : parsedName
@@ -64,27 +60,6 @@ public struct TypedNote: Sendable {
                 body = CaptureFormat.noteBody(remainder)
             } else { body = "" }
         } else { body = CaptureFormat.noteBody(markdown) }
-    }
-
-    private static func canFallBackToFlatName(
-        _ rawName: String,
-        error: NotePathNameError?,
-        hasWhitespaceAroundSlash: Bool
-    ) -> Bool {
-        guard !rawName.hasPrefix("/"),
-              !rawName.contains("\0") else { return false }
-        if let error, error != .invalidComponent { return false }
-        let components = rawName.split(separator: "/", omittingEmptySubsequences: false)
-            .map { NoteTitle.cleanTitle(String($0)) }
-        guard !components.contains(where: { $0 == "." || $0 == ".." }) else { return false }
-        if let finalComponent = components.last(where: { !$0.isEmpty }),
-           NoteTitle.fileStem(for: finalComponent).hasPrefix("~$") { return false }
-        if error == nil { return hasWhitespaceAroundSlash }
-        return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
-    }
-
-    private static func hasWhitespaceAroundSlash(_ rawName: String) -> Bool {
-        rawName.range(of: #"\s/|/\s"#, options: .regularExpression) != nil
     }
 
     private static func strip(_ line: String) -> String {
