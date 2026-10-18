@@ -116,14 +116,6 @@ public enum NoteTitle {
         return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
     }
 
-    /// True when `query` names a note, by its title or its file stem. An empty query names nothing.
-    public static func names(_ query: String, title: String, stem: String) -> Bool {
-        let cleaned = cleanTitle(query)
-        guard !cleaned.isEmpty else { return false }
-        return matchKey(cleaned) == matchKey(title)
-            || matchKey(fileStem(for: cleaned)) == matchKey(stem)
-    }
-
     /// File name stem (without `.md`) for a note title. Never empty.
     public static func fileStem(for title: String) -> String {
         var replaced = String.UnicodeScalarView()

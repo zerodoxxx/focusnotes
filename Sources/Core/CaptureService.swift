@@ -102,7 +102,7 @@ public actor CaptureService {
     }
 
     /// Chooses the note for a typed capture, once. Unless `newNote` is set or the title is a
-    /// generated timestamp, a name that matches an existing note, or one reserved earlier in
+    /// generated timestamp, a name whose exact path exists, or was reserved earlier in
     /// this process, appends to it. Otherwise a new path is reserved. Replay saves this
     /// preparation without routing again, even if a file with the same name or a different
     /// session now exists.
@@ -124,8 +124,7 @@ public actor CaptureService {
         let appendCapture = hasBody ? noteCapture : capture
         let appendsToMatch = !newNote && !note.isGeneratedTitle
         if appendsToMatch {
-            let notes = (try? vault.listNotes()) ?? []
-            if let target = try Self.appendTarget(for: note, notes: notes, reserved: preparedNoteURLs.snapshot, vault: vault) {
+            if let target = try Self.appendTarget(for: note, reserved: preparedNoteURLs.snapshot, vault: vault) {
                 return PreparedCapture(capture: appendCapture, destination: target, noteMarkerIsIdentity: true)
             }
         }
@@ -155,30 +154,20 @@ public actor CaptureService {
         return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
     }
 
-    /// The existing or reserved note a default (not Save as New) typed save would append to, if any.
-    /// Bare names match by title or file name (root notes first), then an existing file at the resolved
-    /// path, then a reserved URL. Qualified names match only their exact path. Generated titles never match.
-    public static func appendTarget(for note: TypedNote, notes: [NoteRef], reserved: Set<URL>, vault: Vault) throws -> Destination? {
+    /// The destination a default (not Save as New) typed save would append to, if any: Inbox for a bare
+    /// "Inbox", else the exact resolved path when it exists on disk or was reserved. Generated titles never match.
+    public static func appendTarget(for note: TypedNote, reserved: Set<URL>, vault: Vault) throws -> Destination? {
         guard !note.isGeneratedTitle else { return nil }
         guard let pathName = note.pathName else {
             throw note.pathNameError ?? NotePathNameError.invalidComponent
         }
-        let isUnqualified = pathName.scope == .vault && pathName.components.count == 1
-        if isUnqualified, let existing = Router.existing(title: note.title, notes: notes, vault: vault) { return existing }
+        if pathName.scope == .vault, pathName.components.count == 1,
+           NoteTitle.matchKey(note.title) == NoteTitle.matchKey(Vault.inboxTitle) {
+            return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+        }
         let location = try vault.resolveNoteName(pathName)
-        if FileManager.default.fileExists(atPath: location.url.path) {
-            return Destination(url: location.url, title: note.title, kind: .note)
-        }
-        var target: URL?
-        if isUnqualified {
-            target = reserved.filter { url in
-                let stem = url.deletingPathExtension().lastPathComponent
-                return NoteTitle.names(note.title, title: stem, stem: stem)
-            }.sorted { $0.path < $1.path }.min { Router.tier(of: $0, vault: vault) < Router.tier(of: $1, vault: vault) }
-        } else if reserved.contains(location.url) {
-            target = location.url
-        }
-        return target.map { Destination(url: $0, title: note.title, kind: .note) }
+        guard FileManager.default.fileExists(atPath: location.url.path) || reserved.contains(location.url) else { return nil }
+        return Destination(url: location.url, title: note.title, kind: .note)
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying

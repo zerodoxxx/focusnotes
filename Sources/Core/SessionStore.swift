@@ -78,8 +78,7 @@ public actor SessionStore {
         session
     }
 
-    /// Starts a session, resuming a matching session note or creating one. Flat names resume by exact file name
-    /// (regardless of case), then by note title or file name, then by a legacy dated file name.
+    /// Starts a session, resuming a unique matching filename or creating a note.
     /// Qualified names such as `archive/Standup` are rooted inside `Sessions/`.
     public func start(name: String) throws -> Session {
         try vault.prepare()
@@ -123,15 +122,11 @@ public actor SessionStore {
     private func startFlat(title rawTitle: String, existingSessions: [ExistingSession]) throws -> Session {
         let title = rawTitle.isEmpty ? "Session" : rawTitle
         let stem = NoteTitle.fileStem(for: title)
-        // Best rank wins: exact file name, then title or file name, then legacy dated file name.
-        let ranked = existingSessions.compactMap { note -> (rank: Int, session: ExistingSession)? in
+        let matches = existingSessions.filter { note in
             let existingStem = note.note.url.deletingPathExtension().lastPathComponent
-            if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return (rank: 0, session: note) }
-            if NoteTitle.names(title, title: note.note.title, stem: existingStem) { return (rank: 1, session: note) }
-            return Self.isDatedSession(existingStem, matching: stem) ? (rank: 2, session: note) : nil
+            if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return true }
+            return Self.isDatedSession(existingStem, matching: stem)
         }
-        let bestRank = ranked.map(\.rank).min()
-        let matches = ranked.filter { $0.rank == bestRank }.map(\.session)
 
         if matches.count > 1 {
             throw SessionStoreError.ambiguous(try candidates(from: matches))

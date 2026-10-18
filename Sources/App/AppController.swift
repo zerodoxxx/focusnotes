@@ -845,8 +845,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     },
                     existingTitleForText: { text in
                         let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
-                        let refs = state.suggestions.map { NoteRef(url: pipeline.vault.url(forRelativePath: $0.path), title: $0.title, kind: $0.kind) }
-                        return (try? CaptureService.appendTarget(for: note, notes: refs, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
+                        return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue { controller in
