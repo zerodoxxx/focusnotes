@@ -36,6 +36,7 @@ private final class ExternalWatcherRecorder: @unchecked Sendable {
 }
 
 func checkExternalNoteRegistry() async throws {
+    try checkOwnedFileDescriptorClosesOnlyOnce()
     let base = try checkMakeDirectory("external-notes")
     defer { checkRemoveDirectory(base) }
 
@@ -131,6 +132,33 @@ func checkExternalNoteRegistry() async throws {
     try checkExternalDirectorySymlinkRejected(base: base)
     try await checkExternalRegistrySymlinkRejected(base: base, now: now, calendar: calendar)
     print("External note registry checks passed (persistence, scoped indexing, watcher refresh, and path safety).")
+}
+
+private func checkOwnedFileDescriptorClosesOnlyOnce() throws {
+    var pipeDescriptors: [Int32] = [-1, -1]
+    try require(pipe(&pipeDescriptors) == 0, "could not create descriptors for ownership check")
+    defer { Darwin.close(pipeDescriptors[1]) }
+
+    let original = pipeDescriptors[0]
+    var owned: OwnedFileDescriptor? = OwnedFileDescriptor(owning: original)
+    owned?.close()
+    try require(owned?.descriptor == nil, "closing an owned descriptor should clear its stored value")
+    try require(fcntl(original, F_GETFD) == -1 && errno == EBADF,
+                "closing an owned descriptor should close the underlying handle")
+
+    let temporary = open("/dev/null", O_RDONLY | O_CLOEXEC)
+    try require(temporary >= 0, "could not open a descriptor for the reuse check")
+    defer {
+        if temporary != original { Darwin.close(temporary) }
+    }
+    let replacement = temporary == original ? temporary : dup2(temporary, original)
+    try require(replacement == original, "could not reuse the released descriptor number")
+    defer { Darwin.close(replacement) }
+
+    owned?.close()
+    owned = nil
+    try require(fcntl(replacement, F_GETFD) >= 0,
+                "repeated close or deinitialization must not close a descriptor reused by another owner")
 }
 
 private func checkExternalLinksAreRejected(

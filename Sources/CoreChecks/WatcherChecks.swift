@@ -55,6 +55,9 @@ func checkVaultWatcher() throws {
     let recorder = VaultChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     try require(!watcher.isRunning, "VaultWatcher should not report running before start")
+    try require(watcher.maximumVnodeDescriptorsForChecks == 128 &&
+                watcher.maximumParentVnodeDescriptorsForChecks == 64,
+                "watcher defaults should retain the 128 total and 64 parent descriptor caps")
     watcher.start()
     try require(watcher.isRunning, "VaultWatcher should report a successfully started stream")
     let initialGeneration = watcher.streamGenerationForChecks
@@ -122,8 +125,36 @@ func checkVaultWatcher() throws {
     try require(recorder.changes().count == countAfterStop, "VaultWatcher callback count changed after stop()")
 
     try checkBoundedExternalWatcher()
+    try checkVaultWatcherUnavailableRetry()
     try checkExternalWatcherDescriptorCapAndPolling()
+    try checkExternalWatcherParentCap()
     print("Vault watcher checks passed.")
+}
+
+private func checkVaultWatcherUnavailableRetry() throws {
+    let root = try checkMakeDirectory("vault-watcher-retry")
+    defer { checkRemoveDirectory(root) }
+    let vault = Vault(root: root)
+    try vault.prepare()
+    let recorder = VaultChangeRecorder()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
+    defer { watcher.stop() }
+
+    watcher.simulateNextStreamStartFailureForChecks()
+    watcher.start()
+    try require(!watcher.isRunning, "an unavailable stream should leave the watcher stopped")
+    try require(recorder.waitForChange(timeout: 1.0) { $0.needsFullSync } != nil,
+                "an unavailable stream should request a full sync")
+    try require(watcher.reportedWatchIssuesForChecks.contains("vault-stream-unavailable"),
+                "stream unavailability should be tracked as a watch issue")
+    try require(recorder.waitForQuiet(for: 0.15) && !watcher.isRunning,
+                "stream unavailability should wait for an explicit start retry")
+
+    watcher.start()
+    try require(watcher.isRunning && watcher.streamGenerationForChecks == 1,
+                "an explicit start retry should create the vault stream")
+    try require(!watcher.reportedWatchIssuesForChecks.contains("vault-stream-unavailable"),
+                "a successful explicit retry should clear the stream issue")
 }
 
 private func checkExternalWatcherDescriptorCapAndPolling() throws {
@@ -162,6 +193,11 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
                 "registered notes beyond the vnode cap must use exact-path polling")
     let cappedSetup = recorder.waitForChange(timeout: 1.0) { $0.needsFullSync }
     try require(cappedSetup != nil, "degraded watcher coverage must request an initial full sync")
+    let initialIssues = watcher.reportedWatchIssuesForChecks
+    try require(initialIssues.contains("file-watch-cap") &&
+                initialIssues.contains("parent-watch-cap") &&
+                initialIssues.contains("external-watch-fallback"),
+                "descriptor caps should retain their separate watch-issue keys")
 
     let fallbackID = noteIDs.last!
     var offset = recorder.changes().count
@@ -179,6 +215,45 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
     try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
                 "timer fallback did not report recreation of a note beyond the vnode cap")
 
+    let snapshotTarget = base.appendingPathComponent("SnapshotTarget.md")
+    try checkWrite("# Snapshot target\n", to: snapshotTarget)
+    try FileManager.default.removeItem(at: noteURLs.last!)
+    try FileManager.default.createSymbolicLink(at: noteURLs.last!, withDestinationURL: snapshotTarget)
+    offset = recorder.changes().count
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.needsFullSync } != nil,
+                "a new snapshot issue should request a full sync while a cap issue is outstanding")
+    let snapshotIssueKey = "snapshot:\(fallbackID)"
+    try require(watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey),
+                "failed polling should retain its per-note snapshot issue key")
+    try require(recorder.waitForQuiet(for: 0.2),
+                "a persistent snapshot failure should not repeatedly request full syncs")
+    let snapshotFailureChanges = recorder.changes().dropFirst(offset).filter(\.needsFullSync)
+    try require(snapshotFailureChanges.count == 1,
+                "repeated failures for the same snapshot issue should be deduplicated")
+
+    try FileManager.default.removeItem(at: noteURLs.last!)
+    try checkWrite("# Group 9\n\nrepaired snapshot\n", to: noteURLs.last!)
+    let snapshotRecoveryDeadline = Date().addingTimeInterval(2.0)
+    while watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey) && Date() < snapshotRecoveryDeadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    try require(!watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey),
+                "a successful snapshot should clear its per-note issue key")
+
+    try FileManager.default.removeItem(at: noteURLs.last!)
+    try FileManager.default.createSymbolicLink(at: noteURLs.last!, withDestinationURL: snapshotTarget)
+    offset = recorder.changes().count
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.needsFullSync } != nil,
+                "a cleared snapshot issue should request another full sync when it recurs")
+    try FileManager.default.removeItem(at: noteURLs.last!)
+    try checkWrite("# Group 9\n\nrepaired again\n", to: noteURLs.last!)
+    let repeatedRecoveryDeadline = Date().addingTimeInterval(2.0)
+    while watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey) && Date() < repeatedRecoveryDeadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    try require(!watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey),
+                "the recurring snapshot issue should clear after the note is repaired")
+
     offset = recorder.changes().count
     try Data(#"{"version":1,"paths":["Group09/Note.md"]}"#.utf8)
         .write(to: registryURL, options: .atomic)
@@ -190,6 +265,11 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
     }
     try require(watcher.pollingFallbackCountForChecks == 0,
                 "freed descriptor slots should restore file and parent vnode coverage")
+    let recoveredIssues = watcher.reportedWatchIssuesForChecks
+    try require(!recoveredIssues.contains("file-watch-cap") &&
+                !recoveredIssues.contains("parent-watch-cap") &&
+                !recoveredIssues.contains("external-watch-fallback"),
+                "restored descriptor coverage should clear all cap and fallback issue keys")
     offset = recorder.changes().count
     try checkWrite("# Group 9\n\nrecovered vnode edit\n", to: noteURLs.last!)
     try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
@@ -244,6 +324,40 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
                 "healthy timer checks produced callbacks or periodic full syncs")
     try require(healthyRecorder.changes().count == settledCallbackCount,
                 "healthy watcher emitted a callback during the second timer window")
+}
+
+private func checkExternalWatcherParentCap() throws {
+    let base = try checkMakeDirectory("external-watcher-parent-cap")
+    defer { checkRemoveDirectory(base) }
+
+    let home = base.appendingPathComponent("Home", isDirectory: true)
+    let root = home.appendingPathComponent("Vault", isDirectory: true)
+    let state = base.appendingPathComponent("State", isDirectory: true)
+    let registryURL = state.appendingPathComponent("external-notes.json")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+    let first = home.appendingPathComponent("One/First.md")
+    let second = home.appendingPathComponent("Two/Second.md")
+    try checkWrite("# First\n", to: first)
+    try checkWrite("# Second\n", to: second)
+    try checkWrite(#"{"version":1,"paths":["One/First.md","Two/Second.md"]}"#, to: registryURL)
+
+    let vault = Vault(root: root, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { _ in }
+    watcher.configureWatchFallbackForChecks(maximumVnodeDescriptors: 8,
+                                             maximumParentVnodeDescriptors: 1,
+                                             interval: 0.05)
+    defer { watcher.stop() }
+    watcher.start()
+    try require(watcher.isRunning, "parent-capped external watcher should start")
+    let issues = watcher.reportedWatchIssuesForChecks
+    try require(issues.contains("parent-watch-cap"),
+                "more distinct parent directories than the parent cap should trigger its issue")
+    try require(!issues.contains("file-watch-cap"),
+                "the isolated parent-cap case should remain below the file cap")
+    try require(watcher.pollingFallbackCountForChecks > 0,
+                "notes without parent coverage should use exact-path polling")
 }
 
 private func checkBoundedExternalWatcher() throws {

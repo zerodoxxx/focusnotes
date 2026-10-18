@@ -18,6 +18,42 @@ public enum ExternalNoteRegistryError: Error, LocalizedError, Sendable, Equatabl
     }
 }
 
+/// Owns a POSIX descriptor and closes it at most once, including when an
+/// asynchronous cancellation handler races with scope cleanup.
+@_spi(Checks)
+public final class OwnedFileDescriptor: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptorStorage: Int32?
+
+    @_spi(Checks)
+    public init(owning descriptor: Int32) {
+        precondition(descriptor >= 0, "an owned file descriptor must be valid")
+        descriptorStorage = descriptor
+    }
+
+    @_spi(Checks)
+    public var descriptor: Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return descriptorStorage
+    }
+
+    @_spi(Checks)
+    public func close() {
+        lock.lock()
+        let descriptor = descriptorStorage
+        descriptorStorage = nil
+        lock.unlock()
+        if let descriptor {
+            Darwin.close(descriptor)
+        }
+    }
+
+    deinit {
+        close()
+    }
+}
+
 /// Persists only HOME-relative notes explicitly selected by the user.
 /// It intentionally does not discover or scan arbitrary files under HOME.
 final class ExternalNoteRegistry: @unchecked Sendable {
@@ -28,9 +64,9 @@ final class ExternalNoteRegistry: @unchecked Sendable {
 
     struct WatchDescriptors: Sendable {
         /// The safe registry file descriptor, or nil if it is missing or unsafe.
-        let file: Int32?
+        let file: OwnedFileDescriptor?
         /// The registry's immediate parent directory descriptor.
-        let parent: Int32
+        let parent: OwnedFileDescriptor
     }
 
     struct Fingerprint: Sendable, Equatable {
@@ -130,7 +166,7 @@ final class ExternalNoteRegistry: @unchecked Sendable {
         }
         let file = openat(root, name, O_EVTONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         if file < 0, errno == ENOENT || errno == ELOOP {
-            return WatchDescriptors(file: nil, parent: root)
+            return WatchDescriptors(file: nil, parent: OwnedFileDescriptor(owning: root))
         }
         if file < 0 {
             let savedError = Self.posixError()
@@ -142,14 +178,17 @@ final class ExternalNoteRegistry: @unchecked Sendable {
                 _ = try Self.validateRegularFile(file)
             } catch let error as POSIXError where error.code == .EPERM {
                 close(file)
-                return WatchDescriptors(file: nil, parent: root)
+                return WatchDescriptors(file: nil, parent: OwnedFileDescriptor(owning: root))
             } catch {
                 close(file)
                 close(root)
                 throw error
             }
         }
-        return WatchDescriptors(file: file >= 0 ? file : nil, parent: root)
+        return WatchDescriptors(
+            file: file >= 0 ? OwnedFileDescriptor(owning: file) : nil,
+            parent: OwnedFileDescriptor(owning: root)
+        )
     }
 
     /// Reads the exact registry entry's metadata without following a symlink.

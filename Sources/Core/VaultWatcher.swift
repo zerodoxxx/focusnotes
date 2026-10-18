@@ -86,6 +86,7 @@ public final class VaultWatcher: @unchecked Sendable {
     private var maximumVnodeDescriptors = VaultWatcher.defaultMaximumVnodeDescriptors
     private var maximumParentVnodeDescriptors = VaultWatcher.defaultMaximumParentVnodeDescriptors
     private var fallbackInterval = VaultWatcher.defaultFallbackInterval
+    private var failNextStreamStartForChecks = false
     // Includes descriptors whose dispatch sources have been cancelled but whose
     // cancel handlers have not closed them yet.
     private var retainedVnodeDescriptorCount = 0
@@ -147,6 +148,35 @@ public final class VaultWatcher: @unchecked Sendable {
             self.maximumParentVnodeDescriptors = max(0, maximumParentVnodeDescriptors)
             self.fallbackInterval = max(0.01, interval)
         }
+    }
+
+    @_spi(Checks)
+    public func simulateNextStreamStartFailureForChecks() {
+        performOnQueue {
+            precondition(self.stream == nil, "stream failure must be configured before start()")
+            self.failNextStreamStartForChecks = true
+        }
+    }
+
+    @_spi(Checks)
+    public var maximumVnodeDescriptorsForChecks: Int {
+        var count = 0
+        performOnQueue { count = self.maximumVnodeDescriptors }
+        return count
+    }
+
+    @_spi(Checks)
+    public var maximumParentVnodeDescriptorsForChecks: Int {
+        var count = 0
+        performOnQueue { count = self.maximumParentVnodeDescriptors }
+        return count
+    }
+
+    @_spi(Checks)
+    public var reportedWatchIssuesForChecks: Set<String> {
+        var issues = Set<String>()
+        performOnQueue { issues = self.reportedWatchIssues }
+        return issues
     }
 
     @_spi(Checks)
@@ -221,6 +251,10 @@ public final class VaultWatcher: @unchecked Sendable {
     }
 
     private func createStartedVaultStream() -> FSEventStreamRef? {
+        if failNextStreamStartForChecks {
+            failNextStreamStartForChecks = false
+            return nil
+        }
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
@@ -686,26 +720,38 @@ public final class VaultWatcher: @unchecked Sendable {
         }
 
         let parentToken = UUID()
+        guard let parentDescriptor = descriptors.parent.descriptor else {
+            releaseVnodeDescriptors(2)
+            reportWatchIssue(
+                key: "registry-watch",
+                message: "The external registry parent descriptor was already closed; registry fingerprint polling is active."
+            )
+            return false
+        }
         let parentSource = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptors.parent,
+            fileDescriptor: parentDescriptor,
             eventMask: [.write, .delete, .rename, .revoke],
             queue: queue
         )
         parentSource.setEventHandler { [weak self] in self?.handleRegistryEvent(token: parentToken, isFile: false) }
-        parentSource.setCancelHandler { [weak self] in
-            close(descriptors.parent)
+        parentSource.setCancelHandler { [weak self, parent = descriptors.parent] in
+            parent.close()
             self?.vnodeDescriptorDidClose()
         }
         parentSource.resume()
-        registryParentWatch = VnodeWatch(token: parentToken, descriptor: descriptors.parent, source: parentSource)
+        registryParentWatch = VnodeWatch(token: parentToken, descriptor: parentDescriptor, source: parentSource)
 
         installRegistryFileWatch(descriptors.file)
         clearWatchIssue("registry-watch")
         return true
     }
 
-    private func installRegistryFileWatch(_ descriptor: Int32?) {
-        guard let descriptor else {
+    private func installRegistryFileWatch(_ ownedDescriptor: OwnedFileDescriptor?) {
+        guard let ownedDescriptor else {
+            releaseVnodeDescriptor()
+            return
+        }
+        guard let descriptor = ownedDescriptor.descriptor else {
             releaseVnodeDescriptor()
             return
         }
@@ -716,8 +762,8 @@ public final class VaultWatcher: @unchecked Sendable {
             queue: queue
         )
         source.setEventHandler { [weak self] in self?.handleRegistryEvent(token: token, isFile: true) }
-        source.setCancelHandler { [weak self] in
-            close(descriptor)
+        source.setCancelHandler { [weak self, descriptor = ownedDescriptor] in
+            descriptor.close()
             self?.vnodeDescriptorDidClose()
         }
         source.resume()
@@ -795,11 +841,8 @@ public final class VaultWatcher: @unchecked Sendable {
 
     private func reportWatchIssue(key: String, message: String) {
         guard reportedWatchIssues.insert(key).inserted else { return }
-        let needsFullSync = reportedWatchIssues.count == 1
         Self.logger.warning("\(message, privacy: .public)")
-        if needsFullSync {
-            onChange(VaultChange(notesChanged: [], assetsChanged: [], needsFullSync: true))
-        }
+        onChange(VaultChange(notesChanged: [], assetsChanged: [], needsFullSync: true))
     }
 
     private func clearWatchIssue(_ key: String) {
@@ -1069,7 +1112,7 @@ public final class VaultWatcher: @unchecked Sendable {
             )
             return
         }
-        close(descriptors.parent)
+        descriptors.parent.close()
         installRegistryFileWatch(descriptors.file)
         clearWatchIssue("registry-watch")
     }
