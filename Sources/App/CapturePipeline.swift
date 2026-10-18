@@ -42,6 +42,25 @@ struct CapturePipeline: Sendable {
     let pins: NotePinStore
     let calendar: Calendar
     let logger: Logger
+    private let noteIDForPin: (@Sendable (URL) throws -> String)?
+
+    init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
+         semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
+         drafts: NoteDraftStore, pins: NotePinStore, calendar: Calendar, logger: Logger,
+         noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
+        self.vault = vault
+        self.sessions = sessions
+        self.service = service
+        self.index = index
+        self.semantic = semantic
+        self.monitor = monitor
+        self.journal = journal
+        self.drafts = drafts
+        self.pins = pins
+        self.calendar = calendar
+        self.logger = logger
+        self.noteIDForPin = noteIDForPin
+    }
 
     @concurrent
     static func open(vaultRoot: URL, stateDirectory: URL, calendar: Calendar, modelsDirectory: URL? = nil) async throws -> Self {
@@ -130,7 +149,14 @@ struct CapturePipeline: Sendable {
         guard case .note(let text) = job.prepared.capture.content else { return nil }
         var pinFailed = false
         try drafts.completeSave(matching: job.noteDraft ?? text, pinOnSave: pinOnSave) { intent in
-            guard intent, let noteID = try? vault.noteID(for: saved.destination.url) else { return }
+            guard intent else { return }
+            let noteID: String
+            do { noteID = try (noteIDForPin ?? { try vault.noteID(for: $0) })(saved.destination.url) }
+            catch {
+                pinFailed = true
+                logger.error("Couldn't resolve note to pin (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                return
+            }
             do { try pins.set(noteID, pinned: true) }
             catch {
                 pinFailed = true

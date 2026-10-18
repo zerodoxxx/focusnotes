@@ -527,6 +527,26 @@ extension AppController {
         guard try await pinPipeline.journal.recordURLs().isEmpty, try Data(contentsOf: saved.destination.url) == savedBytes else {
             throw SelfTestFailure("Shutdown retried a note that had already saved despite its pin error")
         }
+
+        let resolveBase = base.appendingPathComponent("PinIdentityFailure", isDirectory: true)
+        let opened = try await CapturePipeline.open(vaultRoot: resolveBase.appendingPathComponent("Vault"),
+            stateDirectory: resolveBase.appendingPathComponent("State"), calendar: pipeline.calendar)
+        let resolvePipeline = CapturePipeline(vault: opened.vault, sessions: opened.sessions, service: opened.service,
+            index: opened.index, semantic: opened.semantic, monitor: opened.monitor, journal: opened.journal,
+            drafts: opened.drafts, pins: opened.pins, calendar: opened.calendar, logger: opened.logger,
+            noteIDForPin: { _ in throw CocoaError(.fileReadInvalidFileName) })
+        var resolveToasts: [Toast] = []
+        let resolveController = AppController(pipeline: resolvePipeline, presentsUI: false, onToast: { resolveToasts.append($0) })
+        guard let resolvedSaved = try await resolveController.addNote("# PinIdentityFailure\n\nSaved despite pin identity lookup failure.", pinOnSave: true),
+              fm.fileExists(atPath: resolvedSaved.destination.url.path),
+              resolveToasts.count == 1, resolveToasts.last?.style == .warning,
+              resolveToasts.last?.title == "Note saved, but not pinned",
+              resolvePipeline.pins.paths().isEmpty,
+              try resolvePipeline.drafts.loadSnapshot().text.isEmpty,
+              try await resolvePipeline.journal.recordURLs().isEmpty else {
+            throw SelfTestFailure("A note identity lookup failure was not surfaced as a nonfatal pin warning")
+        }
+        _ = await resolveController.beginTermination().value
     }
 
     private func checkQuickNotePinRecovery(in base: URL) async throws {
