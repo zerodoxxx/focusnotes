@@ -32,7 +32,7 @@ public final class VaultWatcher: @unchecked Sendable {
     private static let defaultMaximumParentVnodeDescriptors = 64
     private static let defaultFallbackInterval: TimeInterval = 15
 
-    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FocusNotes", category: "VaultWatcher")
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "dev", category: "VaultWatcher")
 
     private struct VnodeWatch {
         let token: UUID
