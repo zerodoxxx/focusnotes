@@ -186,7 +186,8 @@ struct VaultManagedLocation: Sendable {
     var url: URL { note.url }
 }
 
-/// The notes folder: root notes, `Sessions/` and `assets/`.
+/// The selected vault root contains notes, `Sessions/` and `assets/`.
+/// Explicitly registered HOME notes are listed separately.
 public struct Vault: Sendable {
     public static let inboxFileName = "Inbox.md"
     public static let inboxTitle = "Inbox"
@@ -230,9 +231,8 @@ public struct Vault: Sendable {
         try NoteFile.prepareInbox(Data(CaptureFormat.noteHeader(title: Self.inboxTitle).utf8), in: rootAnchor)
     }
 
-    /// Validates the optional external-note registry without making vault-only
-    /// operations depend on its availability. App startup uses this to surface
-    /// a damaged or newer-version registry to the user.
+    /// Validates the optional external-note registry at startup so a damaged or
+    /// newer-version registry can be surfaced before external notes are used.
     public func validateExternalNoteRegistry() throws {
         externalNoteRegistry?.invalidateCache()
         do {
@@ -247,12 +247,18 @@ public struct Vault: Sendable {
     /// Lists Markdown notes recursively under the vault, except files inside `assets/`.
     /// Hidden files and directories are skipped.
     public func listNotes() throws -> [NoteRef] {
+        try listNotes(externalRegistrySnapshot: externalRegistrySnapshot())
+    }
+
+    /// Lists notes using the registry snapshot already validated by the caller.
+    /// Capture routing uses one snapshot for both its fail-closed check and list.
+    func listNotes(externalRegistrySnapshot: ExternalNoteRegistry.Snapshot?) throws -> [NoteRef] {
         var refs: [NoteRef] = []
         for note in try markdownFilePaths() {
             guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: note.id) else { continue }
             refs.append(NoteRef(url: note.url, title: title(of: note.url, prefix: prefix), kind: note.kind))
         }
-        for location in try externalNoteLocations() {
+        for location in try externalNoteLocations(snapshot: externalRegistrySnapshot) {
             guard let prefix = try? NoteFile.readManagedPrefix(4096, in: homeAnchor, relativePath: location.relativePath) else { continue }
             refs.append(NoteRef(url: location.url, title: title(of: location.url, prefix: prefix), kind: .note))
         }
@@ -572,7 +578,14 @@ public struct Vault: Sendable {
 
     func externalNoteLocations(snapshot: ExternalNoteRegistry.Snapshot? = nil) throws -> [VaultNoteLocation] {
         guard let externalNoteRegistry else { return [] }
-        guard let registeredPaths = try? (snapshot ?? externalNoteRegistry.snapshot()).paths else { return [] }
+        let registeredPaths: [String]
+        do {
+            registeredPaths = try (snapshot ?? externalNoteRegistry.snapshot()).paths
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch {
+            throw ExternalNoteRegistryError.unreadableRegistry
+        }
         var locations: [VaultNoteLocation] = []
         for path in registeredPaths {
             let url = homeRoot.appendingPathComponent(path)
@@ -580,25 +593,6 @@ public struct Vault: Sendable {
             locations.append(managed.note)
         }
         return locations.sorted { $0.id < $1.id }
-    }
-
-    /// Existing, descriptor-validated watch roots for registered external notes.
-    /// Nested notes watch their immediate parent. A note directly under HOME
-    /// requires HOME as the event root, and the watcher filters to that exact note.
-    func externalNoteWatchURLs() throws -> [URL] {
-        var paths = Set<String>()
-        for location in try externalNoteLocations() {
-            let components = location.relativePath.split(separator: "/").map(String.init)
-            guard !components.isEmpty else { continue }
-            let parentPath = components.dropLast().joined(separator: "/")
-            if parentPath.isEmpty {
-                paths.insert(homeRoot.path)
-            } else {
-                guard (try? NoteFile.listManagedDirectoryNames(in: homeAnchor, relativePath: parentPath)) != nil else { continue }
-                paths.insert(location.url.deletingLastPathComponent().path)
-            }
-        }
-        return paths.sorted().map { URL(fileURLWithPath: $0) }
     }
 
     /// Opens a registered external note's immediate parent directory through

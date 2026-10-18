@@ -1,4 +1,4 @@
-import Core
+@_spi(Checks) import Core
 import Foundation
 
 func checkCaptureService() async throws {
@@ -16,6 +16,23 @@ func checkCaptureService() async throws {
     let writer = NoteWriter(vault: vault, calendar: calendar)
     let service = CaptureService(vault: vault, sessions: sessions, writer: writer, now: clock, makeID: makeID)
     let png = Data([0x89, 0x50, 0x4E, 0x47])
+
+    let unavailableRoot = base.appendingPathComponent("UnavailableVault", isDirectory: true)
+    let unavailableVault = Vault(root: unavailableRoot)
+    let unavailableSessions = SessionStore(stateDirectory: base.appendingPathComponent("UnavailableState"),
+                                           vault: unavailableVault, calendar: calendar, now: clock)
+    let unavailableWriter = NoteWriter(vault: unavailableVault, calendar: calendar)
+    let unavailableService = CaptureService(vault: unavailableVault, sessions: unavailableSessions,
+                                           writer: unavailableWriter, now: clock)
+    let queuedCapture = Capture(id: UUID(), createdAt: now, content: .text("queue while vault is detached"),
+                                source: CaptureSource())
+    let queued = try await unavailableService.prepare(queuedCapture, noteTitle: "Queued Note")
+    try require(queued.destination.url == unavailableRoot.appendingPathComponent("Queued Note.md") &&
+                queued.destination.kind == .note,
+                "capture preparation should preserve a deterministic destination while the vault is unavailable")
+    try require(!FileManager.default.fileExists(atPath: unavailableRoot.path),
+                "preparing a capture for an unavailable vault must not create the missing root")
+    try checkCaptureRoutingUnavailableVaultCases(base: base)
 
     // No active session: text goes to Inbox.md.
     let inboxSave = try await service.saveText("Hello inbox", source: CaptureSource(appName: "Safari"), noteTitle: nil)
@@ -139,6 +156,60 @@ func checkCaptureService() async throws {
     try require(parsedRetry.blocks.first?.createdAt == now, "retry must preserve the original timestamp")
     try await checkDirectCaptureMethodsRejectLinks(base: base, calendar: calendar, now: now, png: png)
     print("CaptureService checks passed (including fixed-destination, idempotent retries).")
+}
+
+private func checkCaptureRoutingUnavailableVaultCases(base: URL) throws {
+    let offlineRoot = base.appendingPathComponent("InvalidRegistryOfflineVault", isDirectory: true)
+    let registryURL = base.appendingPathComponent("InvalidRegistryOfflineState/external-notes.json")
+    try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(#"{"version":1,"paths":["Desktop/Registered.md"]}x"#.utf8).write(to: registryURL)
+    let offlineVault = Vault(root: offlineRoot, externalNoteRegistryURL: registryURL,
+                             homeDirectoryURL: base.appendingPathComponent("OfflineHome", isDirectory: true))
+
+    var attemptedUnavailableScan = false
+    let invalidRegistryError: Error?
+    do {
+        _ = try CaptureService.loadNotesForRouting(
+            registrySnapshot: { () throws -> (paths: [String], value: String)? in
+                try offlineVault.validateExternalNoteRegistry()
+                return nil
+            },
+            loadNotes: { (_: String?) throws -> [NoteRef] in
+                attemptedUnavailableScan = true
+                throw POSIXError(.EIO)
+            }
+        )
+        invalidRegistryError = nil
+    } catch {
+        invalidRegistryError = error
+    }
+    guard let registryError = invalidRegistryError as? ExternalNoteRegistryError else {
+        throw CheckFailure.failed("invalid registry state must fail before an unavailable vault scan can trigger offline fallback")
+    }
+    try require(registryError == .malformedRegistry,
+                "offline capture preparation should preserve the malformed-registry error")
+    try require(!attemptedUnavailableScan && !FileManager.default.fileExists(atPath: offlineRoot.path),
+                "registry validation must happen before scanning or creating an unavailable vault")
+
+    let registeredPathError: Error?
+    do {
+        _ = try CaptureService.loadNotesForRouting(
+            registrySnapshot: { (paths: ["Desktop/Registered.md"], value: ()) },
+            loadNotes: { (_: ()?) throws -> [NoteRef] in throw POSIXError(.EIO) }
+        )
+        registeredPathError = nil
+    } catch {
+        registeredPathError = error
+    }
+    guard let scanError = registeredPathError as? POSIXError, scanError.code == .EIO else {
+        throw CheckFailure.failed("an unavailable vault scan must not route against an empty list when HOME notes are registered")
+    }
+
+    let fallback = try CaptureService.loadNotesForRouting(
+        registrySnapshot: { nil as (paths: [String], value: ())? },
+        loadNotes: { (_: ()?) throws -> [NoteRef] in throw POSIXError(.EIO) }
+    )
+    try require(fallback.isEmpty, "an unavailable vault with no external registry should retain journal fallback")
 }
 
 private func checkDirectCaptureMethodsRejectLinks(base: URL, calendar: Calendar, now: Date, png: Data) async throws {

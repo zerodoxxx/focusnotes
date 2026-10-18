@@ -1,6 +1,6 @@
 import Foundation
 
-/// A root note's display title and body, derived without rewriting the draft.
+/// A note's display title and body, derived without rewriting the draft.
 public struct TypedNote: Sendable {
     /// The complete extracted name before display-title truncation.
     public let rawName: String
@@ -38,7 +38,7 @@ public struct TypedNote: Sendable {
             hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(extractedName)
         )
         let resolvedName = flatFallback
-            ? NotePathName(scope: .vault, components: [NoteTitle.fileStem(for: extractedName)])
+            ? try? NotePathName.validated(scope: .vault, components: [NoteTitle.fileStem(for: extractedName)])
             : parsedName
         let isFolderQualified = parsedName.map {
             !flatFallback && ($0.scope == .home || $0.components.count > 1)

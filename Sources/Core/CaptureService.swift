@@ -68,10 +68,19 @@ public actor CaptureService {
         return SavedCapture(captureID: capture.id, destination: destination)
     }
 
-    /// Resolve once, before writing. An unavailable vault must not prevent journaling a
-    /// capture; when notes cannot be listed, Router still resolves a fixed destination.
+    /// Resolve once, before writing. A detached or unreadable vault volume must
+    /// not prevent journaling a deterministic destination. Registry failures
+    /// remain visible so a capture cannot be routed around unseen external notes.
     public func prepare(_ capture: Capture, noteTitle: String?) async throws -> PreparedCapture {
-        let notes = (try? vault.listNotes()) ?? []
+        let notes = try Self.loadNotesForRouting(
+            registrySnapshot: {
+                guard let snapshot = try vault.externalRegistrySnapshot() else { return nil }
+                return (paths: snapshot.paths, value: snapshot)
+            },
+            loadNotes: { snapshot in
+                try vault.listNotes(externalRegistrySnapshot: snapshot)
+            }
+        )
         let active = await sessions.current()
         return PreparedCapture(capture: capture, destination: try Router.destination(
             noteTitle: noteTitle, activeSession: active, notes: notes, vault: vault
@@ -99,7 +108,7 @@ public actor CaptureService {
             while true {
                 var components = pathName.components
                 components[components.count - 1] = NoteTitle.fileStem(for: "\(pathName.leafName) \(suffix)")
-                let reservedName = NotePathName(scope: pathName.scope, components: components)
+                let reservedName = try NotePathName.validated(scope: pathName.scope, components: components)
                 let candidate = try vault.resolveNoteName(reservedName)
                 if !preparedNoteURLs.contains(candidate.url), !FileManager.default.fileExists(atPath: candidate.url.path) {
                     selectedName = reservedName
@@ -140,5 +149,26 @@ public actor CaptureService {
     private func registerExternalLocation(for destination: Destination) throws {
         let managed = try vault.managedLocation(of: destination.url)
         if managed.scope == .home { try vault.registerExternalNote(managed.note) }
+    }
+
+    /// Validates registry state before allowing the unavailable-volume fallback.
+    @_spi(Checks)
+    public static func loadNotesForRouting<Snapshot>(
+        registrySnapshot: () throws -> (paths: [String], value: Snapshot)?,
+        loadNotes: (Snapshot?) throws -> [NoteRef]
+    ) throws -> [NoteRef] {
+        let snapshot = try registrySnapshot()
+        do {
+            return try loadNotes(snapshot?.value)
+        } catch let error as ExternalNoteRegistryError {
+            throw error
+        } catch let error as POSIXError where isUnavailableVaultVolume(error.code) {
+            guard snapshot?.paths.isEmpty ?? true else { throw error }
+            return []
+        }
+    }
+
+    private static func isUnavailableVaultVolume(_ code: POSIXErrorCode) -> Bool {
+        code == .EIO || code == .ENODEV || code == .ENXIO
     }
 }

@@ -52,6 +52,12 @@ func checkSessionStore() async throws {
     let explicitCleanedResume = try await store.start(name: "A/B")
     try require(explicitCleanedResume.notePath == cleaned.notePath && explicitCleanedResume.resumed == true,
                 "a folder-qualified session name must resume the exact nested note")
+    for name in ["TODO/", "Read https://x.com", "a//b", "pros / cons"] {
+        let flat = try await store.start(name: name)
+        let expected = "Sessions/\(NoteTitle.fileStem(for: NoteTitle.cleanTitle(name))).md"
+        try require(flat.notePath == expected && !flat.notePath.dropFirst("Sessions/".count).contains("/"),
+                    "invalid or whitespace-qualified session name \(name.debugDescription) must stay flat, got \(flat.notePath)")
+    }
     let legacy = vault.sessionsURL.appendingPathComponent("2026-10-12 Legacy.md")
     try checkWrite("# Legacy\n\nold bytes\n", to: legacy)
     let oldSession = Session(name: "Legacy", notePath: "Sessions/2026-10-12 Legacy.md", startedAt: now)

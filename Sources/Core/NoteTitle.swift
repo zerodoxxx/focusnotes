@@ -25,9 +25,27 @@ public struct NotePathName: Sendable, Equatable {
         return prefix.trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    init(scope: NotePathScope, components: [String]) {
+    private init(scope: NotePathScope, components: [String]) {
         self.scope = scope
         self.components = components
+    }
+
+    /// Creates a path value from already-sanitized filename components.
+    /// User-facing names should normally go through `NoteTitle.pathName(for:)`;
+    /// this factory is for trusted code that adds validated path components.
+    static func validated(scope: NotePathScope, components: [String]) throws -> NotePathName {
+        guard !components.isEmpty else { throw NotePathNameError.emptyPath }
+        guard components.count <= maximumPathDepth else { throw NotePathNameError.tooDeep }
+        guard components.allSatisfy({ !$0.isEmpty && $0 == NoteTitle.fileStem(for: $0) }) else {
+            throw NotePathNameError.invalidComponent
+        }
+        guard let leafName = components.last, !leafName.hasPrefix("~$") else {
+            throw NotePathNameError.invalidComponent
+        }
+        guard components.joined(separator: "/").utf8.count <= maximumRelativePathBytes else {
+            throw NotePathNameError.tooLong
+        }
+        return NotePathName(scope: scope, components: components)
     }
 }
 
@@ -86,7 +104,7 @@ public enum NoteTitle {
         guard relativePath.utf8.count <= NotePathName.maximumRelativePathBytes else {
             throw NotePathNameError.tooLong
         }
-        return NotePathName(scope: scope, components: components)
+        return try NotePathName.validated(scope: scope, components: components)
     }
 
     /// File name stem (without `.md`) for a note title. Never empty.

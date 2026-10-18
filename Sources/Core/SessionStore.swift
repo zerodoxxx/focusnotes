@@ -85,9 +85,33 @@ public actor SessionStore {
         let cleaned = NoteTitle.cleanTitle(name)
 
         if cleaned.contains("/") {
-            let pathName = try NoteTitle.pathName(for: cleaned)
+            let parsed: Result<NotePathName, NotePathNameError>
+            do {
+                parsed = .success(try NoteTitle.pathName(for: name))
+            } catch let error as NotePathNameError {
+                parsed = .failure(error)
+            } catch { throw error }
+            let pathName: NotePathName
+            switch parsed {
+            case .success(let value):
+                if Self.canFallBackToFlatName(
+                    name,
+                    error: nil,
+                    hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(name)
+                ) {
+                    return try startFlat(title: cleaned, existingSessions: existingSessions())
+                }
+                pathName = value
+            case .failure(let error):
+                guard Self.canFallBackToFlatName(
+                    name,
+                    error: error,
+                    hasWhitespaceAroundSlash: Self.hasWhitespaceAroundSlash(name)
+                ) else { throw error }
+                return try startFlat(title: cleaned, existingSessions: existingSessions())
+            }
             guard pathName.scope == .vault else { throw NotePathNameError.invalidComponent }
-            let sessionPath = NotePathName(
+            let sessionPath = try NotePathName.validated(
                 scope: .vault,
                 components: [Vault.sessionsDirectoryName] + pathName.components
             )
@@ -100,9 +124,13 @@ public actor SessionStore {
             )
         }
 
-        let title = cleaned.isEmpty ? "Session" : cleaned
+        return try startFlat(title: cleaned, existingSessions: existingSessions())
+    }
+
+    private func startFlat(title rawTitle: String, existingSessions: [ExistingSession]) throws -> Session {
+        let title = rawTitle.isEmpty ? "Session" : rawTitle
         let stem = NoteTitle.fileStem(for: title)
-        let matches = try existingSessions().filter { note in
+        let matches = existingSessions.filter { note in
             let existingStem = note.note.url.deletingPathExtension().lastPathComponent
             if existingStem.caseInsensitiveCompare(stem) == .orderedSame { return true }
             return Self.isDatedSession(existingStem, matching: stem)
@@ -115,6 +143,26 @@ public actor SessionStore {
         let existing = matches.first
         let notePath = existing?.notePath ?? "\(Vault.sessionsDirectoryName)/\(stem).md"
         return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
+    }
+
+    private static func canFallBackToFlatName(
+        _ rawName: String,
+        error: NotePathNameError?,
+        hasWhitespaceAroundSlash: Bool
+    ) -> Bool {
+        guard !rawName.hasPrefix("/"), !rawName.contains("\0") else { return false }
+        if let error, error != .invalidComponent { return false }
+        let components = rawName.split(separator: "/", omittingEmptySubsequences: false)
+            .map { NoteTitle.cleanTitle(String($0)) }
+        guard !components.contains(where: { $0 == "." || $0 == ".." }) else { return false }
+        if let finalComponent = components.last(where: { !$0.isEmpty }),
+           NoteTitle.fileStem(for: finalComponent).hasPrefix("~$") { return false }
+        if error == nil { return hasWhitespaceAroundSlash }
+        return hasWhitespaceAroundSlash || rawName.hasSuffix("/") || rawName.contains("//")
+    }
+
+    private static func hasWhitespaceAroundSlash(_ rawName: String) -> Bool {
+        rawName.range(of: #"\s/|/\s"#, options: .regularExpression) != nil
     }
 
     /// Resumes the exact candidate shown to the user. A deleted or changed

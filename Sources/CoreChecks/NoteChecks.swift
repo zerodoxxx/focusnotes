@@ -6,6 +6,15 @@ func checkTypedNotes() async throws {
     defer { checkRemoveDirectory(base) }
     let vault = Vault(root: base.appendingPathComponent("Vault"))
     try vault.prepare()
+    for unsafePath in ["folder\\name.md", "folder/name\u{0007}.md"] {
+        do {
+            _ = try vault.fileSnapshot(relativePath: unsafePath)
+            throw CheckFailure.failed("managed relative identity path accepted unsafe component: \(unsafePath.debugDescription)")
+        } catch let error as POSIXError {
+            try require(error.code == .EPERM,
+                        "managed relative identity path should reject backslash and control characters")
+        }
+    }
     let calendar = checkCalendar()
     let date = checkDate(2026, 10, 13, 14, 30)
     let writer = NoteWriter(vault: vault, calendar: calendar)

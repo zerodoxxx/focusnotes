@@ -271,11 +271,14 @@ private func checkExternalRegistrySymlinkRejected(base: URL, now: Date, calendar
     let vault = Vault(root: home.appendingPathComponent("Vault", isDirectory: true),
                       externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
     try vault.prepare()
-    let listed = try vault.listNotes()
-    try require(listed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
-                "listing should still succeed from the vault when the registry is a symlink")
-    try require(!listed.contains { $0.url.standardizedFileURL == leakedNote.standardizedFileURL },
-                "a symlinked registry must not expose paths from its outside target")
+    do {
+        _ = try vault.listNotes()
+        throw CheckFailure.failed("listing must fail closed when the registry is a symlink")
+    } catch is CheckFailure {
+        throw CheckFailure.failed("a symlinked registry must not be treated as an empty external-note list")
+    } catch let error as ExternalNoteRegistryError {
+        try require(error == .unreadableRegistry, "a symlinked registry should surface an unreadable-registry error")
+    }
 
     let service = externalCaptureService(
         vault: vault,
@@ -306,12 +309,13 @@ private func checkExternalRegistrySymlinkRejected(base: URL, now: Date, calendar
 }
 
 private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, calendar: Calendar) async throws {
-    let cases: [(String, Data, ExternalNoteRegistryError)] = [
-        ("Malformed", Data(#"{"version":1,"paths":["Desktop/a.md","Desktop/b.md"]}x"#.utf8), .malformedRegistry),
-        ("NewerVersion", Data(#"{"version":2,"paths":["Desktop/a.md","Desktop/b.md"]}"#.utf8), .unsupportedVersion(2))
+    let cases: [(String, Data, ExternalNoteRegistryError, Bool)] = [
+        ("Malformed", Data(#"{"version":1,"paths":["Desktop/a.md","Desktop/b.md"]}x"#.utf8), .malformedRegistry, false),
+        ("NewerVersion", Data(#"{"version":2,"paths":["Desktop/a.md","Desktop/b.md"]}"#.utf8), .unsupportedVersion(2), false),
+        ("Unreadable", Data(#"{"version":1,"paths":["Desktop/a.md"]}"#.utf8), .unreadableRegistry, true)
     ]
 
-    for (label, originalBytes, expectedError) in cases {
+    for (label, originalBytes, expectedError, registryIsSymlink) in cases {
         let caseRoot = base.appendingPathComponent("Registry\(label)", isDirectory: true)
         let home = caseRoot.appendingPathComponent("Home", isDirectory: true)
         let desktop = home.appendingPathComponent("Desktop", isDirectory: true)
@@ -319,7 +323,13 @@ private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, cale
         let vaultRoot = home.appendingPathComponent("Vault", isDirectory: true)
         let registryURL = caseRoot.appendingPathComponent("State/external-notes.json")
         try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try originalBytes.write(to: registryURL)
+        if registryIsSymlink {
+            let registryTarget = caseRoot.appendingPathComponent("registry-target.json")
+            try originalBytes.write(to: registryTarget)
+            try FileManager.default.createSymbolicLink(at: registryURL, withDestinationURL: registryTarget)
+        } else {
+            try originalBytes.write(to: registryURL)
+        }
 
         let first = desktop.appendingPathComponent("a.md")
         let second = desktop.appendingPathComponent("b.md")
@@ -328,12 +338,18 @@ private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, cale
 
         let vault = Vault(root: vaultRoot, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
         try vault.prepare()
-        let listed = try vault.listNotes()
-        try require(listed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
-                    "a damaged registry should not prevent vault-only note listing")
-        try require(!listed.contains { $0.url.standardizedFileURL == first.standardizedFileURL ||
-                                       $0.url.standardizedFileURL == second.standardizedFileURL },
-                    "notes from an unreadable registry should be omitted from listing")
+        let listingError: Error?
+        do {
+            _ = try vault.listNotes()
+            listingError = nil
+        } catch {
+            listingError = error
+        }
+        guard let listingRegistryError = listingError as? ExternalNoteRegistryError else {
+            throw CheckFailure.failed("listing with a \(label.lowercased()) registry must surface ExternalNoteRegistryError")
+        }
+        try require(listingRegistryError == expectedError,
+                    "listing should preserve the specific \(label.lowercased()) registry error")
 
         let service = externalCaptureService(
             vault: vault,
@@ -341,6 +357,24 @@ private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, cale
             now: now,
             calendar: calendar
         )
+        let localMatch = vaultRoot.appendingPathComponent("A.md")
+        let routedCapture = Capture(id: UUID(), createdAt: now, content: .text("must not be misrouted"), source: CaptureSource())
+        let routingError: Error?
+        do {
+            let routed = try await service.prepare(routedCapture, noteTitle: "A")
+            _ = try await service.save(routed)
+            routingError = nil
+        } catch {
+            routingError = error
+        }
+        guard let routingRegistryError = routingError as? ExternalNoteRegistryError else {
+            throw CheckFailure.failed("capture preparation with a \(label.lowercased()) registry must fail instead of routing to a new vault note")
+        }
+        try require(routingRegistryError == expectedError,
+                    "capture preparation should preserve the specific \(label.lowercased()) registry error")
+        try require(!FileManager.default.fileExists(atPath: localMatch.path),
+                    "a capture matching a registered HOME note must not create a same-name vault note")
+
         let destination = desktop.appendingPathComponent("c.md")
         let prepared = try await service.prepareNote(
             externalNoteCapture("/Desktop/c", body: "must not overwrite a damaged registry", now: now),

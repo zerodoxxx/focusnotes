@@ -49,8 +49,8 @@ enum NoteFile {
     }
 
     /// Creates the app-managed folders through directory descriptors. The
-    /// selected vault root is already symlink-resolved by Vault.init; links
-    /// beneath that root are rejected.
+    /// root anchor follows any selected-root symlink when it opens the root;
+    /// links beneath that root are rejected.
     static func prepareManagedDirectory(_ relativePath: String, in root: VaultDirectoryAnchor) throws {
         _ = try openDirectory(root: root, components: pathComponents(relativePath), create: true)
     }
@@ -222,7 +222,10 @@ enum NoteFile {
     }
 
     private static func pathComponents(_ path: String) throws -> [String] {
-        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\0") else { throw POSIXError(.EPERM) }
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\0"), !path.contains("\\"),
+              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw POSIXError(.EPERM)
+        }
         let components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
             throw POSIXError(.EPERM)
