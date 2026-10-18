@@ -94,6 +94,26 @@ func checkVaultWatcher() throws {
     let assetChange = recorder.waitForChange(timeout: 2.25) { $0.assetsChanged.contains("assets/image.png") }
     try require(assetChange != nil, "VaultWatcher did not report assets/image.png")
 
+    let uppercaseAssetImage = root.appendingPathComponent("ASSETS/UpperWatcherImage.png")
+    try checkWrite("upper-case asset bytes", to: uppercaseAssetImage)
+    let uppercaseAssetChange = recorder.waitForChange(timeout: 2.25) {
+        $0.assetsChanged.contains { $0.lowercased().hasSuffix("assets/upperwatcherimage.png") }
+    }
+    try require(uppercaseAssetChange != nil, "VaultWatcher did not report an image under ASSETS/")
+
+    let uppercaseAssetNote = root.appendingPathComponent("ASSETS/UpperWatcherNote.md")
+    let uppercaseNoteOffset = recorder.changes().count
+    try checkWrite("# Asset note\n", to: uppercaseAssetNote)
+    let uppercaseAssetNoteChange = recorder.waitForChange(after: uppercaseNoteOffset, timeout: 2.25) {
+        $0.assetsChanged.contains { $0.lowercased().hasSuffix("assets/upperwatchernote.md") }
+    }
+    try require(uppercaseAssetNoteChange != nil, "VaultWatcher did not classify ASSETS/note.md as an asset path")
+    try require(recorder.waitForQuiet(for: 0.2), "ASSETS/note.md produced a delayed note event")
+    let uppercaseNoteChanges = recorder.changes().dropFirst(uppercaseNoteOffset)
+    try require(uppercaseNoteChanges.allSatisfy { change in
+        !change.notesChanged.contains { $0.lowercased().hasSuffix("assets/upperwatchernote.md") }
+    }, "a Markdown file under ASSETS/ must not be reported as a vault note")
+
     watcher.stop()
     try require(!watcher.isRunning, "VaultWatcher should report stopped after stop()")
     let countAfterStop = recorder.changes().count
@@ -102,7 +122,128 @@ func checkVaultWatcher() throws {
     try require(recorder.changes().count == countAfterStop, "VaultWatcher callback count changed after stop()")
 
     try checkBoundedExternalWatcher()
+    try checkExternalWatcherDescriptorCapAndPolling()
     print("Vault watcher checks passed.")
+}
+
+private func checkExternalWatcherDescriptorCapAndPolling() throws {
+    let base = try checkMakeDirectory("external-watcher-cap")
+    defer { checkRemoveDirectory(base) }
+
+    let home = base.appendingPathComponent("Home", isDirectory: true)
+    let state = base.appendingPathComponent("State", isDirectory: true)
+    let root = home.appendingPathComponent("Vault", isDirectory: true)
+    let registryURL = state.appendingPathComponent("external-notes.json")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+
+    let relativePaths = (0..<10).map { String(format: "Group%02d/Note.md", $0) }
+    let noteURLs = relativePaths.map { home.appendingPathComponent($0) }
+    for (index, noteURL) in noteURLs.enumerated() {
+        try checkWrite("# Group \(index)\n\ninitial\n", to: noteURL)
+    }
+    let jsonPaths = relativePaths.map { "\"\($0)\"" }.joined(separator: ",")
+    try checkWrite("{\"version\":1,\"paths\":[\(jsonPaths)]}", to: registryURL)
+
+    let vault = Vault(root: root, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
+    try vault.prepare()
+    let noteIDs = try noteURLs.map { try vault.noteID(for: $0) }
+    let recorder = VaultChangeRecorder()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
+    watcher.configureWatchFallbackForChecks(maximumVnodeDescriptors: 8,
+                                             maximumParentVnodeDescriptors: 3,
+                                             interval: 0.05)
+    defer { watcher.stop() }
+    watcher.start()
+    try require(watcher.isRunning, "descriptor-capped external watcher should start")
+    try require(watcher.vnodeDescriptorCountForChecks <= 8,
+                "external and registry vnode descriptors exceeded the configured total cap")
+    try require(watcher.pollingFallbackCountForChecks > 0,
+                "registered notes beyond the vnode cap must use exact-path polling")
+    let cappedSetup = recorder.waitForChange(timeout: 1.0) { $0.needsFullSync }
+    try require(cappedSetup != nil, "degraded watcher coverage must request an initial full sync")
+
+    let fallbackID = noteIDs.last!
+    var offset = recorder.changes().count
+    try checkWrite("# Group 9\n\npolled edit\n", to: noteURLs.last!)
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
+                "timer fallback did not report an edit to a note beyond the vnode cap")
+
+    offset = recorder.changes().count
+    try FileManager.default.removeItem(at: noteURLs.last!)
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
+                "timer fallback did not report deletion of a note beyond the vnode cap")
+
+    offset = recorder.changes().count
+    try checkWrite("# Group 9\n\npolled recreation\n", to: noteURLs.last!)
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
+                "timer fallback did not report recreation of a note beyond the vnode cap")
+
+    offset = recorder.changes().count
+    try Data(#"{"version":1,"paths":["Group09/Note.md"]}"#.utf8)
+        .write(to: registryURL, options: .atomic)
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.needsFullSync } != nil,
+                "reducing the registry should request reconciliation")
+    let recoveryDeadline = Date().addingTimeInterval(2.0)
+    while watcher.pollingFallbackCountForChecks != 0 && Date() < recoveryDeadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    try require(watcher.pollingFallbackCountForChecks == 0,
+                "freed descriptor slots should restore file and parent vnode coverage")
+    offset = recorder.changes().count
+    try checkWrite("# Group 9\n\nrecovered vnode edit\n", to: noteURLs.last!)
+    try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.notesChanged.contains(fallbackID) } != nil,
+                "the watcher did not recover from timer fallback after descriptor capacity became available")
+
+    watcher.stop()
+    let countAfterStop = recorder.changes().count
+    try checkWrite("# Group 9\n\nafter stop\n", to: noteURLs.last!)
+    try require(recorder.waitForQuiet(for: 0.2), "the stopped fallback timer delivered a change")
+    try require(recorder.changes().count == countAfterStop,
+                "watcher callback count changed after the fallback timer stopped")
+
+    let healthyHome = base.appendingPathComponent("HealthyHome", isDirectory: true)
+    let healthyRoot = healthyHome.appendingPathComponent("Vault", isDirectory: true)
+    let healthyState = base.appendingPathComponent("HealthyState", isDirectory: true)
+    let healthyRegistry = healthyState.appendingPathComponent("external-notes.json")
+    let healthyNote = healthyHome.appendingPathComponent("Projects/Note.md")
+    try checkWrite("# Healthy\n\ninitial\n", to: healthyNote)
+    try FileManager.default.createDirectory(at: healthyRoot, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: healthyState, withIntermediateDirectories: true)
+    try checkWrite(#"{"version":1,"paths":["Projects/Note.md"]}"#, to: healthyRegistry)
+    let healthyVault = Vault(root: healthyRoot, externalNoteRegistryURL: healthyRegistry, homeDirectoryURL: healthyHome)
+    try healthyVault.prepare()
+    let healthyRecorder = VaultChangeRecorder()
+    let healthyWatcher = VaultWatcher(vault: healthyVault, latency: 0.1) { healthyRecorder.append($0) }
+    healthyWatcher.configureWatchFallbackForChecks(maximumVnodeDescriptors: 8,
+                                                    maximumParentVnodeDescriptors: 3,
+                                                    interval: 0.05)
+    defer { healthyWatcher.stop() }
+    healthyWatcher.start()
+    try require(healthyWatcher.isRunning, "fully watched external note should start")
+    try require(healthyWatcher.pollingFallbackCountForChecks == 0,
+                "a note with file and parent vnode coverage should not enter the polling fallback")
+    let startupDeadline = Date().addingTimeInterval(2.0)
+    var startupSettled = false
+    while !startupSettled && Date() < startupDeadline {
+        startupSettled = healthyRecorder.waitForQuiet(for: 0.25)
+    }
+    try require(startupSettled, "healthy watcher did not settle after its initial FSEvents delivery")
+    let startupChanges = healthyRecorder.changes()
+    try require(startupChanges.count <= 1 && startupChanges.allSatisfy { change in
+        change.notesChanged == ["Inbox.md"] && change.assetsChanged.isEmpty && !change.needsFullSync &&
+            change.externalRegistryError == nil && !change.externalRegistryRecovered
+    }, "healthy watcher produced an unexpected startup change or full sync")
+
+    let settledCallbackCount = startupChanges.count
+    try require(healthyRecorder.waitForQuiet(for: 0.25),
+                "healthy timer checks produced callbacks or periodic full syncs")
+    try require(healthyRecorder.changes().count == settledCallbackCount,
+                "healthy watcher emitted a callback after startup settled")
+    try require(healthyRecorder.waitForQuiet(for: 0.25),
+                "healthy timer checks produced callbacks or periodic full syncs")
+    try require(healthyRecorder.changes().count == settledCallbackCount,
+                "healthy watcher emitted a callback during the second timer window")
 }
 
 private func checkBoundedExternalWatcher() throws {
@@ -320,6 +461,7 @@ private func checkWarmRegistryCacheRejectsUnsafeReplacement(base: URL) throws {
     let warmListing = try vault.listNotes()
     try require(warmListing.contains { $0.url.standardizedFileURL == note.standardizedFileURL },
                 "the warm-cache fixture should initially list the registered HOME note")
+    let externalID = try vault.noteID(for: note)
 
     let target = base.appendingPathComponent("warm-registry-target.json")
     try checkWrite(#"{"version":1,"paths":["Desktop/Registered.md"]}"#, to: target)
@@ -332,9 +474,18 @@ private func checkWarmRegistryCacheRejectsUnsafeReplacement(base: URL) throws {
         try require(error == .unreadableRegistry, "an unsafe registry replacement should have the typed unreadable error")
     }
 
-    let refreshed = try vault.listNotes()
-    try require(refreshed.contains { $0.url.standardizedFileURL == vault.inboxURL.standardizedFileURL },
-                "vault-only listing should continue when the external registry is unreadable")
-    try require(!refreshed.contains { $0.url.standardizedFileURL == note.standardizedFileURL },
-                "a warmed registry cache must not expose external notes after an unsafe replacement")
+    do {
+        _ = try vault.listNotes()
+        throw CheckFailure.failed("listing must fail closed when a warmed registry is replaced by a symlink")
+    } catch let error as ExternalNoteRegistryError {
+        try require(error == .unreadableRegistry,
+                    "listing after an unsafe replacement should report the typed unreadable error")
+    }
+    do {
+        _ = try vault.noteLocation(forID: externalID)
+        throw CheckFailure.failed("a warmed external identity must not remain usable after registry replacement")
+    } catch let error as ExternalNoteRegistryError {
+        try require(error == .unreadableRegistry,
+                    "the cached external identity should be rejected with the registry error")
+    }
 }
