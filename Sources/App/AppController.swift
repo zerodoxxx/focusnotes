@@ -899,9 +899,10 @@ final class AppController: NSObject, NSMenuDelegate {
             }
         }
         // Save as New Note replaces an earlier unsaved append of the same draft; drop it so a retry or replay can't also append.
+        // Remove from the journal first; on failure the draft is kept and the old job stays retryable.
         for (key, id) in superseded {
+            try await pipeline.journal.remove(id: id)
             preparedJobs.removeValue(forKey: key)
-            try? await pipeline.journal.remove(id: id)
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {

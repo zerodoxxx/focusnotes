@@ -515,8 +515,6 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         needsLayout = true
         measure() // the caption can raise the minimum width
     }
-    /// Re-evaluate the title after the note snapshot arrives, so "Add to note" can appear late.
-    func refreshTitle() { updateTitle() }
     /// Destination title, else the title the text will be saved under, else a placeholder name.
     private func updateTitle() {
         let text = textView.string
@@ -1150,7 +1148,4 @@ public final class NoteEditorPanel {
     /// Refresh an open Browse card after its asynchronous note snapshot arrives. Keep its
     /// filter text and selected item when that item is still present in the new snapshot.
     public func refreshBrowseItems() { content?.refreshBrowseItems() }
-
-    /// Re-evaluate the top-band title once the asynchronous note snapshot arrives.
-    public func refreshTitle() { content?.refreshTitle() }
 }
