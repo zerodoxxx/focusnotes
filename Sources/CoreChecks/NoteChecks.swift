@@ -300,6 +300,16 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     let newQualified = try await service.prepareNote(typed("Pathbox/Exactfoo\n\nbody"), newNote: true, calendar: calendar)
     try require(newQualified.destination.url == vault.root.appendingPathComponent("Pathbox/Exactfoo 2.md") && newQualified.createsNote == true,
                 "Save as New Note on an existing qualified path must number the leaf")
+    // Reservations compare case-insensitively (APFS).
+    let caseFirst = try await service.prepareNote(typed("Casefoo\n\nbody"), calendar: calendar)
+    let caseSecond = try await service.prepareNote(typed("casefoo\n\nmore"), calendar: calendar)
+    try require(caseFirst.createsNote == true && caseSecond.destination.url == caseFirst.destination.url && caseSecond.createsNote == nil,
+                "a differently-cased name must append to the reserved note")
+    let caseNew = try await service.prepareNote(typed("casefoo\n\nmore"), newNote: true, calendar: calendar)
+    try require(caseNew.destination.url.lastPathComponent.lowercased() == "casefoo 2.md" && caseNew.createsNote == true,
+                "Save as New Note on a differently-cased reserved name must take a suffix")
+    let rCase = try resolver("casefoo")
+    try require(rCase?.url == caseFirst.destination.url, "resolver: case-insensitive reservation")
     // Generated timestamp titles never match, so the second in the same minute is suffixed.
     let stampFirst = try await service.prepareNote(typed("\n\n"), calendar: calendar)
     let stampSecond = try await service.prepareNote(typed("\n\n"), calendar: calendar)

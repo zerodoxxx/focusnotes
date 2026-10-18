@@ -33,7 +33,13 @@ final class ReservedNoteURLs: @unchecked Sendable {
     private var urls = Set<URL>()
 
     var snapshot: Set<URL> { lock.lock(); defer { lock.unlock() }; return urls }
-    func contains(_ url: URL) -> Bool { snapshot.contains(url) }
+    func contains(_ url: URL) -> Bool { Self.match(url, in: snapshot) != nil }
+    /// The reserved URL naming the same file as `url`; APFS is case-insensitive, so compare folded paths.
+    static func match(_ url: URL, in urls: Set<URL>) -> URL? {
+        func key(_ u: URL) -> String { u.standardizedFileURL.path.lowercased() }
+        let wanted = key(url)
+        return urls.sorted { $0.path < $1.path }.first { key($0) == wanted }
+    }
     func insert(_ url: URL) { lock.lock(); urls.insert(url); lock.unlock() }
     func remove(_ url: URL) { lock.lock(); urls.remove(url); lock.unlock() }
 }
@@ -166,8 +172,11 @@ public actor CaptureService {
             return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
         }
         let location = try vault.resolveNoteName(pathName)
-        guard FileManager.default.fileExists(atPath: location.url.path) || reserved.contains(location.url) else { return nil }
-        return Destination(url: location.url, title: note.title, kind: .note)
+        if FileManager.default.fileExists(atPath: location.url.path) {
+            return Destination(url: location.url, title: note.title, kind: .note)
+        }
+        guard let held = ReservedNoteURLs.match(location.url, in: reserved) else { return nil }
+        return Destination(url: held, title: note.title, kind: .note)
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying

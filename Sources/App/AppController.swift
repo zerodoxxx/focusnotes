@@ -844,13 +844,15 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     existingTitleForText: { text in
+                        // A session or Browse destination takes precedence over typed-name matching, as in prepareNote.
+                        guard sessionDestination == nil, state.destination == nil else { return nil }
                         let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
                         return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue { controller in
                             do { _ = try await save(text, controller: controller, newNote: true) }
-                            catch { controller.report(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
@@ -859,7 +861,6 @@ final class AppController: NSObject, NSMenuDelegate {
                     guard !controller.isTerminating, let state else { return }
                     state.suggestions = list
                     editor?.refreshBrowseItems()
-                    editor?.refreshTitle()
                 }
             } catch { controller.report(error, title: "Couldn't restore draft") }
         }
@@ -884,14 +885,23 @@ final class AppController: NSObject, NSMenuDelegate {
         _ = try await processedCommit?.value
         let pipeline = pipeline
         var retry: Task<CaptureJob, Error>?
-        for candidate in Array(preparedJobs.values) {
+        var superseded: [UUID: UUID] = [:]
+        for (key, candidate) in Array(preparedJobs) {
             guard let job = try? await candidate.value else { continue }
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
                 if destination == nil || job.prepared.destination == destination {
-                    if newNote && job.prepared.createsNote != true { continue }
+                    if newNote && job.prepared.createsNote != true {
+                        superseded[key] = job.prepared.capture.id
+                        continue
+                    }
                     retry = candidate; break
                 }
             }
+        }
+        // Save as New Note replaces an earlier unsaved append of the same draft; drop it so a retry or replay can't also append.
+        for (key, id) in superseded {
+            preparedJobs.removeValue(forKey: key)
+            try? await pipeline.journal.remove(id: id)
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
