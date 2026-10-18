@@ -95,7 +95,12 @@ An unprefixed valid slash-separated name always means a folder path, so names su
 slash forms with a trailing/repeated separator or whitespace next to a slash fall back to a
 flat filename. Leading-slash HOME paths keep strict validation.
 If the external-note registry is damaged, unsupported, or unsafe, it is preserved and external
-notes are paused with a warning; notes in the vault remain available.
+notes are paused with a warning. Registry-dependent note listing, indexing, and capture routing
+pause until recovery; local Markdown files remain intact.
+
+Session names use the same slash convention inside `Sessions/`: a valid name such as
+`archive/Standup` creates or resumes a nested session note. Relative malformed slash forms, such
+as `pros / cons` or `TODO/`, use the cleaned flat session-name matching flow instead.
 
 Timestamps and source details are stored in HTML comments, so the visible text stays clean:
 
