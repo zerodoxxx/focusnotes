@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-20 (previous commit: `6ecc870`)
+Last Updated: 2026-10-20 (previous commit: `82f3696`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -225,11 +225,12 @@ and include the [public repository](https://github.com/zerodoxxx/focusnotes), [`
 details and source-build route in the [README](../README.md#windows-support) and
 [contributing guide](../CONTRIBUTING.md#windows). See the [eligibility terms](https://signpath.org/terms).
 
-If accepted, enable MFA for GitHub and SignPath, assign author, reviewer and signing-approver roles, and require manual
-approval for every release signing request. Only after Foundation approval, add its required “Free code signing
-provided by SignPath.io, certificate by SignPath Foundation” attribution and team/privacy details to the project home
-page and Windows download/release page; do not claim sponsorship before acceptance. The
-[Foundation terms](https://signpath.org/terms) specify the policy content.
+Before applying, enable MFA for GitHub and SignPath, define author, reviewer and signing-approver roles with their
+members, and publish a “Code signing policy” with team and privacy details on the project home page and Windows
+download page. State that signing enrollment is pending; do not imply SignPath Foundation sponsorship. If accepted,
+add this required attribution to those pages before distributing signed builds: “Free code signing provided by
+SignPath.io, certificate by SignPath Foundation”. Require manual approval for each release signing request. See the
+[Foundation terms](https://signpath.org/terms) for the policy requirements.
 
 Foundation signing uses SignPath's GitHub trusted-build integration: configure the GitHub trusted build system, run
 the OSS signing build on GitHub-hosted agents, upload the unsigned artifact to GitHub Actions, then submit that artifact
