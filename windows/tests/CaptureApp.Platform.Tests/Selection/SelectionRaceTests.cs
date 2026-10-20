@@ -47,29 +47,48 @@ public sealed class SelectionRaceTests
         await using var other = await HelperTarget.StartAsync();
         // Start from a known, live-owned plain clipboard (earlier tests leave arbitrary owners/formats behind).
         await target.CommandAsync("seed");
-        await target.FocusAsync();
         var token = TestContext.Current.CancellationToken;
         var services = new InstrumentedServices();
-        var readinessDeadline = Stopwatch.StartNew();
-        FieldSafety? lastSafety = null;
-        var frontmost = false;
-        while (readinessDeadline.Elapsed < TimeSpan.FromSeconds(5))
+        var hookObserved = false;
+        services.Hook = async point =>
         {
-            frontmost = services.IsFrontmost(target.Context);
-            if (frontmost)
+            if (point.ToString() == checkpoint)
             {
-                lastSafety = (await services.ReadUiaAsync(target.Context.ProcessIdentifier, selection: false, token)).Safety;
-                frontmost = services.IsFrontmost(target.Context);
-                if (lastSafety == FieldSafety.Safe && frontmost) break;
+                hookObserved = true;
+                await other.FocusAsync();
             }
-            await Task.Delay(20, token);
-        }
-        Assert.True(lastSafety == FieldSafety.Safe && frontmost,
-            $"Target UIA readiness did not settle within {readinessDeadline.Elapsed.TotalMilliseconds:F0} ms (last safety={lastSafety?.ToString() ?? "not read"}, foreground={frontmost}).");
+        };
 
-        services.Hook = async point => { if (point.ToString() == checkpoint) await other.FocusAsync(); };
-        var result = await new SelectionReader(services).ReadAsync(true, target.Context, token);
-        Assert.True(result.Failure == SelectionFailure.TargetChanged, $"{result.Failure} at {result.Detail}");
+        SelectionResult? result = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await target.FocusAsync();
+            var readinessDeadline = Stopwatch.StartNew();
+            FieldSafety? lastSafety = null;
+            var frontmost = false;
+            while (readinessDeadline.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                frontmost = services.IsFrontmost(target.Context);
+                if (frontmost)
+                {
+                    lastSafety = (await services.ReadUiaAsync(target.Context.ProcessIdentifier, selection: false, token)).Safety;
+                    frontmost = services.IsFrontmost(target.Context);
+                    if (lastSafety == FieldSafety.Safe && frontmost) break;
+                }
+                await Task.Delay(20, token);
+            }
+            Assert.True(lastSafety == FieldSafety.Safe && frontmost,
+                $"Target UIA readiness did not settle within {readinessDeadline.Elapsed.TotalMilliseconds:F0} ms (last safety={lastSafety?.ToString() ?? "not read"}, foreground={frontmost}).");
+
+            result = await new SelectionReader(services).ReadAsync(true, target.Context, token);
+            if (result.Failure != SelectionFailure.SelectionUndetermined || result.Detail != "G3 entry" || hookObserved) break;
+            Assert.Equal(0, services.Injections);
+            if (!services.IsFrontmost(target.Context)) break;
+            if (attempt < 2) await Task.Delay(100, token);
+        }
+
+        Assert.True(hookObserved, $"Focus-switch hook {checkpoint} was not reached ({result?.Failure} at {result?.Detail}).");
+        Assert.True(result?.Failure == SelectionFailure.TargetChanged, $"{result?.Failure} at {result?.Detail}");
         Assert.Equal(0, services.Injections);
         Assert.Equal(0, (await target.CommandAsync("mode", "normal")).Copies);
     }
