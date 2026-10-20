@@ -1,8 +1,8 @@
 # Contributing
 
-Last Updated: 2026-10-20 (previous commit: `2b07a2ab0371238e6a1d0ccf33aaed67dbb34512`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
-Thanks for considering a contribution to focusnotes. The project targets macOS 14 or later and uses Swift 6.4. For substantial changes, open a GitHub issue first to agree on scope.
+Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
 ## Before submitting
 
@@ -38,7 +38,7 @@ In a pull request, describe the behavior changed, the checks you ran, and any ma
 
 ## Windows
 
-The Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). It is in development and unreleased. Build and test from `windows/`:
+The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). Windows installers are not part of the currently published releases. Build and test from `windows/`:
 
 ```sh
 cd windows

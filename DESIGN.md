@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-19 (previous commit: `cbf3858d0a6c2d59746e12585f35b8be965f4b7b`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 ## Product surfaces
 
@@ -62,7 +62,7 @@ The quick note adjusts its height to content and screen height, and its Browse c
 
 ## Windows edition
 
-The Windows edition (in development, not yet released) keeps the Mac product surfaces above and changes only what the platform forces or what a new first-launch flow needs. Its user-visible strings come from one table, with the Mac's wording and these maps: Ctrl for ⌘, "File Explorer" for "Finder", "tray icon" for "menu bar icon", Setup for Permissions, and the user's current shortcut in place of the Mac's ⌥⇧ hints. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs))
+The implemented Windows edition keeps the Mac product surfaces above and changes only what the platform forces or what a new first-launch flow needs. Windows installers are not part of the currently published releases. Its user-visible strings come from one table, with the Mac's wording and these maps: Ctrl for ⌘, "File Explorer" for "Finder", "tray icon" for "menu bar icon", Setup for Permissions, and the user's current shortcut in place of the Mac's ⌥⇧ hints. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs))
 
 ### Tray menu
 

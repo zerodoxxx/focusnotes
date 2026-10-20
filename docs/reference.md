@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-19 (previous commit: `cbf3858d0a6c2d59746e12585f35b8be965f4b7b`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -129,7 +129,7 @@ newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQL
 
 ## Windows differences
 
-The Windows edition (in development, not yet released) writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. This section lists where behaviour differs. Everything above applies unless stated here.
+The implemented Windows edition writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. Windows installers are not part of the currently published releases. This section lists where behaviour differs. Everything above applies unless stated here.
 
 - **Keys.** Ctrl replaces ⌘ in the quick note (Ctrl+Enter saves, Ctrl+K Actions, Ctrl+P Browse, Ctrl+N new, Ctrl+O open as note, Ctrl+Shift+P pin, Ctrl+Shift+C copy Markdown, Ctrl+Shift+Backspace discard) and Alt+Enter replaces ⌥↩ ("Show in File Explorer"). The global shortcuts default to Ctrl+Alt+Shift plus Q, G, F, A, W, H and E (selection, area, search, session, write, subheading, notes folder) and can be rebound in Settings.
 - **Paths.** The vault defaults to `Documents\focusnotes` and app state to `%LocalAppData%\com.zerodoxxx.focusnotes`. In a note name, `/` and `\` both separate folders, and a leading `/` resolves from `%USERPROFILE%` instead of the home folder. External-note registry entries are stored `/`-separated and home-relative, as on the Mac. A path that crosses a symbolic link, junction or other reparse point is rejected where the Mac rejects symlinks. Paths longer than 260 characters work.

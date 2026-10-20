@@ -1,5 +1,7 @@
 # Release review checklist
 
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
 until the open items below are closed.
@@ -96,11 +98,11 @@ results above do not replace them. See [releasing.md](releasing.md).
   `Sources/EmbedChecks/requirements-reference.txt` (fixture-recorded versions;
   numpy bounded).
 
-## Windows edition (not yet released)
+## Windows distribution status
 
-The Windows edition is in development and nothing here is closed. Do not publish any Windows file, or describe the
-edition as released, until every item is checked. Mac items above are unaffected. See
-[releasing.md](releasing.md#windows-release-prerequisites) for the setup behind these items.
+The Windows edition is implemented, but Windows installers are not part of the currently published releases.
+Nothing here is closed; do not attach Windows files to a release until every item below is checked. macOS items above
+are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the setup behind these items.
 
 - [ ] Code signing: a SignPath (or fallback) certificate chains to a Trusted Root Program CA; `SIGNPATH_API_TOKEN`,
   `WINDOWS_SIGN_TEMPLATE` and the repository variable `WINDOWS_SIGNER_THUMBPRINTS` are set.
@@ -117,8 +119,8 @@ edition as released, until every item is checked. Mac items above are unaffected
 - [ ] Deviations DV1-DV11, OCR languages not covered by the bundled models, and any exception to the measured focus,
   OCR and resource gates are signed off by the maintainer.
 - [ ] `THIRD_PARTY_NOTICES.md` lists every shipped Windows component at its shipped version.
-- [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, and the "not yet released"
-  markers are removed in the same change that publishes it.
+- [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, and their release-availability
+  statements are updated in the same change that publishes Windows installers.
 
 ## Review limits
 

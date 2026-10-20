@@ -1,5 +1,7 @@
 # Releasing focusnotes
 
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
 notarization, so users approve the first launch once in System Settings. What
@@ -187,11 +189,13 @@ existing users are offered the update.
 
 ## Windows release prerequisites
 
-The Windows edition is in development and has never been released. The Mac release above is unchanged and does not
-wait on any of this. Windows files are attached to a release only when every item below exists; until then the
-`windows-gate` job in `release.yml` reports that Windows assets are skipped, and the Mac release proceeds as before.
-Unsigned Windows builds exist only as short-lived CI workflow artifacts and are never attached to a release or served
-by the updater.
+The Windows edition is implemented, but Windows installers are not part of the currently published releases. The
+public [v0.1.1](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1) and
+[v0.1.0](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.0) releases contain macOS DMGs and checksums,
+with no Windows assets. The macOS release above is unchanged and does not wait on Windows prerequisites. Windows
+files are attached only when every prerequisite below is configured; otherwise `windows-gate` skips those assets and
+the macOS release proceeds. Unsigned Windows builds exist only as short-lived CI workflow artifacts and are never
+attached to a release or served by the updater.
 
 Setting up these prerequisites is a maintainer task; agents never handle the secrets.
 

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Last Updated: 2026-10-19 (previous commit: `cbf3858d0a6c2d59746e12585f35b8be965f4b7b`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 This file records third-party components included in the source tree or
 shipped with the app, and models obtained by the optional semantic-search
@@ -73,7 +73,7 @@ MIT license. The pinned model card also refers deployers to the
 
 ## Windows edition components
 
-The Windows edition (in development, not yet released) is built from the NuGet packages below at the versions pinned
+The implemented Windows edition is built from the NuGet packages below at the versions pinned
 in `windows/Directory.Packages.props` and the committed `packages.lock.json` files; licenses were read from each
 package's metadata (`.nuspec`). Each package keeps its own license, and the shipped installer includes the upstream
 license files the packages carry. The app is published self-contained, so the .NET runtime and Windows Presentation

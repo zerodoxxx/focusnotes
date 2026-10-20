@@ -1,10 +1,12 @@
 # FocusNotes Architecture
 
-Last Updated: 2026-10-20 (previous commit: `14c477b12626a904aee9458e694fbba8dd7c2889`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 ## Runtime and package boundaries
 
-This document describes the macOS app; the Windows edition under `windows/` is covered in [Windows edition](#windows-edition).
+This document describes both native FocusNotes editions. The package boundaries below cover macOS; the implemented
+Windows edition under `windows/` is covered in [Windows edition](#windows-edition). Windows installers are not part
+of the currently published releases.
 
 FocusNotes is a Swift Package Manager application for macOS 14 or later, built with Swift tools 6.4 and Swift language mode 6; its `App` executable starts `NSApplication` with accessory activation policy. ([Package.swift](Package.swift#L1-L6), [Package.swift](Package.swift#L49-L50), [Package.swift](Package.swift#L54), [Sources/App/main.swift](Sources/App/main.swift#L6-L8))
 
@@ -98,7 +100,7 @@ For a non-empty search query, the app requests keyword and semantic results conc
 
 ## Windows edition
 
-The Windows edition is a separate C# codebase under `windows/` (.NET 10 with WPF) that reuses the Mac app's behaviour, not its code. It is in development and unreleased; the Mac sections above are unchanged by it. The solution builds with warnings as errors, nullable references, and locked NuGet restore; `Directory.Build.props` reads the app name, bundle prefix, version, repository and Windows update keys from `Config/app.env`, so those still live only there. ([windows/CaptureApp.sln](windows/CaptureApp.sln), [windows/Directory.Build.props](windows/Directory.Build.props), [windows/Directory.Packages.props](windows/Directory.Packages.props), [windows/global.json](windows/global.json), [Config/app.env](Config/app.env))
+The Windows edition is a separate, implemented C# codebase under `windows/` (.NET 10 with WPF) that reuses the Mac app's behaviour, not its code. It supports Windows 10 22H2 and Windows 11 on x64 and arm64; Windows installers are not part of the currently published releases. The Mac sections above are unchanged by it. The solution builds with warnings as errors, nullable references, and locked NuGet restore; `Directory.Build.props` reads the app name, bundle prefix, version, repository and Windows update keys from `Config/app.env`, so those still live only there. ([windows/CaptureApp.sln](windows/CaptureApp.sln), [windows/Directory.Build.props](windows/Directory.Build.props), [windows/Directory.Packages.props](windows/Directory.Packages.props), [windows/global.json](windows/global.json), [Config/app.env](Config/app.env))
 
 | Project | Responsibility |
 | --- | --- |

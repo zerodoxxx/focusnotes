@@ -8,7 +8,7 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Added
 
-- Windows edition, in development and not distributed: a tray app for Windows 10 22H2 and Windows 11 (x64 and arm64) with the same capture, quick note, session and search features, Windows default shortcuts with rebinding, a first-launch Setup, bundled offline OCR, optional semantic search, and Velopack installs with signed-index updates. No Windows build is released until signing is in place; the Mac app is unchanged.
+- Implemented Windows edition: a tray app for Windows 10 22H2 and Windows 11 (x64 and arm64) with the same capture, quick note, session and search features, Windows default shortcuts with rebinding, a first-launch Setup, bundled offline OCR, optional semantic search, and Velopack installs with signed-index updates. Windows installers are not part of the currently published releases; the Mac app is unchanged.
 - Shared conformance fixtures (`conformance/`) that both the Swift reference and the Windows port must pass; regenerate with `swift run CoreChecks --write-conformance`.
 
 ## [0.1.0] - Unreleased

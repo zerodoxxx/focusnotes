@@ -214,10 +214,11 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    click-away and Space changes. Opening another focusnotes panel, save, esc/✕, Open as Note and
    app quit still close the note.
 
-# Windows edition (not yet released)
+# Windows release device checks
 
-These are the device checks the automated Windows runners cannot cover. Nothing counts toward a release until every
-section passes on all three targets (Windows 11 arm64, Windows 11 x64, Windows 10 22H2 x64). Automated tests tagged
+The Windows edition is implemented, but these device checks are still required before publishing Windows installers.
+The automated Windows runners cannot cover them. Nothing counts toward a release until every section passes on all
+three targets (Windows 11 arm64, Windows 11 x64, Windows 10 22H2 x64). Automated tests tagged
 `Needs=InteractiveDesktop` (set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`, then `dotnet test --filter "Needs=InteractiveDesktop"`) are part of 11a and 11b. Record the
 target, build and result for each item.
 
@@ -311,4 +312,4 @@ captures.
 The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
 
-Last Updated: 2026-10-19 (previous commit: `52caca612ad76a60be44ed72dbf03ca12491dccc`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)

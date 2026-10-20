@@ -2,12 +2,13 @@
 
 **Take notes without breaking focus.**
 
-focusnotes is a small macOS menu-bar app for capturing what you're reading or thinking without leaving the app you're
-in. Select text and press a shortcut, drag over part of the screen, or jot a quick note in a floating panel. Your
-window keeps focus the whole time, and everything lands in plain Markdown files you own.
+focusnotes is a small native app for capturing what you're reading or thinking without leaving the app you're in.
+The macOS edition runs from the menu bar; select text and press a shortcut, drag over part of the screen, or jot a
+quick note in a floating panel. Everything lands in plain Markdown files you own.
 
-> **Platforms.** focusnotes ships for macOS today. A native Windows edition is in development and not yet released;
-> see [Windows](#windows-in-development-not-yet-released). Everything outside that section describes the Mac app.
+> **Platforms.** FocusNotes supports macOS and Windows. The Windows edition is implemented in this branch, but
+> Windows installers are not part of the published releases yet; see [Windows support](#windows-support). The
+> product details, shortcuts and install steps below describe the macOS edition and currently published macOS build.
 
 ## Features
 
@@ -125,7 +126,7 @@ defaults write com.zerodoxxx.focusnotes vaultPath "~/Obsidian/Notes"
 App state (drafts, search index, pending saves, models) lives in
 `~/Library/Application Support/com.zerodoxxx.focusnotes`.
 
-## Semantic search
+## Semantic search on macOS
 
 Keyword search works out of the box. For meaning-based search, choose **Enable Semantic Search…** from the menu to
 download the on-device models (about 492 MB, Apple silicon only): EmbeddingGemma (Apache-2.0) from huggingface.co and
@@ -134,7 +135,7 @@ interrupted, and **Semantic Search → Remove Models…** deletes them. See [doc
 
 ## Privacy
 
-Note content, captures and search queries are processed on your Mac and sent nowhere. The app uses the network only
+Note content, captures and search queries are processed on your device and sent nowhere. The app uses the network only
 to download the optional semantic models and to check for and download updates.
 
 ## Uninstall
@@ -149,12 +150,12 @@ tccutil reset ScreenCapture com.zerodoxxx.focusnotes
 
 Your notes stay in your notes folder.
 
-## Windows (in development, not yet released)
+## Windows support
 
-A native Windows edition (C# on .NET 10 with WPF) lives in [`windows/`](windows/). **No Windows build is distributed
-yet:** releases carry no Windows files and the update feed serves none. Code signing is pending, and no unsigned
-build will be published. Until a signed release exists, the details below describe what the code does, not something
-you can install.
+A native Windows edition (C# on .NET 10 with WPF) lives in [`windows/`](windows/). It implements the FocusNotes
+features on Windows 10 22H2 and Windows 11, for x64 and arm64. Windows installers are not included in the currently
+published [releases](https://github.com/zerodoxxx/focusnotes/releases); use the [Windows build instructions](CONTRIBUTING.md#windows)
+to build from source. Any Windows installers published in the future will be signed.
 
 - **Targets.** Windows 10 22H2 and Windows 11, on x64 and arm64. Each architecture gets its own installer and
   update channel.
@@ -212,7 +213,7 @@ removes only the installed app; your notes and app state stay.
 
 ## Build from source
 
-This section covers the Mac app; Windows build commands are in [CONTRIBUTING.md](CONTRIBUTING.md#windows).
+This section covers the macOS app; Windows build commands are in [CONTRIBUTING.md](CONTRIBUTING.md#windows).
 
 Requirements: macOS 14+, a Swift 6.4 toolchain (current Xcode or Command Line Tools), and Python 3. Semantic search
 needs Apple silicon.
