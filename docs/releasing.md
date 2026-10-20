@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-20 (previous commit: `5d74f81`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -119,9 +119,9 @@ that no release exists for it. If a release exists or GitHub cannot confirm its
 state, the workflow leaves the release and tag untouched; inspect and resolve
 that state before retrying. `BUILD` always goes up.
 
-This repository already has a tag and empty release for `v0.1.1`, so that
-version cannot be reused. Choose an unused version such as `0.1.2` for the next
-release.
+The published [v0.1.1 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1)
+already uses that version, so it cannot be reused. Choose an unused version
+such as `0.1.2` for the next release.
 
 The workflow writes only to a release branch and opens a PR; the version commit
 reaches the default branch through the usual review and merge process. Its
