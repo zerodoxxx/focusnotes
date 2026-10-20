@@ -1,6 +1,6 @@
 # FocusNotes Architecture
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-20 (previous commit: `a18015f`)
 
 ## Runtime and package boundaries
 
@@ -153,6 +153,8 @@ Velopack checks package hashes but not who published them, so the release job al
 `windows/scripts/signing-inventory.ps1` lists every PE file in the installed layout and in each shipped installer artifact and classifies it as ours and signed by a pinned certificate thumbprint (`WINDOWS_SIGNER_THUMBPRINTS`), vendor-signed, or an unmodified upstream binary on a hash allow-list; with `-Enforce` anything else fails the run. ([windows/scripts/signing-inventory.ps1](windows/scripts/signing-inventory.ps1), [windows/scripts/upstream-allowlist.json](windows/scripts/upstream-allowlist.json))
 
 ### Continuous integration
+
+The `checks.yml` workflow runs on demand: use Actions → checks → Run workflow or `gh workflow run checks.yml --ref <branch>` to check any branch. To run required CI for a pull request, add the `run-ci` label (for example, `gh pr edit 123 --add-label run-ci`); dispatching against a PR branch does not satisfy the branch ruleset's required `build` and `smoke-macos-15` checks. After pushing a new commit, remove and re-add `run-ci` to start a fresh run; keeping the label on the PR does not run CI on pushes. Other label changes do not start the CI jobs.
 
 | Workflow job | What it does |
 | --- | --- |
