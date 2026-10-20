@@ -1,20 +1,21 @@
 name: checks
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.ref }}
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event.label.id || 'manual' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    name: ${{ github.event_name == 'pull_request' && github.event.label.name != 'run-ci' && 'build (run-ci label required)' || 'build' }}
     # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
     runs-on: xcode-27
     steps:
@@ -63,6 +64,8 @@ jobs:
           retention-days: 14
 
   smoke-macos-15:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    name: ${{ github.event_name == 'pull_request' && github.event.label.name != 'run-ci' && 'smoke-macos-15 (run-ci label required)' || 'smoke-macos-15' }}
     needs: build
     runs-on: macos-15
     steps:
@@ -94,6 +97,7 @@ jobs:
           hdiutil detach "$MNT" -force || true
 
   windows:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
     defaults:
       run:
         working-directory: windows
@@ -202,6 +206,7 @@ jobs:
           if-no-files-found: warn
 
   windows-package:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
     # Packs two CI versions per architecture, then proves install, signed-index update and tamper refusal.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
