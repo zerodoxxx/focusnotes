@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-20 (previous commit: `5d74f81`)
+Last Updated: 2026-10-20 (previous commit: `6ecc870`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -210,6 +210,36 @@ Setting up these prerequisites is a maintainer task; agents never handle the sec
 The gate enables Windows assets only when `SIGNPATH_API_TOKEN` and `WINDOWS_SIGN_TEMPLATE` are both set. If they are
 set but `WINDOWS_UPDATE_ED_KEYS` is empty or `WINDOWS_UPDATE_ED_KEY_1` is missing, the release run fails rather than
 shipping Windows files that cannot be updated.
+
+### Applying for SignPath Foundation signing
+
+SignPath Foundation offers a free OSS subscription, but approval is discretionary. Its published requirements include
+an OSI-approved license without commercial dual licensing, no proprietary components, active maintenance, documented
+platform functionality, and an existing release in the form to be signed. The terms set no numeric project-age, star,
+or download threshold; downloadable executables still need verifiable project reputation. FocusNotes has public macOS
+releases but no Windows release, so ask the Foundation whether it can assess a Windows candidate before its first
+public release; the published terms do not guarantee an exception. Apply at [SignPath Foundation](https://signpath.org/apply)
+and include the [public repository](https://github.com/zerodoxxx/focusnotes), [`LICENSE`](../LICENSE),
+[third-party notices](../THIRD_PARTY_NOTICES.md), [published releases](https://github.com/zerodoxxx/focusnotes/releases),
+[Windows CI workflow](https://github.com/zerodoxxx/focusnotes/actions/workflows/checks.yml), and the Windows edition
+details and source-build route in the [README](../README.md#windows-support) and
+[contributing guide](../CONTRIBUTING.md#windows). See the [eligibility terms](https://signpath.org/terms).
+
+If accepted, enable MFA for GitHub and SignPath, assign author, reviewer and signing-approver roles, and require manual
+approval for every release signing request. Only after Foundation approval, add its required “Free code signing
+provided by SignPath.io, certificate by SignPath Foundation” attribution and team/privacy details to the project home
+page and Windows download/release page; do not claim sponsorship before acceptance. The
+[Foundation terms](https://signpath.org/terms) specify the policy content.
+
+Foundation signing uses SignPath's GitHub trusted-build integration: configure the GitHub trusted build system, run
+the OSS signing build on GitHub-hosted agents, upload the unsigned artifact to GitHub Actions, then submit that artifact
+through SignPath's action and retrieve the signed output. The action needs the SignPath organization, project and
+signing-policy identifiers plus a token with submitter permission. Enable origin verification and review the repo,
+branch, commit and job metadata. The current VPK
+`--signTemplate` path in [`pack.ps1`](../windows/scripts/pack.ps1) has not been established as this Foundation-approved
+integration, so adapt and verify the workflow after a project and signing policy are approved. Follow the official
+[GitHub integration](https://docs.signpath.io/trusted-build-systems/github) and [origin verification](https://docs.signpath.io/origin-verification/)
+guides. The Windows Ed25519 update-index keys above are separate from Authenticode code signing.
 
 ### Windows update keys (K1 and K2)
 
