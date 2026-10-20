@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AvalonEdit" />
+    <InternalsVisibleTo Include="CaptureApp.Gallery" />
   </ItemGroup>
 </Project>

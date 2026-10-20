@@ -12,10 +12,12 @@ public sealed class ThemeManager : IDisposable
 {
     private readonly ResourceDictionary resources;
     private readonly System.Windows.Threading.Dispatcher dispatcher;
+    private readonly bool? darkOverride;
     private bool disposed;
-    public ThemeManager(ResourceDictionary resources)
+    public ThemeManager(ResourceDictionary resources, bool? darkOverride = null)
     {
         this.resources = resources;
+        this.darkOverride = darkOverride;
         dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
         resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CaptureApp.Overlay;component/Tokens.xaml", UriKind.Relative) });
         Apply();
@@ -26,7 +28,7 @@ public sealed class ThemeManager : IDisposable
     public void Apply(bool? dark = null, bool? highContrast = null)
     {
         var dictionary = resources.MergedDictionaries[0];
-        var isDark = dark ?? Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is 0;
+        var isDark = dark ?? darkOverride ?? Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is 0;
         dictionary.MergedDictionaries.Clear();
         dictionary.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri($"/CaptureApp.Overlay;component/Tokens.{(isDark ? "Dark" : "Light")}.xaml", UriKind.Relative) });
         try
@@ -44,12 +46,22 @@ public sealed class ThemeManager : IDisposable
             dictionary["MenuSelectedFill"] = SystemColors.HighlightBrush;
             dictionary["SelectedText"] = SystemColors.HighlightTextBrush;
             dictionary["SelectedSecondary"] = SystemColors.HighlightTextBrush;
+            if (darkOverride is true)
+            {
+                dictionary["EditorLink"] = SystemColors.HotTrackBrush;
+                dictionary["EditorCheckboxCheck"] = SystemColors.WindowBrush;
+            }
             dictionary["SurfaceShadow"] = null!;
         }
         else
         {
             // Remove previous high-contrast overrides, leaving the palette dictionaries authoritative.
             foreach (var key in new[] { "SurfaceTint", "CardFill", "HintFill", "QuickClusterFill", "CodeBackground", "QuickButtonHoverFill", "QuickButtonPressedFill", "TextPrimary", "Secondary", "Tertiary", "SurfaceBorder", "CardBorder", "Separator", "KeycapBoxBorder", "QuickClusterBorder", "BrandAccent", "Warning", "Session", "MenuSelectedFill", "SelectedText", "SelectedSecondary" }) dictionary.Remove(key);
+            if (darkOverride is true)
+            {
+                dictionary.Remove("EditorLink");
+                dictionary.Remove("EditorCheckboxCheck");
+            }
             dictionary["SurfaceShadow"] = new DropShadowEffect { BlurRadius = Tokens.ShadowBlur, ShadowDepth = Tokens.ShadowDepth, Direction = Tokens.ShadowDirection, Opacity = Tokens.ShadowOpacity, Color = ((SolidColorBrush)dictionary["Shadow"]).Color };
         }
     }

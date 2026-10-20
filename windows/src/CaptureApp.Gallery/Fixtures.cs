@@ -87,7 +87,7 @@ internal static class Fixtures
             Require(Math.Abs(v.Width - Tokens.QuickMinWidth) < Tokens.LayoutTolerance, "quick-empty: minimum width");
             Require(Math.Abs(v.Height - Math.Ceiling(bands + v.EditorLineHeight * Tokens.EditorMinLines)) < Tokens.LayoutTolerance, "quick-empty: two-line minimum height");
         });
-        yield return Quick("quick-empty-hover", "", v => v.SetRevealed(true, false));
+        yield return Quick("quick-empty-hover", "", v => { v.SetRevealed(true, false); v.Editor.ShowCaretForGallery = true; });
         yield return Quick("quick-hover-pinned", "Trip planning\nBook the train for Friday", v => v.SetRevealed(true, false), destination: "System Design", pinned: true, restored: true);
         yield return Quick("quick-markdown", MarkdownSample, verify: v =>
         {
@@ -101,8 +101,28 @@ internal static class Fixtures
             Require(v.Editor.IsSyntaxRevealed(5) && !v.Editor.IsSyntaxRevealed(1), "quick-caret-line: only the caret line shows syntax");
         });
         yield return Quick("quick-tasks", TaskSample, verify: v => Require(v.Editor.RenderedCheckboxes == 2, "quick-tasks: both checkboxes render"));
-        yield return Quick("quick-tasks-caret", TaskSample, v => v.Editor.CaretOffset = 3, v =>
-            Require(v.Editor.RenderedCheckboxes == 1 && v.Editor.IsSyntaxRevealed(1), "quick-tasks-caret: the caret line shows its raw task marker"));
+        yield return Quick("quick-tasks-caret", "- [ ] first task\n- [ ] keep typing", v => v.Editor.ShowCaretForGallery = true, v =>
+        {
+            Require(v.Editor.RenderedCheckboxes == 2 && v.Editor.IsSyntaxRevealed(2), "quick-tasks-caret: the task being typed retains its checkbox");
+            Require(v.Editor.CaretOffset == v.Editor.TextLength, "quick-tasks-caret: caret remains after the editable task text");
+        });
+        yield return Quick("quick-tasks-checked-caret", TaskSample, v =>
+        {
+            v.Editor.CaretOffset = v.Editor.LineStart(2) + "- [x] ship the build".Length;
+            v.Editor.ShowCaretForGallery = true;
+        }, v => Require(v.Editor.RenderedCheckboxes == 2 && v.Editor.IsSyntaxRevealed(2), "quick-tasks-checked-caret: a checked task remains a checkbox while editing"));
+        yield return Quick("quick-caret-preview", TaskSample, v =>
+        {
+            v.Editor.CaretOffset = v.Editor.LineStart(3) + 5;
+            v.Editor.ShowCaretForGallery = true;
+        }, v =>
+        {
+            Require(v.Editor.RenderedCheckboxes == 2, "quick-caret-preview: inactive task markers retain checkbox rendering");
+            Require(v.Editor.CaretBoundsForGallery is { } caret && Math.Abs(caret.Height - Tokens.EditorFontSize * Tokens.EditorCaretHeightFactor) < Tokens.LayoutTolerance,
+                "quick-caret-preview: caret follows font metrics");
+            Require(v.Editor.CheckboxExpectedBoundsForGallery.Count == 2,
+                "quick-caret-preview: text baselines provide both checkbox target bounds");
+        });
         yield return Quick("quick-wide", new string('w', 160) + " " + new string('w', 40), verify: v =>
             Require(Math.Abs(v.Width - Tokens.QuickMaxWidth) < Tokens.LayoutTolerance, "quick-wide: width caps at the maximum"));
         var longText = string.Join("\n", Enumerable.Range(1, 80).Select(i => "Line " + i));

@@ -136,7 +136,7 @@ The release script:
   (in tag mode it requires the local tag to point at `HEAD` instead);
 - unlocks the signing keychain;
 - runs all checks (`CoreChecks`, `CaptureChecks`, `OverlayGallery --check`,
-  `check-name.sh`, `ModelInstallChecks`, `EmbedChecks`). `EmbedChecks` must not SKIP;
+  `ModelInstallChecks`, `EmbedChecks`). `EmbedChecks` must not SKIP;
 - builds and signs the app;
 - checks the bundle: `codesign --verify --strict`, the signing Authority,
   arm64 binaries, no local build paths, version and build numbers, bundled

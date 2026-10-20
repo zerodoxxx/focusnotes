@@ -78,6 +78,29 @@ public static class RegionProcessing
                 return null;
             }
         });
+        return await ProcessWithBudgetAsync(png, source, id, createdAt, recognition, registerDeferred, budget).ConfigureAwait(false);
+    }
+
+    // Async recognition is used by the self-test so a blocked OCR simulation does not occupy a thread-pool worker.
+    internal static Task<PendingCapture> ProcessAsync(byte[] png, CaptureSource source, Guid id, DateTimeOffset createdAt,
+        Func<byte[], Task<RegionRecognition?>> recognize, Action<Guid, Task<string?>>? registerDeferred = null,
+        TimeSpan? budget = null, Action<string>? log = null)
+    {
+        var recognition = Task.Run(async () =>
+        {
+            try { return await recognize(png).ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                log?.Invoke($"OCR failed; retaining image: {error.GetType().Name}");
+                return null;
+            }
+        });
+        return ProcessWithBudgetAsync(png, source, id, createdAt, recognition, registerDeferred, budget);
+    }
+
+    private static async Task<PendingCapture> ProcessWithBudgetAsync(byte[] png, CaptureSource source, Guid id, DateTimeOffset createdAt,
+        Task<RegionRecognition?> recognition, Action<Guid, Task<string?>>? registerDeferred, TimeSpan? budget)
+    {
         var winner = await Task.WhenAny(recognition, Task.Delay(budget ?? Budget)).ConfigureAwait(false);
         if (!ReferenceEquals(winner, recognition))
         {

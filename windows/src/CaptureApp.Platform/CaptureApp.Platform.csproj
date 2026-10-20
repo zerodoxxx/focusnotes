@@ -11,6 +11,11 @@
     <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Assets/tray-*.ico"
+             Link="Assets/%(Filename)%(Extension)"
+             TargetPath="Assets/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PkgRapidOcrNet)/models/v5/*.*"
              Link="models/v5/%(Filename)%(Extension)"
              TargetPath="models/v5/%(Filename)%(Extension)"

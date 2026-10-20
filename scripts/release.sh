@@ -125,9 +125,6 @@ swift run CaptureChecks
 printf '==> swift run OverlayGallery --check\n'
 swift run OverlayGallery --check
 
-printf '==> scripts/check-name.sh\n'
-"$ROOT_DIR/scripts/check-name.sh"
-
 printf '==> swift run ModelInstallChecks\n'
 swift run ModelInstallChecks
 

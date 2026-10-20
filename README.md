@@ -240,7 +240,6 @@ swift build                        # build every target
 swift run CoreChecks               # storage, index and Markdown checks
 swift run OverlayGallery --check   # UI behaviour checks for the panels
 swift run OverlayGallery           # render UI snapshots to build/gallery/
-scripts/check-name.sh              # the app name must live only in Config/app.env
 ```
 
 | Target | What it holds |

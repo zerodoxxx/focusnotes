@@ -220,15 +220,31 @@ public sealed class RegionCapturer
     {
         private readonly List<MonitorOverlayWindow> _windows = [];
         private PixelPoint? _anchor;
+        private PixelPoint? _pendingPoint;
+        private TimeSpan? _lastRenderingTime;
+        private Dispatcher? _renderDispatcher;
+        private bool _renderingSubscribed;
         private bool _completed;
         private CancellationTokenRegistration _cancellationRegistration;
 
-        public bool IsSelecting => _anchor is not null;
+        public bool IsSelecting => !_completed && _anchor is not null;
 
         public void SetCancellationRegistration(CancellationTokenRegistration registration) =>
             _cancellationRegistration = registration;
 
         public void Show()
+        {
+            CreateWindows();
+            foreach (var window in _windows)
+            {
+                window.Show();
+            }
+
+            _windows[0].Activate();
+            _windows[0].Focus();
+        }
+
+        private void CreateWindows()
         {
             foreach (var monitor in monitors)
             {
@@ -239,16 +255,10 @@ public sealed class RegionCapturer
                 var image = BitmapSource.Create(monitor.Bounds.Width, monitor.Bounds.Height, 96, 96,
                     PixelFormats.Bgra32, null, pixels, monitor.Bounds.Width * 4);
                 image.Freeze();
-                _windows.Add(new MonitorOverlayWindow(monitor, image, this));
+                var window = new MonitorOverlayWindow(monitor, image, this);
+                window.Closed += OnWindowClosed;
+                _windows.Add(window);
             }
-
-            foreach (var window in _windows)
-            {
-                window.Show();
-            }
-
-            _windows[0].Activate();
-            _windows[0].Focus();
         }
 
         public void Begin(MonitorGeometry monitor, DipPoint point)
@@ -260,13 +270,19 @@ public sealed class RegionCapturer
 
             _anchor = RegionGeometry.DipToPixel(point, monitor);
             Update(_anchor.Value);
+            _renderDispatcher = Dispatcher.CurrentDispatcher;
+            _renderDispatcher.ShutdownStarted += OnDispatcherShutdown;
+            CompositionTarget.Rendering += OnRendering;
+            _renderingSubscribed = true;
         }
 
         public void Update(MonitorGeometry monitor, DipPoint point)
         {
-            if (!_completed && _anchor is { } anchor)
+            if (IsSelecting)
             {
-                Update(RegionGeometry.DipToPixel(point, monitor));
+                // Input may arrive faster than the display can present. Retain one latest point
+                // rather than enqueueing a layout and composition update for every mouse message.
+                _pendingPoint = RegionGeometry.DipToPixel(point, monitor);
             }
         }
 
@@ -278,6 +294,7 @@ public sealed class RegionCapturer
             }
 
             var current = RegionGeometry.DipToPixel(point, monitor);
+            StopRendering();
             var selection = RegionGeometry.Intersect(RegionGeometry.Normalize(anchor, current), desktop.Bounds);
             if (selection.Width < 4 || selection.Height < 4)
             {
@@ -292,6 +309,44 @@ public sealed class RegionCapturer
         }
 
         public void Cancel() => Finish(null);
+
+        private void OnRendering(object? sender, EventArgs args)
+        {
+            if (!IsSelecting || args is not RenderingEventArgs rendering
+                || _lastRenderingTime == rendering.RenderingTime)
+            {
+                return;
+            }
+
+            _lastRenderingTime = rendering.RenderingTime;
+            if (_pendingPoint is { } point)
+            {
+                _pendingPoint = null;
+                Update(point);
+            }
+        }
+
+        private void StopRendering()
+        {
+            _pendingPoint = null;
+            if (!_renderingSubscribed) { return; }
+            _renderingSubscribed = false;
+            CompositionTarget.Rendering -= OnRendering;
+            _renderDispatcher!.ShutdownStarted -= OnDispatcherShutdown;
+            _renderDispatcher = null;
+        }
+
+        private void OnDispatcherShutdown(object? sender, EventArgs args) => Cancel();
+
+        private void OnWindowClosed(object? sender, EventArgs args)
+        {
+            if (sender is MonitorOverlayWindow window)
+            {
+                window.Closed -= OnWindowClosed;
+                _windows.Remove(window);
+            }
+            Cancel();
+        }
 
         private void Update(PixelPoint current)
         {
@@ -310,9 +365,11 @@ public sealed class RegionCapturer
             }
 
             _completed = true;
+            StopRendering();
             _cancellationRegistration.Dispose();
             foreach (var window in _windows.ToArray())
             {
+                window.Closed -= OnWindowClosed;
                 window.Close();
             }
 
@@ -325,7 +382,12 @@ public sealed class RegionCapturer
         private readonly MonitorGeometry _monitor;
         private readonly OverlayController _controller;
         private readonly Canvas _inputCanvas = new();
-        private readonly WpfImage _selectedImage = new() { Stretch = Stretch.Fill, IsHitTestVisible = false };
+        private readonly WpfImage _selectedImage = new()
+        {
+            Stretch = Stretch.Fill,
+            IsHitTestVisible = false,
+            Clip = Geometry.Empty
+        };
         private readonly WpfRectangle _selectionBorder = new()
         {
             Stroke = WpfBrushes.White,
@@ -358,6 +420,8 @@ public sealed class RegionCapturer
             });
             _inputCanvas.Background = WpfBrushes.Transparent;
             _selectedImage.Source = frozenImage;
+            _selectedImage.Width = Width;
+            _selectedImage.Height = Height;
             _inputCanvas.Children.Add(_selectedImage);
             _inputCanvas.Children.Add(_selectionBorder);
             content.Children.Add(_inputCanvas);
@@ -367,6 +431,7 @@ public sealed class RegionCapturer
             PreviewMouseLeftButtonDown += OnMouseDown;
             PreviewMouseMove += OnMouseMove;
             PreviewMouseLeftButtonUp += OnMouseUp;
+            LostMouseCapture += OnLostMouseCapture;
             PreviewKeyDown += OnKeyDown;
         }
 
@@ -396,7 +461,7 @@ public sealed class RegionCapturer
             if (args.ChangedButton == MouseButton.Left)
             {
                 _controller.Begin(_monitor, ToDip(args.GetPosition(_inputCanvas)));
-                _ = Mouse.Capture(_inputCanvas, CaptureMode.SubTree);
+                if (!Mouse.Capture(_inputCanvas, CaptureMode.SubTree)) { _controller.Cancel(); }
                 args.Handled = true;
             }
         }
@@ -418,6 +483,11 @@ public sealed class RegionCapturer
                 Mouse.Capture(null);
                 args.Handled = true;
             }
+        }
+
+        private void OnLostMouseCapture(object sender, System.Windows.Input.MouseEventArgs args)
+        {
+            if (_controller.IsSelecting && Mouse.Captured != _inputCanvas) { _controller.Cancel(); }
         }
 
         private void OnKeyDown(object sender, System.Windows.Input.KeyEventArgs args)

@@ -96,7 +96,6 @@ scripts/fetch-models.sh                         # default build/models
 swift build --scratch-path .build-sol5 --target EmbedKit
 swift build --scratch-path .build-sol5 --product EmbedHelper
 swift run --scratch-path .build-sol5 EmbedChecks --models build/models
-scripts/check-name.sh
 ```
 
 Missing models produce a clear skip, exit 0. Build the helper first, or pass

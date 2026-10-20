@@ -36,6 +36,9 @@ public sealed class CaptureCoordinator
     private bool shutdownFinished;
     private Task<bool>? shutdownTask;
 
+    // Lets the controller self-test hold the narrow handoff between acquisition and queue registration.
+    internal Func<PendingCapture, Task>? BeforeProcessingTailRegistrationForSelfTest { get; set; }
+
     public CaptureCoordinator(CapturePipeline pipeline, ICaptureHost host)
     {
         Pipeline = pipeline;
@@ -112,27 +115,60 @@ public sealed class CaptureCoordinator
         PendingCapture? result = null;
         try { result = await operation().ConfigureAwait(true); }
         catch (Exception error) { log.Error($"Acquisition failed: {error}"); }
-        Task? previous;
-        int id;
-        Task<PendingCapture> processed;
+        try
+        {
+            lock (gate)
+            {
+                if (acquisitionGeneration != generation || shutdownFinished) { return; }
+                if (result is null)
+                {
+                    acquisitionFallback = null;
+                    acquisitionInProgress = false;
+                    acquisitionTask = null;
+                    return;
+                }
+
+                // This only schedules journal work; it does not perform disk I/O under the gate.
+                // Keeping the validity check and scheduling together prevents shutdown from invalidating
+                // this generation between the check and journal registration.
+                JournalAcquisition(result);
+            }
+
+            // Keep acquisition single-flight until the acquired capture has been appended to processingTail
+            // so a later capture cannot overtake it. Post-processing runs outside the coordinator gate.
+            var acquired = result;
+            var processed = Task.Run(async () => postprocess is null ? acquired : await postprocess(acquired).ConfigureAwait(false));
+            if (BeforeProcessingTailRegistrationForSelfTest is { } barrier)
+            {
+                await barrier(acquired).ConfigureAwait(false);
+            }
+
+            lock (gate)
+            {
+                if (acquisitionGeneration != generation || shutdownFinished) { return; }
+                acquisitionFallback = null;
+                var previous = processingTail;
+                var id = ++processingGeneration;
+                var tail = ProcessAsync(previous, processed, acquired, id);
+                if (!tail.IsCompleted) { processingTail = tail; }
+                acquisitionInProgress = false;
+                acquisitionTask = null;
+            }
+        }
+        catch (Exception error)
+        {
+            log.Error($"Acquisition handoff failed: {error}");
+            FinishAcquisition(generation);
+        }
+    }
+
+    private void FinishAcquisition(int generation)
+    {
         lock (gate)
         {
             if (acquisitionGeneration != generation || shutdownFinished) { return; }
-            acquisitionFallback = null;
             acquisitionInProgress = false;
             acquisitionTask = null;
-            if (result is null) { return; }
-        }
-
-        JournalAcquisition(result);
-        var acquired = result;
-        processed = Task.Run(async () => postprocess is null ? acquired : await postprocess(acquired).ConfigureAwait(false));
-        lock (gate)
-        {
-            previous = processingTail;
-            id = ++processingGeneration;
-            var tail = ProcessAsync(previous, processed, acquired, id);
-            if (!tail.IsCompleted) { processingTail = tail; }
         }
     }
 
@@ -628,6 +664,10 @@ public sealed class CaptureCoordinator
         var task = Task.Run(async () =>
         {
             var completed = await ShutdownWait.WaitAsync(drain, deadline).ConfigureAwait(false);
+            Task[] persistences;
+            lock (gate) { persistences = recoveryPersistences.Values.ToArray(); }
+            try { await ShutdownWait.WaitAsync(Task.WhenAll(persistences), TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch (Exception error) { log.Error($"Shutdown recovery journal failed: {error.GetType().Name}"); }
             lock (gate)
             {
                 shutdownFinished = true;

@@ -2,10 +2,12 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CaptureApp.Overlay;
+using ICSharpCode.AvalonEdit.Rendering;
 
 namespace CaptureApp.Gallery;
 
@@ -48,11 +50,12 @@ internal static class Program
     {
         Directory.CreateDirectory(directory);
         CheckGeometry();
+        CheckTaskEditing();
         var files = new List<string>();
         foreach (var dark in new[] { false, true })
         {
             theme.Apply(dark, false);
-            foreach (var scale in new[] { Tokens.One, Tokens.GalleryScale })
+            foreach (var scale in new[] { Tokens.One, 1.5, (double)Tokens.GalleryScale })
             {
                 foreach (var fixture in Fixtures.All())
                 {
@@ -71,9 +74,12 @@ internal static class Program
                         Require(Math.Abs(surface.Height - fixture.Height) < Tokens.LayoutTolerance, fixture.Name + ": visible height");
                         CheckLayout(root, fixture.Name);
                         fixture.Verify?.Invoke(surface);
-                        var name = $"{fixture.Name}-{(dark ? "dark" : "light")}-{scale.ToString("0", CultureInfo.InvariantCulture)}x.png";
+                        if (surface is QuickNoteView quickNote) CheckQuickNotePalette(quickNote);
+                        var name = $"{fixture.Name}-{(dark ? "dark" : "light")}-{scale.ToString("0.##", CultureInfo.InvariantCulture)}x.png";
                         var bitmap = new RenderTargetBitmap((int)Math.Ceiling(size.Width * scale), (int)Math.Ceiling(size.Height * scale), Tokens.RenderDpi * scale, Tokens.RenderDpi * scale, PixelFormats.Pbgra32);
                         bitmap.Render(root);
+                        if (fixture.Name is "quick-caret-preview" or "quick-tasks-caret" or "quick-tasks-checked-caret" && surface is QuickNoteView renderedQuickNote)
+                            CheckCheckboxRasterBounds(renderedQuickNote, root, bitmap, scale, fixture.Name);
                         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
                         using (var output = File.Create(Path.Combine(directory, name))) encoder.Save(output);
                         Require(bitmap.PixelWidth == (int)Math.Ceiling(size.Width * scale) && bitmap.PixelHeight == (int)Math.Ceiling(size.Height * scale), name + ": bitmap scale");
@@ -92,8 +98,140 @@ internal static class Program
         highContrast.Dispose();
         theme.Apply(false, false);
         await File.WriteAllLinesAsync(Path.Combine(directory, "states.txt"), files);
-        await File.WriteAllTextAsync(Path.Combine(directory, "checks.txt"), $"PASS: {files.Count} PNGs; token geometry, 100%/200% raster size, text DesiredSize/bounds, high contrast, and position round trips. No windows created.\nFocus integration gates require the Windows UI harness (§3b-2).\n");
+        CheckQuickNoteHighContrast();
+        await File.WriteAllTextAsync(Path.Combine(directory, "checks.txt"), $"PASS: {files.Count} PNGs; token geometry, 100%/150%/200% raster size, dark Quick Note palette, active-task typing/toggle/selection/undo/list keys, caret/checkbox alignment, text DesiredSize/bounds, high contrast, and position round trips. No windows created.\nFocus integration gates require the Windows UI harness (§3b-2).\n");
         Console.WriteLine($"Gallery passed: {files.Count} PNGs in {directory}");
+    }
+    private static void CheckQuickNotePalette(QuickNoteView view)
+    {
+        Require(view.FindResource("SurfaceTint") is SolidColorBrush { Color: { A: 0xF7, R: 0x16, G: 0x16, B: 0x16 } }, "Quick Note keeps its dark surface when the app theme is light");
+        Require(view.FindResource("TextPrimary") is SolidColorBrush { Color: { A: 0xFF, R: 0xFF, G: 0xFF, B: 0xFF } }, "Quick Note keeps light foreground text in its dark theme");
+        Require(view.FindResource("Tertiary") is SolidColorBrush { Color: { A: 0x87, R: 0xFF, G: 0xFF, B: 0xFF } }, "Quick Note secondary metadata uses its dark-theme foreground");
+    }
+    private static void CheckTaskEditing()
+    {
+        using var editor = new MarkdownEditor { Width = 440, Height = 240 };
+        var source = new GalleryInputSource { RootVisual = editor };
+        void Layout()
+        {
+            editor.Measure(new Size(editor.Width, editor.Height));
+            editor.Arrange(new Rect(0, 0, editor.Width, editor.Height));
+            editor.UpdateLayout();
+            editor.Inner.TextArea.TextView.EnsureVisualLines();
+        }
+        void Press(Key key)
+        {
+            var input = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            editor.Inner.TextArea.RaiseEvent(input);
+            Require(input.Handled, "active task: editor handles " + key);
+            Layout();
+        }
+
+        editor.SetText("- [ ] first task\n- [ ] ");
+        Layout();
+        Require(editor.RenderedCheckboxes == 2, "active task: a newly entered marker renders before moving to another line");
+        editor.Inner.TextArea.PerformTextInput("second task");
+        Layout();
+        Require(editor.Text == "- [ ] first task\n- [ ] second task" && editor.CaretOffset == editor.TextLength,
+            "active task: typing edits the body and preserves Markdown storage and caret");
+        Require(editor.RenderedCheckboxes == 2, "active task: typing keeps the current checkbox visible");
+
+        var caret = editor.CaretOffset;
+        var checkbox = editor.Inner.TextArea.TextView.VisualLines.Single(line => line.FirstDocumentLine.LineNumber == 2)
+            .Elements.OfType<InlineObjectElement>().Single(element => element.DocumentLength > 0).Element;
+        checkbox.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+        Require(editor.Text == "- [ ] first task\n- [x] second task" && editor.CaretOffset == caret,
+            "active task: clicking its checkbox toggles Markdown without moving the caret");
+        Require(editor.Undo() && editor.Text == "- [ ] first task\n- [ ] second task", "active task: toggle is one undo step");
+        Require(editor.Redo() && editor.Text == "- [ ] first task\n- [x] second task", "active task: toggle can be redone");
+
+        editor.Select(editor.LineStart(2) + 6, 6);
+        Layout();
+        Require(editor.Inner.SelectedText == "second" && editor.RenderedCheckboxes == 2, "active task: selecting its text keeps both checkboxes visible");
+        editor.Inner.TextArea.PerformTextInput("current");
+        Require(editor.Text == "- [ ] first task\n- [x] current task", "active task: replacing a selection preserves its marker");
+        editor.CaretOffset = editor.TextLength;
+        Press(Key.Enter);
+        Require(editor.Text == "- [ ] first task\n- [x] current task\n- [ ] " && editor.RenderedCheckboxes == 3,
+            "active task: Enter continues a checked task as a visible unchecked task");
+        Press(Key.Tab);
+        Require(editor.Text.EndsWith("\n  - [ ] ", StringComparison.Ordinal) && editor.CaretOffset == editor.TextLength && editor.RenderedCheckboxes == 3,
+            "active task: Tab indents the new task and preserves its caret and checkbox");
+        Press(Key.Back);
+        Require(editor.Text.EndsWith("\n  - ", StringComparison.Ordinal) && editor.RenderedCheckboxes == 2,
+            "active task: Backspace at the body start removes the task marker and keeps the bullet");
+    }
+    // Routed keyboard events exercise the editor's real input handler without creating a native window.
+    private sealed class GalleryInputSource : PresentationSource
+    {
+        public override Visual RootVisual { get; set; } = null!;
+        public override bool IsDisposed => false;
+        protected override CompositionTarget GetCompositionTargetCore() => null!;
+    }
+    private static void CheckCheckboxRasterBounds(QuickNoteView view, FrameworkElement root, RenderTargetBitmap bitmap, double scale, string fixture)
+    {
+        var expectedBoxes = view.Editor.CheckboxExpectedBoundsForGallery;
+        Require(expectedBoxes.Count == 2, fixture + ": both expected checkbox regions are available");
+        var editorOrigin = view.Editor.TranslatePoint(new Point(Tokens.Zero, Tokens.Zero), root);
+        var stride = bitmap.PixelWidth * 4;
+        var pixels = new byte[stride * bitmap.PixelHeight];
+        bitmap.CopyPixels(pixels, stride, 0);
+        for (var index = 0; index < expectedBoxes.Count; index++)
+        {
+            var expected = expectedBoxes[index];
+            // Locate the actual accent-colored pixels in the raster, independently of the drawing helper's returned top.
+            const double padding = 2;
+            var minX = Math.Clamp((int)Math.Floor((editorOrigin.X + expected.Left - padding) * scale), 0, bitmap.PixelWidth - 1);
+            var maxX = Math.Clamp((int)Math.Ceiling((editorOrigin.X + expected.Right + padding) * scale), 0, bitmap.PixelWidth - 1);
+            var minY = Math.Clamp((int)Math.Floor((editorOrigin.Y + expected.Top - padding) * scale), 0, bitmap.PixelHeight - 1);
+            var maxY = Math.Clamp((int)Math.Ceiling((editorOrigin.Y + expected.Bottom + padding) * scale), 0, bitmap.PixelHeight - 1);
+            var firstX = bitmap.PixelWidth; var lastX = -1; var firstY = bitmap.PixelHeight; var lastY = -1;
+            for (var y = minY; y <= maxY; y++)
+            for (var x = minX; x <= maxX; x++)
+            {
+                var offset = y * stride + x * 4;
+                var blue = pixels[offset]; var green = pixels[offset + 1]; var red = pixels[offset + 2]; var alpha = pixels[offset + 3];
+                if (alpha < 96 || red < 160 || red < green * 1.35 || red < blue * 1.3) continue;
+                firstX = Math.Min(firstX, x); lastX = Math.Max(lastX, x);
+                firstY = Math.Min(firstY, y); lastY = Math.Max(lastY, y);
+            }
+            Require(lastX >= firstX && lastY >= firstY, fixture + ": rendered checkbox accent pixels are present");
+            var actualCenterX = (firstX + lastX + 1) / (2.0 * scale);
+            var actualCenterY = (firstY + lastY + 1) / (2.0 * scale);
+            var expectedCenterX = editorOrigin.X + expected.Left + expected.Width / 2;
+            var expectedCenterY = editorOrigin.Y + expected.Top + expected.Height / 2;
+            Require(Math.Abs(actualCenterX - expectedCenterX) <= 1 && Math.Abs(actualCenterY - expectedCenterY) <= 1,
+                $"{fixture}: raster checkbox center ({actualCenterX:0.##}, {actualCenterY:0.##}) aligns with text baseline ({expectedCenterX:0.##}, {expectedCenterY:0.##}) at {scale:0.##}x");
+            if (index == 1 && fixture != "quick-tasks-caret")
+            {
+                var boxLeft = Math.Clamp((int)Math.Ceiling((editorOrigin.X + expected.Left + 1) * scale), 0, bitmap.PixelWidth - 1);
+                var boxRight = Math.Clamp((int)Math.Floor((editorOrigin.X + expected.Right - 1) * scale), 0, bitmap.PixelWidth - 1);
+                var boxTop = Math.Clamp((int)Math.Ceiling((editorOrigin.Y + expected.Top + 1) * scale), 0, bitmap.PixelHeight - 1);
+                var boxBottom = Math.Clamp((int)Math.Floor((editorOrigin.Y + expected.Bottom - 1) * scale), 0, bitmap.PixelHeight - 1);
+                var whiteCheckPixels = 0;
+                for (var y = boxTop; y <= boxBottom; y++)
+                for (var x = boxLeft; x <= boxRight; x++)
+                {
+                    var offset = y * stride + x * 4;
+                    if (pixels[offset + 3] >= 128 && pixels[offset] >= 180 && pixels[offset + 1] >= 180 && pixels[offset + 2] >= 180)
+                        whiteCheckPixels++;
+                }
+                Require(whiteCheckPixels >= 2, $"{fixture}: checked-task tick is rasterized inside its box at {scale:0.##}x");
+            }
+        }
+    }
+    private static void CheckQuickNoteHighContrast()
+    {
+        var resources = new ResourceDictionary();
+        using var theme = new ThemeManager(resources, darkOverride: true);
+        theme.Apply(highContrast: true);
+        var palette = resources.MergedDictionaries[0];
+        Require(Equals(palette["SurfaceTint"], SystemColors.WindowBrush), "Quick Note high contrast uses the system surface");
+        Require(Equals(palette["TextPrimary"], SystemColors.WindowTextBrush), "Quick Note high contrast uses system text");
+        Require(Equals(palette["EditorLink"], SystemColors.HotTrackBrush), "Quick Note high contrast keeps links visible");
+        Require(Equals(palette["EditorCheckboxCheck"], SystemColors.WindowBrush), "Quick Note high contrast keeps checkbox marks visible");
+        theme.Apply(highContrast: false);
+        Require(palette["SurfaceTint"] is SolidColorBrush { Color: { A: 0xF7, R: 0x16, G: 0x16, B: 0x16 } }, "Quick Note returns to dark palette after high contrast");
     }
     private static void CheckLayout(FrameworkElement root, string state)
     {

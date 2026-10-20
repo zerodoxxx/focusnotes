@@ -55,42 +55,118 @@ public static class ControllerSelfTest
 
             await WritePass(output, "controller staged capture journaled and committed").ConfigureAwait(false);
 
-            // OCR over budget keeps the image, commits within two seconds, and finishes searchable later.
-            var latch = new ManualResetEventSlim();
+            // Keep the first acquisition single-flight until its work is in the processing queue.
+            var firstQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirstQueueRegistration = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstInOrder = PendingCaptures.Selection("first queued acquisition", source);
+            var secondInOrder = PendingCaptures.Selection("second queued acquisition", source);
+            coordinator.BeforeProcessingTailRegistrationForSelfTest = async capture =>
+            {
+                if (capture.Id != firstInOrder.Id) { return; }
+                firstQueued.TrySetResult();
+                await releaseFirstQueueRegistration.Task.ConfigureAwait(false);
+            };
+            var secondAcceptedDuringHandoff = false;
+            try
+            {
+                if (!coordinator.BeginAcquisition(() => Task.FromResult<PendingCapture?>(firstInOrder)))
+                {
+                    throw new InvalidOperationException("First ordered acquisition was not accepted.");
+                }
+                await firstQueued.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                secondAcceptedDuringHandoff = coordinator.BeginAcquisition(() => Task.FromResult<PendingCapture?>(secondInOrder));
+            }
+            finally
+            {
+                releaseFirstQueueRegistration.TrySetResult();
+                coordinator.BeforeProcessingTailRegistrationForSelfTest = null;
+            }
+
+            await WaitUntil(() => !coordinator.AcquisitionInProgress, "acquisition handoff did not finish", cancellationToken).ConfigureAwait(false);
+            await coordinator.WaitForProcessingAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            if (secondAcceptedDuringHandoff)
+            {
+                throw new InvalidOperationException("A second acquisition was accepted before the first capture entered the processing queue.");
+            }
+            if (!coordinator.BeginAcquisition(() => Task.FromResult<PendingCapture?>(secondInOrder)))
+            {
+                throw new InvalidOperationException("Second ordered acquisition was not accepted after queue registration.");
+            }
+            await WaitUntil(() => !coordinator.AcquisitionInProgress, "second ordered acquisition did not finish", cancellationToken).ConfigureAwait(false);
+            await coordinator.WaitForProcessingAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            await (coordinator.CommitPending() ?? throw new InvalidOperationException("Second ordered capture was not staged."))
+                .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            var orderedIds = NoteParser.Parse(File.ReadAllText(pipeline.Vault.InboxUrl), "Inbox.md", "", zone)
+                .Blocks.Where(block => block.CaptureId is not null).Select(block => block.CaptureId!.Value).ToArray();
+            var firstIndex = Array.IndexOf(orderedIds, firstInOrder.Id);
+            var secondIndex = Array.IndexOf(orderedIds, secondInOrder.Id);
+            if (firstIndex < 0 || secondIndex <= firstIndex)
+            {
+                throw new InvalidOperationException($"Captures committed out of order (first index {firstIndex}, second index {secondIndex}).");
+            }
+            await WritePass(output, "controller acquisition remains single-flight through ordered queue registration").ConfigureAwait(false);
+
+            // Over-budget OCR must stage and commit the image while recognition remains blocked, then index text later.
+            var recognitionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseRecognition = new TaskCompletionSource<RegionRecognition?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var deferredRegistered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 9, 9, 9 };
-            var start = DateTimeOffset.UtcNow;
             var imageId = Guid.NewGuid();
             var accepted = coordinator.BeginAcquisition(
                 () => Task.FromResult<PendingCapture?>(PendingCaptures.Image(png, null, source, "Image", imageId)),
                 async acquired => await RegionProcessing.ProcessAsync(png, source, acquired.Id, acquired.CreatedAt,
-                    _ => { latch.Wait(TimeSpan.FromSeconds(30)); return new RegionRecognition("slowocrneedle searchable after budget", false); },
-                    coordinator.RegisterDeferredOcr, TimeSpan.FromMilliseconds(100)).ConfigureAwait(false));
+                    async _ =>
+                    {
+                        recognitionStarted.TrySetResult();
+                        return await releaseRecognition.Task.ConfigureAwait(false);
+                    },
+                    (id, task) =>
+                    {
+                        coordinator.RegisterDeferredOcr(id, task);
+                        deferredRegistered.TrySetResult();
+                    }, TimeSpan.FromMilliseconds(100)).ConfigureAwait(false));
             if (!accepted) { throw new InvalidOperationException("Slow OCR acquisition not accepted."); }
-            await WaitUntil(() => !coordinator.AcquisitionInProgress, "OCR still holds the acquisition lock", cancellationToken).ConfigureAwait(false);
-            var next = PendingCaptures.Selection("secondacquisitionneedle", source);
-            if (!coordinator.BeginAcquisition(() => Task.FromResult<PendingCapture?>(next))) { throw new InvalidOperationException("A second capture was ignored during OCR."); }
-            await WaitUntil(() => !coordinator.AcquisitionInProgress, "second acquisition stuck", cancellationToken).ConfigureAwait(false);
-            await coordinator.WaitForProcessingAsync().ConfigureAwait(false);
-            var tail = coordinator.CommitPending() ?? throw new InvalidOperationException("Second acquisition was not staged.");
-            await tail.ConfigureAwait(false);
-            var elapsed = DateTimeOffset.UtcNow - start;
-            var imageKind = pipeline.Index.Capture(imageId)?.BlockKind;
-            if (elapsed > TimeSpan.FromSeconds(2) || imageKind != BlockKind.Image)
+            try
             {
-                throw new InvalidOperationException(
-                    $"OCR over budget did not stage and commit an image within two seconds (took {elapsed.TotalMilliseconds:F0} ms, indexed as {imageKind?.ToString() ?? "nothing"}).");
-            }
+                await recognitionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                await deferredRegistered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
 
-            var inbox = File.ReadAllText(pipeline.Vault.InboxUrl);
-            var order = NoteParser.Parse(inbox, "Inbox.md", "", zone).Blocks.Where(b => b.CaptureId is not null).Select(b => b.CaptureId!.Value).ToArray();
-            if (!order.SequenceEqual([imageId, next.Id]) || pipeline.Index.Search("slowocrneedle").Count != 0)
+                await WaitUntil(() => !coordinator.AcquisitionInProgress, "OCR fallback acquisition did not finish", cancellationToken).ConfigureAwait(false);
+                var next = PendingCaptures.Selection("secondacquisitionneedle", source);
+                if (!coordinator.BeginAcquisition(() => Task.FromResult<PendingCapture?>(next)))
+                {
+                    throw new InvalidOperationException("A second capture was ignored while OCR ran in the background.");
+                }
+                await WaitUntil(() => !coordinator.AcquisitionInProgress, "second acquisition stuck", cancellationToken).ConfigureAwait(false);
+                await coordinator.WaitForProcessingAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+                await (coordinator.CommitPending() ?? throw new InvalidOperationException("Second acquisition was not staged."))
+                    .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+
+                var imageKind = pipeline.Index.Capture(imageId)?.BlockKind;
+                if (imageKind != BlockKind.Image)
+                {
+                    throw new InvalidOperationException($"Blocked OCR did not commit the fallback image (indexed as {imageKind?.ToString() ?? "nothing"}).");
+                }
+
+                var inbox = File.ReadAllText(pipeline.Vault.InboxUrl);
+                var order = NoteParser.Parse(inbox, "Inbox.md", "", zone).Blocks.Where(b => b.CaptureId is not null).Select(b => b.CaptureId!.Value).ToArray();
+                if (!order.TakeLast(2).SequenceEqual([imageId, next.Id]))
+                {
+                    throw new InvalidOperationException($"OCR fallback and next capture committed out of order (expected {imageId}, {next.Id}; actual {string.Join(", ", order)}).");
+                }
+                if (pipeline.Index.Search("slowocrneedle").Count != 0)
+                {
+                    throw new InvalidOperationException("Deferred OCR text became searchable before recognition was released.");
+                }
+
+                releaseRecognition.TrySetResult(new RegionRecognition("slowocrneedle searchable after budget", false));
+                await WaitUntil(() => pipeline.Index.Search("slowocrneedle").Any(h => h.CaptureID == imageId), "Deferred OCR never became searchable", cancellationToken, 5000).ConfigureAwait(false);
+                if (File.ReadAllText(pipeline.Vault.InboxUrl) != inbox) { throw new InvalidOperationException("Deferred OCR changed the note."); }
+            }
+            finally
             {
-                throw new InvalidOperationException("Acquisitions committed out of order or OCR was not delayed.");
+                releaseRecognition.TrySetResult(new RegionRecognition("slowocrneedle searchable after budget", false));
             }
-
-            latch.Set();
-            await WaitUntil(() => pipeline.Index.Search("slowocrneedle").Any(h => h.CaptureID == imageId), "Deferred OCR never became searchable", cancellationToken, 5000).ConfigureAwait(false);
-            if (File.ReadAllText(pipeline.Vault.InboxUrl) != inbox) { throw new InvalidOperationException("Deferred OCR changed the note."); }
             await WritePass(output, "controller OCR budget, ordering and deferred text").ConfigureAwait(false);
 
             // Sessions, subheadings and replay without duplicates.
@@ -197,18 +273,29 @@ public static class ControllerSelfTest
         var pipeline = CapturePipeline.Open(vault, state, zone, null, 0.12, homeDirectory: home);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var release = new ManualResetEventSlim();
+        var acquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acquisitionFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? terminate = null;
         var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 5, 5, 5 };
         var id = Guid.NewGuid();
         try
         {
             coordinator.BeginAcquisition(async () =>
             {
-                coordinator.RecordAcquiredImage(PendingCaptures.Image(png, null, new CaptureSource("Demo"), "Image", id));
-                await Task.Run(() => release.Wait(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
-                return null;
+                try
+                {
+                    coordinator.RecordAcquiredImage(PendingCaptures.Image(png, null, new CaptureSource("Demo"), "Image", id));
+                    acquired.SetResult();
+                    await Task.Run(() => release.Wait(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+                    return null;
+                }
+                finally { acquisitionFinished.TrySetResult(); }
             });
-            await Task.Delay(100).ConfigureAwait(false);
-            var terminate = coordinator.BeginTermination(TimeSpan.FromMilliseconds(500));
+            if (!await ShutdownWait.WaitAsync(acquired.Task, TimeSpan.FromSeconds(10)).ConfigureAwait(false))
+            {
+                throw new InvalidOperationException("The in-flight acquisition did not record its image before termination.");
+            }
+            terminate = coordinator.BeginTermination(TimeSpan.FromMilliseconds(500));
             await terminate.ConfigureAwait(false);
             if (pipeline.Journal.RecordPaths().Count != 1 && pipeline.Index.Capture(id) is null)
             {
@@ -218,7 +305,12 @@ public static class ControllerSelfTest
         finally
         {
             release.Set();
-            pipeline.Dispose();
+            try
+            {
+                if (terminate is not null) { await terminate.ConfigureAwait(false); }
+                if (acquired.Task.IsCompleted) { await acquisitionFinished.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
+            }
+            finally { pipeline.Dispose(); }
         }
 
         pipeline = CapturePipeline.Open(vault, state, zone, null, 0.12, homeDirectory: home);

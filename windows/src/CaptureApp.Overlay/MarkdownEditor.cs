@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.TextFormatting;
+using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
@@ -19,6 +20,9 @@ namespace CaptureApp.Overlay;
 /// </summary>
 public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
 {
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern uint GetCaretBlinkTime();
+
     private enum ReplacementKind { Hidden, Bullet, Checkbox, Quote }
     private readonly record struct Replacement(int Start, int Length, ReplacementKind Kind);
 
@@ -27,8 +31,10 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     private readonly Dictionary<DocumentLine, Replacement[]> replacements = [];
     private readonly Dictionary<string, Brush> brushes = [];
     private readonly List<FenceState> fenceAfter = [];
+    private readonly DispatcherTimer caretBlinkTimer = new(DispatcherPriority.Background);
+    private readonly CaretOverlay caretOverlay;
     private int activeFirst = -1, activeLast = -1;
-    private bool composing, disposed;
+    private bool composing, disposed, caretVisible = true, showCaretForGallery;
     public event EventHandler? TextChanged;
     public IInputElement FocusTarget => Inner.TextArea;
     public string Text => Inner.Document.Text;
@@ -39,7 +45,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     public bool HasSelection => Inner.SelectionLength > 0;
     /// <summary>The first <paramref name="length"/> characters, without copying a large note.</summary>
     public string Head(int length) => Inner.Document.GetText(0, Math.Min(length, Inner.Document.TextLength));
-    /// <summary>True when the line shows its Markdown syntax (it holds the caret or part of the selection).</summary>
+    /// <summary>True when the line reveals editable Markdown syntax; task markers always remain checkboxes.</summary>
     public bool IsSyntaxRevealed(int lineNumber) => lineNumber >= activeFirst && lineNumber <= activeLast;
     /// <summary>Task checkboxes currently rendered in the laid-out lines.</summary>
     public int RenderedCheckboxes => Inner.TextArea.TextView.VisualLinesValid
@@ -52,7 +58,9 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
 
     public MarkdownEditor()
     {
+        caretOverlay = new CaretOverlay(this) { IsHitTestVisible = false };
         Children.Add(Inner);
+        Children.Add(caretOverlay);
         Inner.SetResourceReference(Control.FontFamilyProperty, "Font.UI");
         Inner.SetResourceReference(Control.ForegroundProperty, "TextPrimary");
         Inner.SetResourceReference(Control.BackgroundProperty, "Transparent");
@@ -74,21 +82,32 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         area.SelectionBorder = null;
         area.SelectionCornerRadius = Tokens.Zero;
         area.FocusVisualStyle = null;
+        area.Caret.CaretBrush = Brushes.Transparent;
         var view = area.TextView;
         view.LineTransformers.Add(new MarkdownColorizer(this));
         view.ElementGenerators.Insert(0, new MarkdownGenerator(this));
         view.ElementGenerators.Insert(0, new LineSpacerGenerator(this));
         view.BackgroundRenderers.Add(new MarkdownBackground(this));
         Inner.Document.Changed += OnDocumentChanged;
-        Inner.TextChanged += (_, e) => TextChanged?.Invoke(this, e);
-        area.Caret.PositionChanged += (_, _) => { UpdateActiveLines(); area.Caret.CaretBrush = Resolve("BrandAccent"); };
-        area.SelectionChanged += (_, _) => UpdateActiveLines();
-        TextCompositionManager.AddPreviewTextInputStartHandler(area, (_, e) => composing = e.TextComposition.CompositionText.Length > 0);
-        TextCompositionManager.AddPreviewTextInputUpdateHandler(area, (_, e) => composing = e.TextComposition.CompositionText.Length > 0);
-        area.LostKeyboardFocus += (_, _) => composing = false;
+        Inner.TextChanged += (_, e) => { TextChanged?.Invoke(this, e); ResetCaretBlink(); };
+        area.Caret.PositionChanged += (_, _) => { UpdateActiveLines(); ResetCaretBlink(); };
+        area.SelectionChanged += (_, _) => { UpdateActiveLines(); ResetCaretBlink(); };
+        area.GotKeyboardFocus += (_, _) => ResetCaretBlink();
+        area.LostKeyboardFocus += (_, _) => { composing = false; ResetCaretBlink(); };
+        view.VisualLinesChanged += (_, _) => caretOverlay.InvalidateVisual();
+        view.ScrollOffsetChanged += (_, _) => caretOverlay.InvalidateVisual();
+        Inner.SizeChanged += (_, _) => caretOverlay.InvalidateVisual();
+        caretBlinkTimer.Tick += (_, _) =>
+        {
+            if (!ShouldShowCaret) { caretBlinkTimer.Stop(); caretVisible = true; }
+            else caretVisible = !caretVisible;
+            caretOverlay.InvalidateVisual();
+        };
+        TextCompositionManager.AddPreviewTextInputStartHandler(area, (_, e) => { composing = e.TextComposition.CompositionText.Length > 0; ResetCaretBlink(); });
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(area, (_, e) => { composing = e.TextComposition.CompositionText.Length > 0; ResetCaretBlink(); });
         CommandManager.AddPreviewExecutedHandler(area, OnPreviewExecuted);
-        Loaded += (_, _) => { area.Caret.CaretBrush = Resolve("BrandAccent"); SystemEvents.UserPreferenceChanged += PreferenceChanged; };
-        Unloaded += (_, _) => SystemEvents.UserPreferenceChanged -= PreferenceChanged;
+        Loaded += (_, _) => { if (disposed) return; area.Caret.CaretBrush = Brushes.Transparent; SystemEvents.UserPreferenceChanged += PreferenceChanged; ResetCaretBlink(); };
+        Unloaded += (_, _) => { SystemEvents.UserPreferenceChanged -= PreferenceChanged; caretBlinkTimer.Stop(); };
         UpdateActiveLines();
     }
 
@@ -202,13 +221,14 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         if (model.Kind == LineKind.Text)
         {
             var active = IsLineActive(line);
+            // A task stays a checkbox while its text is edited, including on the caret and selection lines.
+            if (model.TaskMarker is { } task) list.Add(new Replacement(task.Start, task.Length, ReplacementKind.Checkbox));
             if (!active)
             {
                 if (model.QuoteMarker is { } quote) list.Add(new Replacement(quote.Start, quote.Length, ReplacementKind.Quote));
-                if (model.TaskMarker is { } task) list.Add(new Replacement(task.Start, task.Length, ReplacementKind.Checkbox));
                 list.AddRange(model.Syntax.Select(s => new Replacement(s.Start, s.Length, ReplacementKind.Hidden)));
             }
-            if (model.BulletIndex is { } bullet && (active || model.TaskMarker is null)) list.Add(new Replacement(bullet, 2, ReplacementKind.Bullet)); // The marker and its space become one fixed-width cell.
+            if (model.BulletIndex is { } bullet && model.TaskMarker is null) list.Add(new Replacement(bullet, 2, ReplacementKind.Bullet)); // The marker and its space become one fixed-width cell.
         }
         var ordered = new List<Replacement>(); var end = 0;
         foreach (var item in list.Where(r => r.Length > 0).OrderBy(r => r.Start))
@@ -252,7 +272,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         var first = doc.GetLineByOffset(Math.Min(e.Offset, doc.TextLength)).LineNumber - 1;
         if (fenceAfter.Count > first) fenceAfter.RemoveRange(first, fenceAfter.Count - first);
     }
-    /// <summary>The caret and selection lines show their syntax; every other line renders without it.</summary>
+    /// <summary>The caret and selection lines reveal syntax other than task markers; other lines render without it.</summary>
     private void UpdateActiveLines()
     {
         var area = Inner.TextArea; var doc = Inner.Document;
@@ -272,11 +292,130 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     /// <summary>Brushes are cached per theme; redraw after a palette change.</summary>
     public void RefreshTheme()
     {
+        if (disposed) return;
         brushes.Clear(); replacements.Clear();
-        Inner.TextArea.Caret.CaretBrush = Resolve("BrandAccent");
+        Inner.TextArea.Caret.CaretBrush = Brushes.Transparent;
+        ResetCaretBlink();
+        caretOverlay.InvalidateVisual();
         Inner.TextArea.TextView.Redraw();
     }
     private void PreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => Dispatcher.BeginInvoke(RefreshTheme, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+
+    /// <summary>Gallery-only switch that snapshots the focused caret without creating an HWND.</summary>
+    internal bool ShowCaretForGallery
+    {
+        get => showCaretForGallery;
+        set { showCaretForGallery = value; ResetCaretBlink(); }
+    }
+    internal Rect? CaretBoundsForGallery => CalculateCaretBounds();
+    internal IReadOnlyList<Rect> CheckboxExpectedBoundsForGallery
+    {
+        get
+        {
+            var textView = Inner.TextArea.TextView;
+            if (!textView.VisualLinesValid) textView.EnsureVisualLines();
+            var bounds = new List<Rect>();
+            foreach (var visualLine in textView.VisualLines)
+            foreach (var inline in visualLine.Elements.OfType<InlineObjectElement>())
+            {
+                if (inline.Element is not CheckboxVisual checkbox) continue;
+                var line = visualLine.FirstDocumentLine;
+                var visualColumn = visualLine.GetVisualColumn(line.Offset - visualLine.FirstDocumentLine.Offset);
+                var baseline = visualLine.GetVisualPosition(visualColumn, VisualYPosition.Baseline).Y - textView.VerticalOffset;
+                var elementOrigin = checkbox.TranslatePoint(new Point(Tokens.Zero, Tokens.Zero), textView);
+                var centerY = baseline - EditorCapHeight / 2;
+                var center = textView.TranslatePoint(new Point(elementOrigin.X, centerY), this);
+                bounds.Add(new Rect(center.X, center.Y - Tokens.EditorCheckboxSize / 2.0,
+                    Tokens.EditorCheckboxSize, Tokens.EditorCheckboxSize));
+            }
+            return bounds;
+        }
+    }
+
+    private bool ShouldShowCaret => showCaretForGallery || Inner.TextArea.IsKeyboardFocusWithin && (Inner.SelectionLength == 0 || composing);
+    private void ResetCaretBlink()
+    {
+        caretBlinkTimer.Stop(); caretVisible = true;
+        if (disposed) { caretOverlay.InvalidateVisual(); return; }
+        if (ShouldShowCaret && !showCaretForGallery && GetSystemCaretBlinkInterval() is { } interval)
+        {
+            caretBlinkTimer.Interval = interval;
+            caretBlinkTimer.Start();
+        }
+        caretOverlay.InvalidateVisual();
+    }
+    private static TimeSpan? GetSystemCaretBlinkInterval()
+    {
+        var milliseconds = GetCaretBlinkTime();
+        return milliseconds is 0 or uint.MaxValue ? null : TimeSpan.FromMilliseconds(milliseconds);
+    }
+    private void DrawCaret(DrawingContext drawingContext)
+    {
+        if (!caretVisible || !ShouldShowCaret || CalculateCaretBounds() is not { } rect) return;
+        drawingContext.DrawRoundedRectangle(Resolve("BrandAccent"), null, rect, Tokens.EditorCaretRadius, Tokens.EditorCaretRadius);
+    }
+    private Rect? CalculateCaretBounds()
+    {
+        var textView = Inner.TextArea.TextView;
+        try
+        {
+            if (!textView.VisualLinesValid) textView.EnsureVisualLines();
+            var caret = Inner.TextArea.Caret;
+            var systemRect = caret.CalculateCaretRectangle();
+            var baseline = textView.GetVisualPosition(caret.Position, VisualYPosition.Baseline).Y;
+            var viewOrigin = textView.TranslatePoint(new Point(Tokens.Zero, Tokens.Zero), this);
+            if (!double.IsFinite(systemRect.X) || !double.IsFinite(baseline) || !double.IsFinite(viewOrigin.X) || !double.IsFinite(viewOrigin.Y)) return null;
+            var size = CaretFontSizeAtPosition();
+            var height = size * Tokens.EditorCaretHeightFactor;
+            var bottom = viewOrigin.Y + baseline - textView.VerticalOffset + size * Tokens.EditorCaretDescentFactor;
+            return new Rect(viewOrigin.X + systemRect.X - textView.HorizontalOffset, bottom - height,
+                Tokens.EditorCaretWidth, height);
+        }
+        catch (InvalidOperationException) { return null; }
+    }
+    private double CaretFontSizeAtPosition()
+    {
+        var doc = Inner.Document;
+        var offset = Math.Clamp(Inner.CaretOffset, 0, doc.TextLength);
+        var line = doc.GetLineByOffset(offset);
+        var model = ModelFor(line);
+        if (model.Kind is LineKind.Code or LineKind.Fence) return Tokens.EditorCodeFontSize;
+        if (line.Length == 0) return FenceBefore(line.LineNumber).IsOpen ? Tokens.EditorCodeFontSize : Tokens.EditorFontSize;
+        var index = Math.Clamp(offset - line.Offset, 0, line.Length - 1);
+        var size = Tokens.EditorFontSize;
+        foreach (var style in model.Styles.Where(style => index >= style.Start && index < style.End))
+        {
+            if (style.Mono) size = Tokens.EditorCodeFontSize;
+            else if (style.Size is { } styledSize) size = styledSize;
+        }
+        return size;
+    }
+    private double? CheckboxTop(FrameworkElement element, DocumentLine line)
+    {
+        var textView = Inner.TextArea.TextView;
+        try
+        {
+            if (!textView.VisualLinesValid) textView.EnsureVisualLines();
+            var visualLine = textView.VisualLines.FirstOrDefault(candidate => candidate.FirstDocumentLine == line);
+            if (visualLine is null) return null;
+            var visualColumn = visualLine.GetVisualColumn(line.Offset - visualLine.FirstDocumentLine.Offset);
+            var baseline = visualLine.GetVisualPosition(visualColumn, VisualYPosition.Baseline).Y - textView.VerticalOffset;
+            var elementOrigin = element.TranslatePoint(new Point(Tokens.Zero, Tokens.Zero), textView);
+            return baseline - EditorCapHeight / 2 - Tokens.EditorCheckboxSize / 2.0 - elementOrigin.Y;
+        }
+        catch (InvalidOperationException) { return null; }
+    }
+    private double EditorCapHeight
+    {
+        get
+        {
+            var family = Family("Font.UI");
+            foreach (var typeface in family.GetTypefaces())
+                if (typeface.TryGetGlyphTypeface(out var glyphTypeface) && glyphTypeface.CapsHeight > 0)
+                    return glyphTypeface.CapsHeight * Tokens.EditorFontSize;
+            return Tokens.EditorFontSize * 0.7;
+        }
+    }
     internal void ToggleTask(DocumentLine line, int index)
     {
         var doc = Inner.Document; var offset = line.Offset + index;
@@ -388,10 +527,16 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     {
         if (disposed) return;
         disposed = true;
+        caretBlinkTimer.Stop();
         SystemEvents.UserPreferenceChanged -= PreferenceChanged;
     }
 
     // MARK: Rendering helpers
+
+    private sealed class CaretOverlay(MarkdownEditor owner) : FrameworkElement
+    {
+        protected override void OnRender(DrawingContext drawingContext) => owner.DrawCaret(drawingContext);
+    }
 
     /// <summary>Syntax on an inactive line: an empty run that still owns the document characters.</summary>
     private sealed class HiddenElement(int length) : FormattedTextElement("", length);
@@ -467,26 +612,25 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
             Flush();
         }
     }
-    /// <summary>The accent checkbox that replaces a task marker on inactive lines; a click toggles the task.</summary>
+    /// <summary>The accent checkbox that replaces a task marker, including while editing; a click toggles the task.</summary>
     private sealed class CheckboxVisual : FrameworkElement
     {
-        // The box is centred on the x-height middle (about 4 pt above the baseline).
-        private const double CheckboxRise = Tokens.EditorCheckboxSize - 2.5;
         private readonly MarkdownEditor owner; private readonly DocumentLine line; private readonly int index; private readonly bool isChecked;
         public CheckboxVisual(MarkdownEditor owner, DocumentLine line, int index, bool isChecked)
         {
             this.owner = owner; this.line = line; this.index = index; this.isChecked = isChecked;
-            Width = ListMarkerWidth; Height = CheckboxRise; // Height is the rise above the baseline; the box hangs below it.
+            Width = ListMarkerWidth; Height = Tokens.EditorCheckboxSize + 2;
             Cursor = Cursors.Hand;
         }
         protected override void OnRender(DrawingContext drawingContext)
         {
-            var box = new Rect(Tokens.Zero, Tokens.Zero, Tokens.EditorCheckboxSize, Tokens.EditorCheckboxSize);
-            drawingContext.DrawRectangle(Brushes.Transparent, null, new Rect(Tokens.Zero, Tokens.Zero, ListMarkerWidth, Tokens.EditorCheckboxSize));
+            if (owner.CheckboxTop(this, line) is not { } top) return;
+            var box = new Rect(Tokens.Zero, top, Tokens.EditorCheckboxSize, Tokens.EditorCheckboxSize);
+            drawingContext.DrawRectangle(Brushes.Transparent, null, new Rect(Tokens.Zero, top, ListMarkerWidth, Tokens.EditorCheckboxSize));
             if (isChecked)
             {
                 drawingContext.DrawRoundedRectangle(owner.Resolve("BrandAccent"), null, box, Tokens.EditorCheckboxRadius, Tokens.EditorCheckboxRadius);
-                var points = Tokens.EditorCheckboxCheckPoints.Select(p => new Point(p.X * box.Width, p.Y * box.Height)).ToArray();
+                var points = Tokens.EditorCheckboxCheckPoints.Select(p => new Point(box.X + p.X * box.Width, box.Y + p.Y * box.Height)).ToArray();
                 var figure = new PathFigure(points[0], [new PolyLineSegment(points[1..], true)], false);
                 var pen = new Pen(owner.Resolve("EditorCheckboxCheck"), Tokens.EditorCheckboxStroke) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
                 drawingContext.DrawGeometry(null, pen, new PathGeometry([figure]));

@@ -1,7 +1,16 @@
 using CaptureApp.AppCore;
+using System.ComponentModel;
 using System.IO;
+using Microsoft.Win32;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Markup;
+using System.Windows.Media;
+using Ellipse = System.Windows.Shapes.Ellipse;
+using Shape = System.Windows.Shapes.Shape;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
 using CaptureApp.ModelInstall;
@@ -15,54 +24,124 @@ internal sealed class SetupWindow : Window
 {
     private readonly AppController controller;
     private readonly IReadOnlyList<SetupStepInfo> steps;
-    private readonly StackPanel list = new() { Margin = new Thickness(12) };
-    private readonly ContentControl page = new() { Margin = new Thickness(24, 20, 24, 8) };
+    private readonly StackPanel list = new() { Margin = new Thickness(18, 20, 18, 20) };
+    private readonly ContentControl page = new();
+    private readonly Border pageCard = new() { CornerRadius = new CornerRadius(14), Padding = new Thickness(28), MinHeight = 420 };
     private readonly TextBlock status = UiKit.Text("", 12, false, "Secondary", 0);
+    private readonly Button backButton;
+    private readonly Button nextButton;
+    private readonly Button closeButton;
+    private readonly Style quietButtonStyle;
+    private readonly Style primaryButtonStyle;
     private int current;
     private Action? detach;
+    private bool closed;
 
     public SetupWindow(AppController controller, bool manual)
     {
         this.controller = controller;
         steps = controller.Setup.StepsToShow(manual);
         Title = $"{AppInfo.Name} Setup";
-        Width = 820;
-        Height = 640;
-        MinWidth = 700;
-        MinHeight = 520;
+        Width = 960;
+        Height = 720;
+        MinWidth = 820;
+        MinHeight = 620;
         ShowInTaskbar = true;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         UiKit.Themed(this);
+        SetResourceReference(Control.BackgroundProperty, "SurfaceTint");
+        quietButtonStyle = CreateButtonStyle(primary: false, promoteDefault: true);
+        primaryButtonStyle = CreateButtonStyle(primary: true, promoteDefault: false);
+        Resources[typeof(Button)] = quietButtonStyle;
+        Resources[typeof(RadioButton)] = CreateChoiceStyle(radio: true);
+        Resources[typeof(CheckBox)] = CreateChoiceStyle(radio: false);
+        RefreshSetupPalette();
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
 
         var layout = new Grid();
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
+        layout.SetResourceReference(Panel.BackgroundProperty, "SurfaceTint");
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(260) });
         layout.ColumnDefinitions.Add(new ColumnDefinition());
-        layout.RowDefinitions.Add(new RowDefinition());
-        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var sidebar = new Border { Child = new ScrollViewer { Content = list } };
+        var sidebar = new Border
+        {
+            Child = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+            BorderThickness = new Thickness(0, 0, 0.5, 0)
+        };
         sidebar.SetResourceReference(Border.BackgroundProperty, "QuickClusterFill");
-        Grid.SetRowSpan(sidebar, 2);
+        sidebar.SetResourceReference(Border.BorderBrushProperty, "SurfaceBorder");
         layout.Children.Add(sidebar);
-        var scroll = new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        Grid.SetColumn(scroll, 1);
-        layout.Children.Add(scroll);
-        var footer = UiKit.Row(UiKit.Button("Back", () => Go(current - 1)), UiKit.Button("Next", () => Go(current + 1)),
-            UiKit.Button("Close", Close));
-        footer.Margin = new Thickness(24, 4, 24, 14);
-        var footerGrid = new StackPanel();
+
+        pageCard.Child = page;
+        pageCard.SetResourceReference(Border.BackgroundProperty, "CardFill");
+        pageCard.SetResourceReference(Border.BorderBrushProperty, "CardBorder");
+        pageCard.BorderThickness = new Thickness(0.5);
+        var scroll = new ScrollViewer
+        {
+            Content = pageCard,
+            Margin = new Thickness(28, 24, 28, 12),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+
+        backButton = UiKit.Button("Back", () => Go(current - 1));
+        nextButton = UiKit.Button("Next", () => Go(current + 1));
+        closeButton = UiKit.Button("Close", Close);
+        backButton.Style = quietButtonStyle;
+        nextButton.Style = primaryButtonStyle;
+        closeButton.Style = quietButtonStyle;
+        AutomationProperties.SetAutomationId(backButton, "setup-back");
+        AutomationProperties.SetAutomationId(nextButton, "setup-next");
+        AutomationProperties.SetAutomationId(closeButton, "setup-close");
+        backButton.MinWidth = nextButton.MinWidth = closeButton.MinWidth = 96;
+        backButton.Padding = nextButton.Padding = closeButton.Padding = new Thickness(16, 8, 16, 8);
+
+        var nav = new Grid();
+        nav.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        nav.ColumnDefinitions.Add(new ColumnDefinition());
+        nav.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var actions = new StackPanel { Orientation = Orientation.Horizontal };
+        actions.Children.Add(closeButton);
+        actions.Children.Add(nextButton);
+        closeButton.Margin = new Thickness(0, 0, 8, 0);
+        nextButton.Margin = new Thickness(0);
+        Grid.SetColumn(backButton, 0);
+        Grid.SetColumn(actions, 2);
+        nav.Children.Add(backButton);
+        nav.Children.Add(actions);
+
+        var footerGrid = new Grid { Margin = new Thickness(28, 0, 28, 22) };
+        footerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        footerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        status.Margin = new Thickness(0, 0, 0, 12);
+        Grid.SetRow(nav, 1);
         footerGrid.Children.Add(status);
-        footerGrid.Children.Add(footer);
+        footerGrid.Children.Add(nav);
+
+        var main = new Grid();
+        main.RowDefinitions.Add(new RowDefinition());
+        main.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetColumn(scroll, 1);
+        Grid.SetRow(scroll, 0);
         Grid.SetColumn(footerGrid, 1);
         Grid.SetRow(footerGrid, 1);
-        footerGrid.Margin = new Thickness(24, 0, 24, 0);
-        layout.Children.Add(footerGrid);
+        main.Children.Add(scroll);
+        main.Children.Add(footerGrid);
+        Grid.SetColumn(main, 1);
+        layout.Children.Add(main);
         Content = layout;
 
         // Reopen at the first incomplete Required step; a fresh run starts at the top.
         var first = controller.Setup.FirstStepNeedingAttention;
         var start = first is { } id ? steps.ToList().FindIndex(step => step.Id == id) : 0;
         Go(Math.Max(0, start));
-        Closed += (_, _) => detach?.Invoke();
+        Closed += (_, _) =>
+        {
+            closed = true;
+            detach?.Invoke();
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
+        };
+        Loaded += (_, _) => RefreshSetupPalette();
     }
 
     private SetupState State => controller.Setup;
@@ -74,11 +153,20 @@ internal sealed class SetupWindow : Window
         detach = null;
         current = index;
         RenderList();
+        backButton.Visibility = index == 0 ? Visibility.Collapsed : Visibility.Visible;
+        nextButton.Visibility = index == steps.Count - 1 ? Visibility.Collapsed : Visibility.Visible;
+        nextButton.IsDefault = false;
+        closeButton.IsDefault = index == steps.Count - 1;
+        closeButton.Style = index == steps.Count - 1 ? primaryButtonStyle : quietButtonStyle;
+        closeButton.Margin = new Thickness(0, 0, index == steps.Count - 1 ? 0 : 8, 0);
         var info = steps[index];
         var body = new StackPanel();
         var tag = info.Class == SetupStepClass.Required ? "Required" : "Recommended";
-        body.Children.Add(UiKit.Secondary($"Step {info.Number} of 8 · {tag}"));
-        body.Children.Add(UiKit.Text(info.Title, 22, true, "TextPrimary", 12));
+        body.Children.Add(UiKit.Text($"STEP {index + 1} OF {steps.Count}  ·  {tag.ToUpperInvariant()}", 11, true, "BrandAccent", 12));
+        var heading = UiKit.Text(info.Title, 28, true, "TextPrimary", 20);
+        heading.FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI");
+        body.Children.Add(heading);
+        body.Children.Add(UiKit.Rule());
         var state = State.State(info.Id);
         if (state.Status == SetupStatus.Failed && state.Detail is { Length: > 0 } cause)
         {
@@ -117,29 +205,53 @@ internal sealed class SetupWindow : Window
     private void RenderList()
     {
         list.Children.Clear();
-        list.Children.Add(UiKit.Text("Setup", 16, true, "TextPrimary", 10));
+        var heading = UiKit.Text("Setup", 21, true, "TextPrimary", 2);
+        heading.FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI");
+        list.Children.Add(heading);
+        list.Children.Add(UiKit.Secondary("Get focusnotes ready", 16));
+        list.Children.Add(UiKit.Rule());
         for (var i = 0; i < steps.Count; i++)
         {
             var index = i;
             var info = steps[i];
+            var selected = i == current;
+            var stepStatus = StatusText(info.Id);
             var glyph = State.Status(info.Id) switch
             {
                 SetupStatus.Passed => "✓",
-                SetupStatus.Failed => "✕",
+                SetupStatus.Failed => "!",
                 SetupStatus.Skipped => "–",
-                _ => "○"
+                _ => (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
             };
             var item = new Button
             {
-                Content = $"{glyph}  {info.Title}",
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(8, 6, 8, 6),
-                Margin = new Thickness(0, 1, 0, 1),
-                FontWeight = i == current ? FontWeights.SemiBold : FontWeights.Normal,
-                BorderThickness = new Thickness(0),
-                Background = System.Windows.Media.Brushes.Transparent
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 2, 0, 2),
+                Style = quietButtonStyle
             };
-            item.SetResourceReference(Control.ForegroundProperty, State.Status(info.Id) == SetupStatus.Failed ? "Warning" : "TextPrimary");
+            AutomationProperties.SetAutomationId(item, $"setup-step-{index + 1}");
+            AutomationProperties.SetName(item, $"{info.Title}, {stepStatus}");
+            AutomationProperties.SetItemStatus(item, selected ? "Current step" : stepStatus);
+
+            var row = new Border { Padding = new Thickness(10, 9, 10, 9), CornerRadius = new CornerRadius(8) };
+            row.SetResourceReference(Border.BackgroundProperty, selected ? "SetupSelectionFill" : "Transparent");
+            var columns = new Grid();
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            columns.ColumnDefinitions.Add(new ColumnDefinition());
+            var glyphBlock = UiKit.Text(glyph, 12, true, State.Status(info.Id) == SetupStatus.Failed && !selected ? "Warning" : selected ? "SetupSelectionAccent" : "Secondary", 0);
+            glyphBlock.HorizontalAlignment = HorizontalAlignment.Center;
+            glyphBlock.VerticalAlignment = VerticalAlignment.Center;
+            glyphBlock.TextAlignment = TextAlignment.Center;
+            var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            labels.Children.Add(UiKit.Text(info.Title, 13, selected, selected ? "SetupSelectionText" : "TextPrimary", 2));
+            labels.Children.Add(UiKit.Text(stepStatus, 11, false, selected ? "SetupSelectionSecondary" : State.Status(info.Id) == SetupStatus.Failed ? "Warning" : "Secondary", 0));
+            Grid.SetColumn(labels, 1);
+            columns.Children.Add(glyphBlock);
+            columns.Children.Add(labels);
+            row.Child = columns;
+            item.Content = row;
             item.Click += (_, _) => Go(index);
             list.Children.Add(item);
         }
@@ -167,7 +279,7 @@ internal sealed class SetupWindow : Window
                      "Screen pixels, only while you drag a Capture Area.",
                      $"Writing Markdown into your notes folder, and app state into %LocalAppData%\\{AppInfo.BundleId}.",
                      "Network: only update checks and downloads from github.com and, if you later enable semantic search, model downloads from huggingface.co.",
-                     "Start at login, a pre-checked option in step 6."
+                     "Start at login is pre-checked on its setup page."
                  })
         {
             body.Children.Add(UiKit.Text("•  " + bullet, 13, false, "TextPrimary", 3));
@@ -391,6 +503,259 @@ internal sealed class SetupWindow : Window
     {
         body.Children.Add(UiKit.Text("Semantic search finds notes by meaning as well as keywords. It is optional and nothing is downloaded here.", 13, false, "TextPrimary", 8));
         body.Children.Add(UiKit.Text($"To turn it on later, open the tray icon and choose Enable Semantic Search… It downloads about {ModelInstallException.FormatBytes(ModelManifest.Current.TotalDownloadBytes)} from huggingface.co.", 13, false, "TextPrimary", 8));
-        body.Children.Add(UiKit.Row(UiKit.Button("Got it", () => Finish(SetupStepId.Semantic, SetupStatus.Passed), true), SkipButton(SetupStepId.Semantic)));
+        var gotIt = UiKit.Button("Got it", () => Finish(SetupStepId.Semantic, SetupStatus.Passed), true);
+        gotIt.IsDefault = false;
+        body.Children.Add(UiKit.Row(gotIt, SkipButton(SetupStepId.Semantic)));
+    }
+
+    internal void RefreshSetupPalette()
+    {
+        if (SystemParameters.HighContrast)
+        {
+            Resources["SetupPrimaryFill"] = SystemColors.HighlightBrush;
+            Resources["SetupPrimaryText"] = SystemColors.HighlightTextBrush;
+            Resources["SetupPrimaryHoverFill"] = SystemColors.HighlightBrush;
+            Resources["SetupPrimaryPressedFill"] = SystemColors.HighlightBrush;
+            Resources["SetupPrimaryPressedBorder"] = SystemColors.HighlightBrush;
+            Resources["SetupSelectionFill"] = SystemColors.HighlightBrush;
+            Resources["SetupSelectionText"] = SystemColors.HighlightTextBrush;
+            Resources["SetupSelectionSecondary"] = SystemColors.HighlightTextBrush;
+            Resources["SetupSelectionAccent"] = SystemColors.HighlightTextBrush;
+            Resources["SetupFocusBrush"] = SystemColors.HighlightBrush;
+            return;
+        }
+
+        var accent = TryFindResource("BrandAccent") as SolidColorBrush;
+        var accentColor = accent?.Color ?? Color.FromRgb(0xE5, 0x48, 0x3C);
+        Resources["SetupPrimaryFill"] = accent ?? new SolidColorBrush(accentColor);
+        Resources["SetupPrimaryText"] = Brush(Color.FromRgb(0x16, 0x06, 0x05));
+        Resources["SetupPrimaryHoverFill"] = Brush(Shade(accentColor, 1.06));
+        Resources["SetupPrimaryPressedFill"] = accent ?? new SolidColorBrush(accentColor);
+        Resources["SetupPrimaryPressedBorder"] = Brush(Shade(accentColor, 0.72));
+        Resources["SetupSelectionFill"] = Brush(Color.FromArgb(0x25, accentColor.R, accentColor.G, accentColor.B));
+        Resources["SetupSelectionText"] = TryFindResource("TextPrimary") as Brush ?? SystemColors.ControlTextBrush;
+        Resources["SetupSelectionSecondary"] = TryFindResource("Secondary") as Brush ?? SystemColors.GrayTextBrush;
+        Resources["SetupSelectionAccent"] = accent ?? new SolidColorBrush(accentColor);
+        Resources["SetupFocusBrush"] = accent ?? new SolidColorBrush(accentColor);
+    }
+
+    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e) => QueuePaletteRefresh();
+
+    private void OnSystemParametersChanged(object? sender, PropertyChangedEventArgs e) => QueuePaletteRefresh();
+
+    private void QueuePaletteRefresh()
+    {
+        if (closed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) { return; }
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!closed) { RefreshSetupPalette(); }
+        }));
+    }
+
+    private static Brush Brush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private static Color Shade(Color color, double factor) => Color.FromRgb(
+        (byte)Math.Clamp((int)Math.Round(color.R * factor), 0, 255),
+        (byte)Math.Clamp((int)Math.Round(color.G * factor), 0, 255),
+        (byte)Math.Clamp((int)Math.Round(color.B * factor), 0, 255));
+
+    private static DynamicResourceExtension Resource(string key) => new(key);
+
+    private static Binding TemplateBindingFor(string path) => new(path)
+    {
+        RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent)
+    };
+
+    private static Style CreateButtonStyle(bool primary, bool promoteDefault)
+    {
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, Resource(primary ? "SetupPrimaryFill" : "Transparent")));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Resource(primary ? "SetupPrimaryText" : "TextPrimary")));
+        style.Setters.Add(new Setter(Control.BorderBrushProperty, Resource(primary ? "SetupPrimaryFill" : "SurfaceBorder")));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(primary ? 0 : 1)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(15, 8, 15, 8)));
+        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 38d));
+        style.Setters.Add(new Setter(Control.TemplateProperty, ButtonTemplate()));
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Control.BackgroundProperty, Resource(primary ? "SetupPrimaryHoverFill" : "HintFill")));
+        style.Triggers.Add(hover);
+        var pressed = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
+        pressed.Setters.Add(new Setter(Control.BackgroundProperty, Resource(primary ? "SetupPrimaryPressedFill" : "QuickButtonPressedFill")));
+        if (primary)
+        {
+            pressed.Setters.Add(new Setter(Control.BorderBrushProperty, Resource("SetupPrimaryPressedBorder")));
+            pressed.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2)));
+        }
+        style.Triggers.Add(pressed);
+
+        if (!primary && promoteDefault)
+        {
+            var defaultButton = new Trigger { Property = Button.IsDefaultProperty, Value = true };
+            defaultButton.Setters.Add(new Setter(Control.BackgroundProperty, Resource("SetupPrimaryFill")));
+            defaultButton.Setters.Add(new Setter(Control.ForegroundProperty, Resource("SetupPrimaryText")));
+            defaultButton.Setters.Add(new Setter(Control.BorderBrushProperty, Resource("SetupPrimaryFill")));
+            style.Triggers.Add(defaultButton);
+
+            var defaultHover = new MultiTrigger();
+            defaultHover.Conditions.Add(new System.Windows.Condition(UIElement.IsMouseOverProperty, true));
+            defaultHover.Conditions.Add(new System.Windows.Condition(Button.IsDefaultProperty, true));
+            defaultHover.Setters.Add(new Setter(Control.BackgroundProperty, Resource("SetupPrimaryHoverFill")));
+            style.Triggers.Add(defaultHover);
+
+            var defaultPressed = new MultiTrigger();
+            defaultPressed.Conditions.Add(new System.Windows.Condition(ButtonBase.IsPressedProperty, true));
+            defaultPressed.Conditions.Add(new System.Windows.Condition(Button.IsDefaultProperty, true));
+            defaultPressed.Setters.Add(new Setter(Control.BackgroundProperty, Resource("SetupPrimaryPressedFill")));
+            defaultPressed.Setters.Add(new Setter(Control.BorderBrushProperty, Resource("SetupPrimaryPressedBorder")));
+            defaultPressed.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2)));
+            style.Triggers.Add(defaultPressed);
+        }
+
+        var focused = new Trigger { Property = UIElement.IsKeyboardFocusedProperty, Value = true };
+        focused.Setters.Add(new Setter(Control.BorderBrushProperty, Resource("SetupFocusBrush")));
+        focused.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2)));
+        style.Triggers.Add(focused);
+        var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.55));
+        style.Triggers.Add(disabled);
+        return style;
+    }
+
+    private static ControlTemplate ButtonTemplate()
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var chrome = new FrameworkElementFactory(typeof(Border), "ButtonChrome");
+        chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
+        chrome.SetBinding(Border.BackgroundProperty, TemplateBindingFor(nameof(Control.Background)));
+        chrome.SetBinding(Border.BorderBrushProperty, TemplateBindingFor(nameof(Control.BorderBrush)));
+        chrome.SetBinding(Border.BorderThicknessProperty, TemplateBindingFor(nameof(Control.BorderThickness)));
+
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(ContentPresenter.ContentSourceProperty, "Content");
+        content.SetValue(ContentPresenter.RecognizesAccessKeyProperty, true);
+        content.SetBinding(FrameworkElement.MarginProperty, TemplateBindingFor(nameof(Control.Padding)));
+        content.SetBinding(FrameworkElement.HorizontalAlignmentProperty, TemplateBindingFor(nameof(Control.HorizontalContentAlignment)));
+        content.SetBinding(FrameworkElement.VerticalAlignmentProperty, TemplateBindingFor(nameof(Control.VerticalContentAlignment)));
+        chrome.AppendChild(content);
+        template.VisualTree = chrome;
+        return template;
+    }
+
+    private static Style CreateChoiceStyle(bool radio)
+    {
+        var style = new Style(radio ? typeof(RadioButton) : typeof(CheckBox));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Resource("TextPrimary")));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, Resource("Transparent")));
+        style.Setters.Add(new Setter(Control.BorderBrushProperty, Resource("Transparent")));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(5, 4, 5, 4)));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Left));
+        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        style.Setters.Add(new Setter(Control.TemplateProperty, ChoiceTemplate(radio)));
+        return style;
+    }
+
+    private static ControlTemplate ChoiceTemplate(bool radio)
+    {
+        var owner = radio ? typeof(RadioButton) : typeof(CheckBox);
+        var template = new ControlTemplate(owner);
+        var chrome = new FrameworkElementFactory(typeof(Border), "ChoiceChrome");
+        chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+        chrome.SetBinding(Border.BackgroundProperty, TemplateBindingFor(nameof(Control.Background)));
+        chrome.SetBinding(Border.BorderBrushProperty, TemplateBindingFor(nameof(Control.BorderBrush)));
+        chrome.SetBinding(Border.BorderThicknessProperty, TemplateBindingFor(nameof(Control.BorderThickness)));
+        chrome.SetBinding(Border.PaddingProperty, TemplateBindingFor(nameof(Control.Padding)));
+
+        var row = new FrameworkElementFactory(typeof(StackPanel));
+        row.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        row.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        FrameworkElementFactory indicator;
+        if (radio)
+        {
+            var radioGrid = new FrameworkElementFactory(typeof(Grid), "ChoiceIndicator");
+            radioGrid.SetValue(FrameworkElement.WidthProperty, 18d);
+            radioGrid.SetValue(FrameworkElement.HeightProperty, 18d);
+            radioGrid.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 9, 0));
+            var ring = new FrameworkElementFactory(typeof(Ellipse), "ChoiceRing");
+            ring.SetResourceReference(Shape.StrokeProperty, "Secondary");
+            ring.SetResourceReference(Shape.FillProperty, "Transparent");
+            ring.SetValue(Shape.StrokeThicknessProperty, 1.5d);
+            var dot = new FrameworkElementFactory(typeof(Ellipse), "ChoiceDot");
+            dot.SetValue(FrameworkElement.WidthProperty, 8d);
+            dot.SetValue(FrameworkElement.HeightProperty, 8d);
+            dot.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            dot.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            dot.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+            dot.SetResourceReference(Shape.FillProperty, "SetupPrimaryFill");
+            radioGrid.AppendChild(ring);
+            radioGrid.AppendChild(dot);
+            indicator = radioGrid;
+        }
+        else
+        {
+            var checkGrid = new FrameworkElementFactory(typeof(Grid), "ChoiceIndicator");
+            checkGrid.SetValue(FrameworkElement.WidthProperty, 18d);
+            checkGrid.SetValue(FrameworkElement.HeightProperty, 18d);
+            checkGrid.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 9, 0));
+            var box = new FrameworkElementFactory(typeof(Border), "ChoiceBox");
+            box.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            box.SetResourceReference(Border.BackgroundProperty, "Transparent");
+            box.SetResourceReference(Border.BorderBrushProperty, "Secondary");
+            box.SetValue(Border.BorderThicknessProperty, new Thickness(1.5));
+            var mark = new FrameworkElementFactory(typeof(TextBlock), "ChoiceMark");
+            mark.SetValue(TextBlock.TextProperty, "✓");
+            mark.SetValue(TextBlock.FontFamilyProperty, new FontFamily("Segoe UI Symbol, Segoe UI"));
+            mark.SetValue(TextBlock.FontSizeProperty, 12d);
+            mark.SetValue(TextBlock.FontWeightProperty, FontWeights.Bold);
+            mark.SetValue(TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            mark.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            mark.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+            mark.SetResourceReference(TextBlock.ForegroundProperty, "SetupPrimaryText");
+            checkGrid.AppendChild(box);
+            checkGrid.AppendChild(mark);
+            indicator = checkGrid;
+        }
+
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(ContentPresenter.ContentSourceProperty, "Content");
+        content.SetValue(ContentPresenter.RecognizesAccessKeyProperty, true);
+        content.SetBinding(FrameworkElement.HorizontalAlignmentProperty, TemplateBindingFor(nameof(Control.HorizontalContentAlignment)));
+        content.SetBinding(FrameworkElement.VerticalAlignmentProperty, TemplateBindingFor(nameof(Control.VerticalContentAlignment)));
+        row.AppendChild(indicator);
+        row.AppendChild(content);
+        chrome.AppendChild(row);
+        template.VisualTree = chrome;
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(Border.BackgroundProperty, Resource("HintFill"), "ChoiceChrome"));
+        template.Triggers.Add(hover);
+        var focused = new Trigger { Property = UIElement.IsKeyboardFocusedProperty, Value = true };
+        focused.Setters.Add(new Setter(Border.BorderBrushProperty, Resource("SetupFocusBrush"), "ChoiceChrome"));
+        focused.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(2), "ChoiceChrome"));
+        template.Triggers.Add(focused);
+        var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.55, "ChoiceChrome"));
+        template.Triggers.Add(disabled);
+
+        var checkedTrigger = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        if (radio)
+        {
+            checkedTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "ChoiceDot"));
+            checkedTrigger.Setters.Add(new Setter(Shape.StrokeProperty, Resource("SetupPrimaryFill"), "ChoiceRing"));
+        }
+        else
+        {
+            checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, Resource("SetupPrimaryFill"), "ChoiceBox"));
+            checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, Resource("SetupPrimaryFill"), "ChoiceBox"));
+            checkedTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "ChoiceMark"));
+        }
+        template.Triggers.Add(checkedTrigger);
+        return template;
     }
 }

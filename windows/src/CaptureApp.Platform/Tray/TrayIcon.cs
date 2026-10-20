@@ -22,7 +22,11 @@ public sealed class TrayIcon : IDisposable
     private const uint WmRButtonUp = 0x0205;
     private const uint WmLButtonUp = 0x0202;
     private const uint WmCancelMode = 0x001F;
+    private const uint WmNull = 0x0000;
     private const uint WmAppNotifyIcon = 0x8002;
+    private const uint NinSelect = 0x0400;
+    private const uint NinKeySelect = 0x0401;
+    private const uint TrayIconId = 1;
     private const uint TpmRightButton = 0x0002;
     private const uint TpmNoNotify = 0x0080;
     private const uint TpmReturnCommand = 0x0100;
@@ -50,16 +54,34 @@ public sealed class TrayIcon : IDisposable
     private readonly bool _ownsAttentionLightIcon;
     private readonly bool _ownsAttentionDarkIcon;
     private readonly uint _taskbarCreatedMessage;
+    private readonly Func<TrayNativeMethods.Point?, bool>? _menuPresenterForTesting;
+    private readonly Func<uint, bool>? _postTrackMessageForTesting;
     private IntPtr _windowHandle;
     private TrayMenuModel _menu = new(Array.Empty<TrayMenuItem>());
     private bool _registered;
+    private bool _version4Callbacks;
     private bool _attention;
     private bool _disposed;
+    private bool _showingMenu;
 
     public TrayIcon(Action<string> onItemInvoked, TrayIconAssets? assets = null)
+        : this(onItemInvoked, assets, registerShellIcon: true, version4Callbacks: false, menuPresenterForTesting: null)
+    {
+    }
+
+    internal TrayIcon(
+        Action<string> onItemInvoked,
+        TrayIconAssets? assets,
+        bool registerShellIcon,
+        bool version4Callbacks,
+        Func<TrayNativeMethods.Point?, bool>? menuPresenterForTesting,
+        Func<uint, bool>? postTrackMessageForTesting = null)
     {
         ArgumentNullException.ThrowIfNull(onItemInvoked);
         _onItemInvoked = onItemInvoked;
+        _version4Callbacks = version4Callbacks;
+        _menuPresenterForTesting = menuPresenterForTesting;
+        _postTrackMessageForTesting = postTrackMessageForTesting;
         assets ??= TrayIconAssets.FindDefault();
         _windowProcedure = WindowProcedure;
         _instance = TrayNativeMethods.GetModuleHandle(null);
@@ -99,7 +121,10 @@ public sealed class TrayIcon : IDisposable
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not create the hidden tray owner window.");
         }
 
-        AddIcon();
+        if (registerShellIcon)
+        {
+            AddIcon();
+        }
     }
 
     public event Action<Exception>? MenuDispatchFailed;
@@ -111,6 +136,10 @@ public sealed class TrayIcon : IDisposable
     }
 
     public bool IsRegistered => _registered;
+
+    internal IntPtr NativeWindowHandleForTesting => _windowHandle;
+
+    internal const uint NotifyCallbackMessageForTesting = WmAppNotifyIcon;
 
     public bool IsAttention => _attention;
 
@@ -128,9 +157,42 @@ public sealed class TrayIcon : IDisposable
 
     /// <summary>Shows the current menu; false means Windows did not allow this window to take foreground ownership.</summary>
     public bool TryShowMenu()
+        => TryShowMenu(position: null);
+
+    private bool TryShowMenu(TrayNativeMethods.Point? position)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!TrayNativeMethods.SetForegroundWindow(_windowHandle))
+        if (_showingMenu)
+        {
+            return true;
+        }
+
+        _showingMenu = true;
+        try
+        {
+            return TryShowMenuCore(position);
+        }
+        finally
+        {
+            _showingMenu = false;
+        }
+    }
+
+    private bool TryShowMenuCore(TrayNativeMethods.Point? position)
+    {
+        if (_menuPresenterForTesting is not null)
+        {
+            var shown = _menuPresenterForTesting(position);
+            if (shown)
+            {
+                PostBenignMessageAfterTrackPopup();
+            }
+
+            return shown;
+        }
+
+        var foregrounded = TrayNativeMethods.SetForegroundWindow(_windowHandle);
+        if (!foregrounded)
         {
             return false;
         }
@@ -140,7 +202,12 @@ public sealed class TrayIcon : IDisposable
         var root = BuildMenu(_menu.Items, commandIds, ref nextId);
         try
         {
-            if (!TrayNativeMethods.GetCursorPos(out var point))
+            TrayNativeMethods.Point point;
+            if (position is { } callbackPosition)
+            {
+                point = callbackPosition;
+            }
+            else if (!TrayNativeMethods.GetCursorPos(out point))
             {
                 throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not read the pointer position for the tray menu.");
             }
@@ -153,8 +220,9 @@ public sealed class TrayIcon : IDisposable
                 DispatchItem(id);
             }
 
-            // This message closes the menu reliably when a command was selected.
-            TrayNativeMethods.PostMessage(_windowHandle, WmCancelMode, 0, 0);
+            // TrackPopupMenuEx requires a benign message to follow the menu loop. WM_CANCELMODE
+            // can dismiss a subsequent menu if the queued message is dispatched after it opens.
+            PostBenignMessageAfterTrackPopup();
             return true;
         }
         finally
@@ -162,6 +230,11 @@ public sealed class TrayIcon : IDisposable
             TrayNativeMethods.DestroyMenu(root);
         }
     }
+
+    private bool PostBenignMessageAfterTrackPopup()
+        => _postTrackMessageForTesting is not null
+            ? _postTrackMessageForTesting(WmNull)
+            : TrayNativeMethods.PostMessage(_windowHandle, WmNull, 0, 0);
 
     /// <summary>Allows a host or interactive test to dismiss an open native menu.</summary>
     public void CancelCurrentMenu()
@@ -174,6 +247,7 @@ public sealed class TrayIcon : IDisposable
 
     private void AddIcon()
     {
+        _version4Callbacks = false;
         var data = CreateNotifyIconData(CurrentIcon());
         if (!CallShell(NimAdd, data))
         {
@@ -183,7 +257,7 @@ public sealed class TrayIcon : IDisposable
 
         _registered = true;
         data.Version = 4;
-        CallShell(NimSetVersion, data);
+        _version4Callbacks = CallShell(NimSetVersion, data);
     }
 
     private void ModifyIcon()
@@ -348,16 +422,72 @@ public sealed class TrayIcon : IDisposable
 
         if (message == WmAppNotifyIcon)
         {
-            var eventId = unchecked((uint)lParam);
-            if (eventId is WmContextMenu or WmRButtonUp or WmLButtonUp or 0x0400 or 0x0401)
+            var decoded = TryDecodeCallback(wParam, lParam, out var eventId, out var position);
+            // Version 4 delivers a semantic activation after the corresponding mouse-up.
+            // Opening on both reenters TrackPopupMenuEx while its first menu loop is active.
+            var activation = decoded &&
+                (eventId is WmContextMenu or NinSelect or NinKeySelect ||
+                 (!_version4Callbacks && eventId is WmRButtonUp or WmLButtonUp));
+            if (activation)
             {
-                TryShowMenu();
+                try
+                {
+                    if (!TryShowMenu(position) && _menuPresenterForTesting is null)
+                    {
+                        DispatchMenuFailure(new InvalidOperationException(
+                            "Windows did not allow the tray menu to take foreground ownership."));
+                    }
+                }
+                catch (Exception exception)
+                {
+                    DispatchMenuFailure(exception);
+                }
             }
 
             return IntPtr.Zero;
         }
 
         return TrayNativeMethods.DefWindowProc(window, message, wParam, lParam);
+    }
+
+    private bool TryDecodeCallback(
+        nuint wParam,
+        nint lParam,
+        out uint eventId,
+        out TrayNativeMethods.Point? position)
+    {
+        if (_version4Callbacks)
+        {
+            var packed = unchecked((uint)lParam);
+            var iconId = packed >> 16;
+            eventId = packed & 0xFFFF;
+            if (iconId != TrayIconId)
+            {
+                position = null;
+                return false;
+            }
+
+            var x = unchecked((short)(wParam & 0xFFFF));
+            var y = unchecked((short)((wParam >> 16) & 0xFFFF));
+            position = x == -1 && y == -1 ? null : new TrayNativeMethods.Point { X = x, Y = y };
+            return true;
+        }
+
+        eventId = unchecked((uint)lParam);
+        position = null;
+        return unchecked((uint)wParam) == TrayIconId;
+    }
+
+    private void DispatchMenuFailure(Exception exception)
+    {
+        try
+        {
+            MenuDispatchFailed?.Invoke(exception);
+        }
+        catch
+        {
+            // User event handlers must not unwind through the unmanaged window procedure.
+        }
     }
 
     private void DestroyLoadedIcons()
@@ -447,6 +577,9 @@ internal static partial class TrayNativeMethods
 
     [LibraryImport("user32.dll", EntryPoint = "DefWindowProcW")]
     internal static partial IntPtr DefWindowProc(IntPtr window, uint message, nuint wParam, nint lParam);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
+    internal static partial nint SendMessage(IntPtr window, uint message, nuint wParam, nint lParam);
 
     [LibraryImport("user32.dll", EntryPoint = "RegisterWindowMessageW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     internal static partial uint RegisterWindowMessage(string message);

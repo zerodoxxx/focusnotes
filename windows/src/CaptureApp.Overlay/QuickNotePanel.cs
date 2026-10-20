@@ -50,12 +50,13 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     private readonly ChromeButton close = new("xmark", "Close (Esc)", "Close"), open = new("arrow.up.left.and.arrow.down.right", "Open as note (Ctrl+O)", "Open as note"),
         browse = new("rectangle.on.rectangle.angled", "Browse notes (Ctrl+P)", "Browse notes"), create = new("plus", "New note (Ctrl+N)", "New note"),
         actions = new("ellipsis", "Actions (Ctrl+K)", "Actions");
-    private readonly TextBlock title = Ui.Text("", "QuickTitle", accessible: true), placeholder = Ui.Text("Start writing…", "Editor", "Tertiary"), draftLabel = Ui.Text("Draft kept", "Meta", "Tertiary");
+    private readonly TextBlock title = Ui.Text("", "QuickTitle", accessible: true), draftLabel = Ui.Text("Draft kept", "Meta", "Tertiary");
     private readonly TextBlock pin = Ui.Icon("pin.fill", "TextPrimary", Tokens.QuickTitlePinSize);
     private readonly KeycapView actionsHint = new("Ctrl+K", "Actions"), closeHint = new("Esc", "Close");
     private KeycapView saveHint = new("Ctrl+↩", "Create note");
     private readonly bool restoredDraft;
     private readonly DispatcherTimer measureTimer = new() { Interval = TimeSpan.FromMilliseconds(Tokens.MeasureQuietMilliseconds) };
+    private readonly ThemeManager quickNoteTheme;
     private double currentWidth = Tokens.QuickMinWidth, textHeight, overflow, workAreaHeight = SystemParameters.WorkArea.Height;
     private bool pointerInside, measurePending, suppressMeasure, disposed;
     private NoteCardView? card;
@@ -98,14 +99,15 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     public QuickNoteView(string? destination, bool isPinned, string draft, bool restoredDraft)
         : base(Tokens.QuickMinWidth, Tokens.QuickTopBandHeight + Tokens.QuickFooterHeight + Tokens.EditorMinLines * Math.Ceiling(Tokens.EditorFontSize * 1.4), Tokens.QuickPanelRadius)
     {
+        quickNoteTheme = new ThemeManager(Resources, darkOverride: true);
         this.restoredDraft = restoredDraft; this.destination = destination; this.isPinned = isPinned;
-        AutomationProperties.SetName(this, "Write a note");
+        AutomationProperties.SetName(this, "Quick Note");
         AutomationProperties.SetName(Editor, "Note text");
         cluster.SetResourceReference(Border.BackgroundProperty, "QuickClusterFill"); cluster.SetResourceReference(Border.BorderBrushProperty, "QuickClusterBorder");
         title.TextAlignment = TextAlignment.Center; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap; title.Tag = TrimmedTag; title.IsHitTestVisible = false; title.Opacity = Tokens.QuickTitleRestAlpha; pin.Opacity = Tokens.QuickTitleRestAlpha;
         pin.IsHitTestVisible = false; pin.Visibility = isPinned ? Visibility.Visible : Visibility.Collapsed;
-        placeholder.IsHitTestVisible = false; footer.IsHitTestVisible = false; chrome.Opacity = Tokens.Zero; footer.Opacity = Tokens.Zero; chrome.IsHitTestVisible = false;
-        foreach (var element in new UIElement[] { hover, topBand, footerBand, Editor, placeholder, title, pin, chrome, footer }) Body.Children.Add(element);
+        footer.IsHitTestVisible = false; chrome.Opacity = Tokens.Zero; footer.Opacity = Tokens.Zero; chrome.IsHitTestVisible = false;
+        foreach (var element in new UIElement[] { hover, topBand, footerBand, Editor, title, pin, chrome, footer }) Body.Children.Add(element);
         chrome.Children.Add(cluster);
         foreach (var button in new[] { close, open, browse, create, actions }) chrome.Children.Add(button);
         foreach (var hint in new UIElement[] { saveHint, actionsHint, closeHint, draftLabel }) footer.Children.Add(hint);
@@ -155,7 +157,6 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
             if (named.Length > 0) value = named;
         }
         title.Text = value;
-        placeholder.Visibility = Editor.TextLength == 0 ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetName(title, value);
     }
 
@@ -211,12 +212,11 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
         else overflow = Tokens.Zero;
         Width = width; Height = noteHeight + overflow;
         ((Border)Children[0]).Margin = new Thickness(Tokens.Zero, Tokens.Zero, Tokens.Zero, overflow); // The tint and shadow follow the note only.
-        var inset = Tokens.QuickTextInset; var lineHeight = Editor.LineHeight;
+        var inset = Tokens.QuickTextInset;
         Position(hover, 0, 0, width, noteHeight);
         Position(topBand, 0, 0, width, Tokens.QuickTopBandHeight);
         Position(footerBand, 0, noteHeight - Tokens.QuickFooterHeight, width, Tokens.QuickFooterHeight);
         Position(Editor, inset, Tokens.QuickTopBandHeight, width - inset * 2, textHeight);
-        Position(placeholder, inset, Tokens.QuickTopBandHeight, width - inset * 2, lineHeight);
         LayoutChrome(width);
         LayoutTitle(width);
         Position(footer, 0, noteHeight - Tokens.QuickFooterHeight, width, Tokens.QuickFooterHeight);
@@ -451,7 +451,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        disposed = true; measureTimer.Stop(); Editor.Dispose();
+        disposed = true; measureTimer.Stop(); Editor.Dispose(); quickNoteTheme.Dispose();
     }
 }
 

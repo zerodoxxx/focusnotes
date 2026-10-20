@@ -148,11 +148,16 @@ jobs:
           CAPTUREAPP_REQUIRE_MODELS: "1"
         run: |
           $rid = "win-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
-          dotnet publish src/CaptureApp.App -c Release -r $rid --self-contained -o "$env:RUNNER_TEMP/publish"
+          $publishDir = Join-Path $env:RUNNER_TEMP 'publish'
+          dotnet publish src/CaptureApp.App -c Release -r $rid --self-contained -o $publishDir
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $exe = Get-ChildItem "$env:RUNNER_TEMP/publish" -Filter *.exe | Where-Object { $_.Name -notmatch 'EmbedHelper' } | Select-Object -First 1
+          $appName = (Select-String -Path "$env:GITHUB_WORKSPACE/Config/app.env" -Pattern '^APPNAME=(.+)$').Matches[0].Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($appName)) { throw 'Config/app.env does not define APPNAME' }
+          $exe = Join-Path $publishDir "$appName.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Published app executable not found: $exe" }
+          Write-Host "Running published self-test: $exe"
           $started = Get-Date
-          & $exe.FullName --self-test "$env:RUNNER_TEMP/selftest" --models "$env:CAPTUREAPP_MODELS_DIR" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/selftest.log"
+          & $exe --self-test "$env:RUNNER_TEMP/selftest" --models "$env:CAPTUREAPP_MODELS_DIR" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/selftest.log"
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             # A crash leaves no managed output; the runtime and WER entries name the faulting module and exception.

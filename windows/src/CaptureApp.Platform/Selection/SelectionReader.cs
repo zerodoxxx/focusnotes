@@ -88,8 +88,13 @@ public sealed class SelectionReader
 {
     private static int captureInProgress;
     private readonly ISelectionServices services;
+    private readonly TimeSpan copyDeadline;
     public SelectionReader() : this(new WindowsSelectionServices()) { }
-    internal SelectionReader(ISelectionServices services) => this.services = services;
+    internal SelectionReader(ISelectionServices services, TimeSpan? copyDeadline = null)
+    {
+        this.services = services;
+        this.copyDeadline = copyDeadline ?? TimeSpan.FromMilliseconds(500);
+    }
 
     public async Task<SelectionResult> ReadAsync(bool useClipboardFallback = false, FrontmostContext? context = null,
         CancellationToken cancellationToken = default)
@@ -150,12 +155,12 @@ public sealed class SelectionReader
                 var wait = Stopwatch.StartNew();
                 var notOpened = false;
                 // Even partial/failed injection may have changed the clipboard: observe it, then restore in finally.
-                while (wait.Elapsed < TimeSpan.FromMilliseconds(500)) // G8
+                while (wait.Elapsed < copyDeadline) // G8
                 {
                     if (services.ClipboardSequence != snapshot.Sequence || services.ClipboardSignal != signal)
                     {
                         var copy = await services.ReadCopyAsync(context.ProcessIdentifier,
-                            TimeSpan.FromMilliseconds(500) - wait.Elapsed, snapshot).ConfigureAwait(false);
+                            copyDeadline - wait.Elapsed, snapshot).ConfigureAwait(false);
                         if (copy is null) break; // Out of time or abandoned: the late check below still restores.
                         if (copy.NotOpened)
                         {
@@ -215,20 +220,23 @@ public sealed class SelectionReader
 
     private async Task<SelectionResult?> SafetyAsync(FrontmostContext context, string check, CancellationToken token)
     {
-        token.ThrowIfCancellationRequested();
-        var field = await services.ReadUiaAsync(context.ProcessIdentifier, false, token).ConfigureAwait(false);
-        switch (field.Safety)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            case FieldSafety.Safe: return null;
-            case FieldSafety.Password: return SelectionResult.Refuse(SelectionFailure.SecureField, check);
-            case FieldSafety.WrongProcess: return SelectionResult.Refuse(SelectionFailure.TargetChanged, check);
+            token.ThrowIfCancellationRequested();
+            var field = await services.ReadUiaAsync(context.ProcessIdentifier, false, token).ConfigureAwait(false);
+            switch (field.Safety)
+            {
+                case FieldSafety.Safe: return null;
+                case FieldSafety.Password: return SelectionResult.Refuse(SelectionFailure.SecureField, check);
+                case FieldSafety.WrongProcess: return SelectionResult.Refuse(SelectionFailure.TargetChanged, check);
+            }
+            // A focus switch or a held modifier can steal UIA focus and leave the read undetermined.
+            if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
+            await WaitForModifiersAsync(token).ConfigureAwait(false);
+            if (services.ModifiersHeld) return SelectionResult.Refuse(SelectionFailure.ModifiersHeld, check + " (undetermined, modifiers held)");
+            if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
+            if (attempt < 2) await Task.Delay(50, token).ConfigureAwait(false);
         }
-        // Undetermined (timeout/exception/no focused element): never inject, but name the real cause.
-        // A focus switch mid-read or a held modifier (a Win key opens Start and steals UIA focus) explains it.
-        if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
-        await WaitForModifiersAsync(token).ConfigureAwait(false);
-        if (services.ModifiersHeld) return SelectionResult.Refuse(SelectionFailure.ModifiersHeld, check + " (undetermined, modifiers held)");
-        if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
         return SelectionResult.Refuse(SelectionFailure.SelectionUndetermined, check);
     }
 }

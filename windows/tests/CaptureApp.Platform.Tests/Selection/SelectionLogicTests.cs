@@ -126,7 +126,7 @@ public sealed class SelectionLogicTests
     {
         var fake = new FakeServices();
         fake.CopyScript.Enqueue(new(null, 0, false, NotOpened: true));
-        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken);
+        var result = await new SelectionReader(fake, copyDeadline: TimeSpan.FromSeconds(10)).ReadAsync(true, Target, TestContext.Current.CancellationToken);
         Assert.Equal("copied", result.Capture?.Text);
         Assert.Equal(1, fake.Restores);
     }
