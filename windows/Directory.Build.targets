@@ -1,0 +1,26 @@
+<Project>
+  <Target Name="ValidateAppEnvironment" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(AppName)' == '' Or '$(BundlePrefix)' == '' Or '$(AppVersion)' == '' Or '$(AppBuild)' == '' Or '$(GitHubRepo)' == ''"
+           Text="Config/app.env must define APPNAME, BUNDLE_PREFIX, VERSION, BUILD, and GITHUB_REPO." />
+  </Target>
+  <Target Name="GenerateAppInfo" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'CaptureApp.Core'">
+    <ItemGroup>
+      <_AppInfoLine Include="// Generated from Config/app.env. Do not edit." />
+      <_AppInfoLine Include="namespace CaptureApp.Core%3B" />
+      <_AppInfoLine Include="public static class AppInfo {" />
+      <_AppInfoLine Include="public const string Name = &quot;$(AppName)&quot;%3B" />
+      <_AppInfoLine Include="public const string BundlePrefix = &quot;$(BundlePrefix)&quot;%3B" />
+      <_AppInfoLine Include="public const string BundleId = &quot;$(BundlePrefix).$(AppName)&quot;%3B" />
+      <_AppInfoLine Include="public const string Version = &quot;$(AppVersion)&quot;%3B" />
+      <_AppInfoLine Include="public const string Build = &quot;$(AppBuild)&quot;%3B" />
+      <_AppInfoLine Include="public const string GitHubRepo = &quot;$(GitHubRepo)&quot;%3B" />
+      <_AppInfoLine Include="public const string WindowsUpdateKeys = &quot;$(WindowsUpdateKeys)&quot;%3B" />
+      <_AppInfoLine Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)AppInfo.g.cs" Lines="@(_AppInfoLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)AppInfo.g.cs" />
+      <FileWrites Include="$(IntermediateOutputPath)AppInfo.g.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

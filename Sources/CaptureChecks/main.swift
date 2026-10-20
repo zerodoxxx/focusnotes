@@ -2,6 +2,7 @@ import AppKit
 @_spi(Testing) import CaptureKit
 import Darwin
 import Foundation
+import Vision
 
 enum CheckFailure: Error, CustomStringConvertible {
     case failed(String)
@@ -13,6 +14,177 @@ enum CheckFailure: Error, CustomStringConvertible {
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     guard condition() else { throw CheckFailure.failed(message) }
+}
+
+private struct CorpusManifestEntry: Decodable {
+    let file: String
+    let category: String
+    let language: String
+    let scale: Double
+    let dark: Bool
+    let groundTruth: String
+}
+
+private struct OCRBaselineImage: Codable {
+    let file: String
+    let category: String
+    let language: String
+    let scale: Double
+    let dark: Bool
+    let groundTruth: String
+    let text: String
+    let latencyMs: Double
+    let classifierDecision: String
+}
+
+private struct OCRBaseline: Codable {
+    let schemaVersion: Int
+    let operatingSystem: String
+    let architecture: String
+    let recognitionLevel: String
+    let recognitionRevision: Int
+    let warmupRuns: Int
+    let usesLanguageCorrection: Bool
+    let supportedRecognitionLanguages: [String]
+    let images: [OCRBaselineImage]
+}
+
+private func runOCRCorpus(corpusDirectory: URL, outputFile: URL) async throws {
+    let manifestURL = corpusDirectory.appendingPathComponent("manifest.json")
+    let manifest = try JSONDecoder().decode([CorpusManifestEntry].self, from: Data(contentsOf: manifestURL))
+    try require(!manifest.isEmpty, "OCR corpus manifest is empty")
+
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("capture-checks-ocr-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    var combined: OCRBaseline?
+    var images: [OCRBaselineImage] = []
+    let executablePath = CommandLine.arguments[0]
+    let executableURL = URL(fileURLWithPath: executablePath.hasPrefix("/")
+        ? executablePath
+        : URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(executablePath).path)
+    let languages = Set(manifest.map(\.language)).sorted()
+    for (index, language) in languages.enumerated() {
+        let childOutput = temporaryDirectory.appendingPathComponent("language-\(index).json")
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = ["--ocr-corpus-language", corpusDirectory.path, language, childOutput.path]
+        try process.run()
+        process.waitUntilExit()
+        try require(process.terminationStatus == 0, "Vision corpus worker failed for \(language) (exit \(process.terminationStatus))")
+        let result = try JSONDecoder().decode(OCRBaseline.self, from: Data(contentsOf: childOutput))
+        if let first = combined {
+            try require(first.recognitionRevision == result.recognitionRevision
+                        && first.supportedRecognitionLanguages == result.supportedRecognitionLanguages,
+                        "Vision language or revision metadata changed between corpus workers")
+        } else {
+            combined = result
+        }
+        images.append(contentsOf: result.images)
+    }
+
+    guard let first = combined else { throw CheckFailure.failed("OCR corpus has no language groups") }
+    let baseline = OCRBaseline(schemaVersion: first.schemaVersion, operatingSystem: first.operatingSystem,
+                               architecture: first.architecture, recognitionLevel: first.recognitionLevel,
+                               recognitionRevision: first.recognitionRevision,
+                               warmupRuns: first.warmupRuns,
+                               usesLanguageCorrection: first.usesLanguageCorrection,
+                               supportedRecognitionLanguages: first.supportedRecognitionLanguages,
+                               images: images.sorted { $0.file < $1.file })
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    try FileManager.default.createDirectory(at: outputFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(baseline).write(to: outputFile, options: .atomic)
+    print("Vision baseline: wrote \(images.count) image results to \(outputFile.path)")
+    print("Vision accurate revision \(baseline.recognitionRevision), \(baseline.supportedRecognitionLanguages.count) supported languages")
+}
+
+private func runOCRCorpusLanguage(corpusDirectory: URL, language: String, outputFile: URL) async throws {
+    // Foundation canonicalizes Norwegian Bokmål `no-NO` to the equivalent `nb-NO` tag.
+    let preferredLanguage = language == "no-NO" ? "nb-NO" : language
+    UserDefaults.standard.setVolatileDomain(["AppleLanguages": [preferredLanguage]], forName: UserDefaults.argumentDomain)
+    try require(Locale.preferredLanguages.first == preferredLanguage, "Could not select Vision language preference \(preferredLanguage)")
+    let manifestURL = corpusDirectory.appendingPathComponent("manifest.json")
+    let manifest = try JSONDecoder().decode([CorpusManifestEntry].self, from: Data(contentsOf: manifestURL))
+        .filter { $0.language == language }
+    try require(!manifest.isEmpty, "OCR corpus has no images for \(language)")
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    let languages = try request.supportedRecognitionLanguages()
+    try require(languages.contains(preferredLanguage), "Vision .accurate does not support corpus language \(preferredLanguage)")
+    let revision = request.revision
+
+    let warmupEntry = manifest[0]
+    let warmup = try await OCR.recognize(pngData: Data(contentsOf: corpusDirectory.appendingPathComponent(warmupEntry.file)))
+    _ = CaptureClassifier.classify(warmup)
+
+    var images: [OCRBaselineImage] = []
+    images.reserveCapacity(manifest.count)
+    for entry in manifest {
+        let imageURL = corpusDirectory.appendingPathComponent(entry.file)
+        let png = try Data(contentsOf: imageURL)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let result = try await OCR.recognize(pngData: png)
+        let classification = CaptureClassifier.classify(result)
+        let elapsed = DispatchTime.now().uptimeNanoseconds - start
+        images.append(OCRBaselineImage(file: entry.file, category: entry.category, language: entry.language,
+                                       scale: entry.scale, dark: entry.dark, groundTruth: entry.groundTruth,
+                                       text: result.text, latencyMs: Double(elapsed) / 1_000_000,
+                                       classifierDecision: classification.decision.rawValue))
+        print(String(format: "OCR corpus %@: %.1f ms", entry.file, Double(elapsed) / 1_000_000))
+    }
+
+    let architecture: String
+    #if arch(arm64)
+    architecture = "arm64"
+    #elseif arch(x86_64)
+    architecture = "x86_64"
+    #else
+    architecture = "unknown"
+    #endif
+    let baseline = OCRBaseline(schemaVersion: 1, operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+                               architecture: architecture,
+                               recognitionLevel: "accurate", recognitionRevision: revision,
+                               warmupRuns: 1,
+                               usesLanguageCorrection: true, supportedRecognitionLanguages: languages, images: images)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    try encoder.encode(baseline).write(to: outputFile, options: .atomic)
+}
+
+if CommandLine.arguments.count > 1 {
+    do {
+        switch CommandLine.arguments[1] {
+        case "--ocr-corpus":
+            guard CommandLine.arguments.count == 4 else {
+                throw CheckFailure.failed("Usage: CaptureChecks --ocr-corpus <corpusdir> <out.json>")
+            }
+            try await runOCRCorpus(corpusDirectory: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true),
+                                   outputFile: URL(fileURLWithPath: CommandLine.arguments[3]))
+        case "--ocr-corpus-language":
+            guard CommandLine.arguments.count == 5 else {
+                throw CheckFailure.failed("Usage: CaptureChecks --ocr-corpus-language <corpusdir> <language> <out.json>")
+            }
+            try await runOCRCorpusLanguage(corpusDirectory: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true),
+                                           language: CommandLine.arguments[3],
+                                           outputFile: URL(fileURLWithPath: CommandLine.arguments[4]))
+        case "--export-ocr-fixtures":
+            guard CommandLine.arguments.count == 3 else {
+                throw CheckFailure.failed("Usage: CaptureChecks --export-ocr-fixtures <dir>")
+            }
+            try Fixtures.exportOCRFixtures(to: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
+        default:
+            throw CheckFailure.failed("Unknown CaptureChecks mode. Use --ocr-corpus or --export-ocr-fixtures.")
+        }
+        exit(EXIT_SUCCESS)
+    } catch {
+        FileHandle.standardError.write(Data("Capture checks failed: \(error)\n".utf8))
+        exit(EXIT_FAILURE)
+    }
 }
 
 @MainActor

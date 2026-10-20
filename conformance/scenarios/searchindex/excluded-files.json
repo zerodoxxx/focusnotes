@@ -1,0 +1,53 @@
+{
+  "area" : "searchindex",
+  "description" : "Hidden, temporary, and root assets files are excluded.",
+  "expected" : {
+    "files" : {
+      ".hidden.md" : "# Hidden\n\nsecret\n",
+      "ASSETS/Note.md" : "# Asset\n\nsecret\n",
+      "Visible.md" : "# Visible\n\nvisible\n",
+      "~$temp.md" : "# Temp\n\nsecret\n"
+    },
+    "results" : [
+      {
+        "added" : 1,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+
+      ],
+      [
+        {
+          "id" : "Visible.md#loose-0",
+          "title" : "Visible"
+        }
+      ]
+    ]
+  },
+  "id" : "excluded-files",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      ".hidden.md" : "# Hidden\n\nsecret\n",
+      "ASSETS/Note.md" : "# Asset\n\nsecret\n",
+      "Visible.md" : "# Visible\n\nvisible\n",
+      "~$temp.md" : "# Temp\n\nsecret\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "secret"
+      },
+      {
+        "op" : "query",
+        "text" : "visible"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

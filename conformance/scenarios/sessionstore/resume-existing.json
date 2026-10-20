@@ -1,0 +1,32 @@
+{
+  "area" : "sessionstore",
+  "description" : "Starting a matching filename reuses its heading and bytes.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Standup.md" : "# Edited title\n\nExisting notes\n"
+    },
+    "results" : [
+      {
+        "name" : "Edited title",
+        "notePath" : "Sessions/Standup.md",
+        "resumed" : true,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "resume-existing",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Sessions/Standup.md" : "# Edited title\n\nExisting notes\n"
+    },
+    "ops" : [
+      {
+        "name" : "standup",
+        "op" : "start"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "area" : "notewriter",
+  "description" : "Typed-note identity prevents duplicate retries.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n<!-- note:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n\n  note  \ntext\n"
+    },
+    "results" : [
+      null,
+      null
+    ]
+  },
+  "id" : "typed-note-replay",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "content" : "note",
+        "noteMarkerIsIdentity" : true,
+        "op" : "appendIfMissing",
+        "path" : "Note.md",
+        "text" : "  note  \ntext\n",
+        "title" : "Note"
+      },
+      {
+        "content" : "note",
+        "noteMarkerIsIdentity" : true,
+        "op" : "appendIfMissing",
+        "path" : "Note.md",
+        "text" : "  note  \ntext\n",
+        "title" : "Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

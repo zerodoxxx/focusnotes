@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CaptureApp.Embed/CaptureApp.Embed.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The repo-root license files (same bytes as the Mac manifest), copied next to the app; see ModelInstaller.DefaultBundledResources. -->
+    <Content Include="../../../licenses/Apache-2.0.txt;../../../licenses/EmbeddingGemma2-NOTICE.txt"
+             Link="ModelLicenses/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CaptureApp.Embed.Tests" />
+  </ItemGroup>
+</Project>

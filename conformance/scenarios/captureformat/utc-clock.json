@@ -1,0 +1,26 @@
+{
+  "area" : "captureformat",
+  "description" : "UTC timestamps preserve the exact fixed second.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T09:00:42Z app=\"\" -->\n\nUTC\n"
+    ]
+  },
+  "id" : "utc-clock",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "block",
+        "text" : "UTC"
+      }
+    ],
+    "timeZone" : "UTC"
+  }
+}

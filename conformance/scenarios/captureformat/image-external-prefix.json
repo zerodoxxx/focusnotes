@@ -1,0 +1,29 @@
+{
+  "area" : "captureformat",
+  "description" : "An explicit asset prefix takes precedence over note depth.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](../vault/assets/shot.png)\n"
+    ]
+  },
+  "id" : "image-external-prefix",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "assetPath" : "assets/shot.png",
+        "assetPathPrefix" : "../vault",
+        "content" : "image",
+        "dir" : "Nested",
+        "op" : "block"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>CaptureApp.AppCore</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
+    <ProjectReference Include="../CaptureApp.Embed/CaptureApp.Embed.csproj" />
+  </ItemGroup>
+</Project>

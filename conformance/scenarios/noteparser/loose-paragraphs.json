@@ -1,0 +1,57 @@
+{
+  "area" : "noteparser",
+  "description" : "Ordinary headings and paragraphs remain loose blocks.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "Loose introduction\n### ordinary heading\nstill loose",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "Another paragraph",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Mixed"
+      }
+    ]
+  },
+  "id" : "loose-paragraphs",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Mixed\n\nLoose introduction\n### ordinary heading\nstill loose\n\nAnother paragraph\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

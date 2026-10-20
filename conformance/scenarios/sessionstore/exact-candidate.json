@@ -1,0 +1,35 @@
+{
+  "area" : "sessionstore",
+  "description" : "Resume the selected exact path rather than creating a note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/2026-10-12 Standup.md" : "# One\n",
+      "Sessions/2026-10-13 Standup.md" : "# Two\n"
+    },
+    "results" : [
+      {
+        "name" : "One",
+        "notePath" : "Sessions/2026-10-12 Standup.md",
+        "resumed" : true,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "exact-candidate",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Sessions/2026-10-12 Standup.md" : "# One\n",
+      "Sessions/2026-10-13 Standup.md" : "# Two\n"
+    },
+    "ops" : [
+      {
+        "name" : "Ignored candidate title",
+        "op" : "resume",
+        "path" : "Sessions/2026-10-12 Standup.md"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

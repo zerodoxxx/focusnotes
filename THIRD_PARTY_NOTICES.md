@@ -1,9 +1,11 @@
 # Third-party notices
 
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+
 This file records third-party components included in the source tree or
-obtained by the in-app model downloader, or by `scripts/fetch-models.sh` for
-developers and CI. Each component remains subject to
-its own upstream license. Project-owned code is licensed under MIT; see
+shipped with the app, and models obtained by the optional semantic-search
+downloader or model-fetch scripts for developers and CI. Each component remains
+subject to its own upstream license. Project-owned code is licensed under MIT; see
 [`LICENSE`](LICENSE). The project license does not replace upstream licenses
 for third-party components.
 
@@ -68,6 +70,38 @@ MIT license. The pinned model card also refers deployers to the
 - **Bundled notices:** release bundles include `LICENSE`,
   `THIRD_PARTY_NOTICES.md`, `Apache-2.0.txt`, and `EmbeddingGemma2-NOTICE.txt`
   in `Contents/Resources`.
+
+## Windows edition components
+
+The implemented Windows edition is built from the NuGet packages below at the versions pinned
+in `windows/Directory.Packages.props` and the committed `packages.lock.json` files; licenses were read from each
+package's metadata (`.nuspec`). Each package keeps its own license, and the shipped installer includes the upstream
+license files the packages carry. The app is published self-contained, so the .NET runtime and Windows Presentation
+Foundation libraries (MIT, Microsoft Corporation) are bundled with it.
+
+| Component | Version | License | Used for |
+| --- | --- | --- | --- |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) (`Microsoft.ML.OnnxRuntime`, `.Managed`), win-x64 and win-arm64 | 1.31.0 | MIT | Runs the OCR and embedding models. Same upstream release as the macOS runtime above, bundled in the installer instead of downloaded. |
+| [RapidOcrNet](https://github.com/BobLd/RapidOcrNet) | 4.2.0 | Apache-2.0 | .NET wrapper around the PaddleOCR detection, classification and recognition pipeline. |
+| [Clipper2](https://github.com/AngusJohnson/Clipper2) (`Clipper2`, a RapidOcrNet dependency) | 2.0.0 | Boost Software License 1.0 | Polygon geometry for OCR text boxes. |
+| [PaddleOCR PP-OCRv5 Latin model assets](https://github.com/PaddlePaddle/PaddleOCR), distributed in the [RapidOcrNet 4.2.0 NuGet package](https://www.nuget.org/packages/RapidOcrNet/4.2.0) with ONNX conversions from [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR) | RapidOcrNet 4.2.0 bundled defaults | Apache-2.0 | The default detector, orientation classifier, Latin recognizer and dictionary provide English-first OCR. These assets are supplied by NuGet and ship with the Windows installer; the app does not fetch separate OCR models. See the [PaddleOCR license](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE). |
+| [SQLitePCLRaw](https://github.com/ericsink/SQLitePCL.raw) (`bundle_e_sqlite3`, `core`, `provider.e_sqlite3`, `config.e_sqlite3`) | 3.0.5 | Apache-2.0 | .NET bindings and the bundled native build of SQLite with FTS5. |
+| [SQLite](https://www.sqlite.org/copyright.html) (native library from the `SQLite` package) | 3.53.4 | Public domain | The search index and vector store. |
+| [Microsoft.Data.Sqlite](https://github.com/dotnet/efcore) (`Microsoft.Data.Sqlite`, `.Core`) | 10.0.13 | MIT | ADO.NET access to SQLite. |
+| [Velopack](https://github.com/velopack/velopack) (library and the `vpk` packaging tool) | 1.2.161 | MIT | Per-user installer, delta updates and update application. |
+| [AvalonEdit](https://github.com/icsharpcode/AvalonEdit) | 6.3.1.120 | MIT | The quick-note text editor control. |
+| [SkiaSharp](https://github.com/mono/SkiaSharp) (with `SkiaSharp.NativeAssets.Win32`) | 3.119.1 | MIT; the bundled native Skia library keeps its upstream license | Image decoding and resizing for embeddings. |
+| [BouncyCastle.Cryptography](https://github.com/bcgit/bc-csharp) | 2.6.2 | MIT (per package metadata) | Ed25519 verification of the signed update index. |
+| [System.Numerics.Tensors](https://github.com/dotnet/runtime) (a RapidOcrNet dependency) | 9.0.0 | MIT | Tensor math. |
+
+The EmbeddingGemma 2 model files are the same pinned Hugging Face revision described above; the Windows opt-in downloads
+only those files, because ONNX Runtime ships with the app. The Windows build also carries Unicode case-folding data in
+`windows/src/CaptureApp.Core/UnicodeCaseFolding.cs`, covered by the Unicode License v3 in
+[`windows/src/CaptureApp.Core/UnicodeCaseFolding.LICENSE.txt`](windows/src/CaptureApp.Core/UnicodeCaseFolding.LICENSE.txt),
+which is copied next to the build output.
+
+Test-only packages are not distributed: xUnit (`xunit.v3.mtp-off` 4.0.2, `xunit.runner.visualstudio` 4.0.1, Apache-2.0)
+and `Microsoft.NET.Test.Sdk` 18.11.0 (MIT).
 
 ## Project icon assets
 

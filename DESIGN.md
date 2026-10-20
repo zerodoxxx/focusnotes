@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-18 (previous commit: `bf56cbca3b8cb1cc9b97b168111ca871d883264c`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 ## Product surfaces
 
@@ -59,3 +59,82 @@ The editor uses 15-point system text with 1.25 line spacing, 13.5-point monospac
 Accessibility semantics are assigned to individual controls: the editor text view is labeled “Note text,” quick-note chrome buttons have labels and tooltips, and Actions and Browse rows expose button roles and labels. ([Sources/OverlayKit/NoteEditorPanel.swift](Sources/OverlayKit/NoteEditorPanel.swift#L454-L455), [Sources/OverlayKit/NoteChrome.swift](Sources/OverlayKit/NoteChrome.swift#L19-L34), [Sources/OverlayKit/NoteActionMenu.swift](Sources/OverlayKit/NoteActionMenu.swift#L140-L156), [Sources/OverlayKit/NoteBrowseView.swift](Sources/OverlayKit/NoteBrowseView.swift#L13-L30)) Search result rows expose button roles and selected values, while the toast is a static text element and posts an accessibility announcement. ([Sources/OverlayKit/SharedViews.swift](Sources/OverlayKit/SharedViews.swift#L182-L212), [Sources/OverlayKit/Toast.swift](Sources/OverlayKit/Toast.swift#L46-L50), [Sources/OverlayKit/Toast.swift](Sources/OverlayKit/Toast.swift#L95-L103))
 
 The quick note adjusts its height to content and screen height, and its Browse card limits visible rows and scrolls overflow. ([Sources/OverlayKit/NoteEditorPanel.swift](Sources/OverlayKit/NoteEditorPanel.swift#L926-L949), [Sources/OverlayKit/NoteBrowseView.swift](Sources/OverlayKit/NoteBrowseView.swift#L78-L100), [Sources/OverlayKit/NoteBrowseView.swift](Sources/OverlayKit/NoteBrowseView.swift#L192-L219)) Search and input panel layouts use fixed widths of 640 and 480 points respectively. ([Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L53-L61), [Sources/OverlayKit/SearchPanel.swift](Sources/OverlayKit/SearchPanel.swift#L77-L83), [Sources/OverlayKit/InputPanel.swift](Sources/OverlayKit/InputPanel.swift#L25-L30))
+
+## Windows edition
+
+The implemented Windows edition keeps the Mac product surfaces above and changes only what the platform forces or what a new first-launch flow needs. Windows installers are not part of the currently published releases. Its user-visible strings come from one table, with the Mac's wording and these maps: Ctrl for ⌘, "File Explorer" for "Finder", "tray icon" for "menu bar icon", Setup for Permissions, and the user's current shortcut in place of the Mac's ⌥⇧ hints. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs))
+
+### Tray menu
+
+The app lives in the notification area with no taskbar button or main window; the icon has light, dark and attention variants. The menu keeps the Mac's order, with items in this sequence and each command showing the user's current shortcut: ([windows/src/CaptureApp.AppCore/Shell/TrayMenuBuilder.cs](windows/src/CaptureApp.AppCore/Shell/TrayMenuBuilder.cs), [windows/src/CaptureApp.Platform/Assets](windows/src/CaptureApp.Platform/Assets))
+
+1. **Finish Setup… (n left)**, followed by a separator, only while a required Setup step is incomplete or a step has failed. Before the first Setup page is answered the menu contains only this item and **Quit**.
+2. **Capture Selection**, **Capture Area**, **Search Notes…**, **Start Session…** (becoming **End Session “name”** during a session), **Write a Note…**, **Add Subheading…**.
+3. When shortcuts failed to register: a disabled “N keyboard shortcuts unavailable” line and **Retry Shortcuts**.
+4. A separator, then **Open Notes Folder**.
+5. **Semantic Search**: **Enable Semantic Search…** (or **Resume Semantic Search…** after a partial download), **Downloading Models… n%**, **Removing Models…**, or a checked **Semantic Search** with **Remove Models…** beneath it.
+6. **Setup…** and **Settings…**.
+7. The update item, when updates are enabled: **Check for Updates…**, **Checking for Updates…**, **Downloading Update (vX)…**, **Restart to Update (vX)**, or **Update failed** with **Retry** and **Download installer**.
+8. A separator, then **Quit <app name>**.
+
+The attention badge appears while any required Setup step is incomplete or any step has failed; a skipped recommended step shows as “Not tested” and never raises it. Windows 11 may place a new icon in the overflow flyout, which Setup explains.
+
+### Panels and focus model
+
+Windows delivers keystrokes only to the focused window of the foreground thread, so a typing panel cannot borrow focus the way the Mac's nonactivating panels do (deviation DV1). The end state matches the Mac instead:
+
+- Interactive panels (quick note, search, input, session picker) activate when they need typing. Clicks on a panel's buttons do not activate it and still run on the first click, as on the Mac. ([windows/src/CaptureApp.Overlay/OverlayWindow.cs](windows/src/CaptureApp.Overlay/OverlayWindow.cs))
+- The panel remembers the last non-app foreground window from just before it activated, and refreshes that each time it is re-activated. An explicit close (save, Esc, ✕) returns focus to that window only if it still exists, is not minimized and is on the current virtual desktop; otherwise the app does nothing. Opening another focusnotes panel hands the remembered window to it, and quitting never restores focus. ([windows/src/CaptureApp.Overlay/OverlayWindow.cs](windows/src/CaptureApp.Overlay/OverlayWindow.cs), [windows/src/CaptureApp.App/ForegroundTracker.cs](windows/src/CaptureApp.App/ForegroundTracker.cs))
+- Clicking another window leaves focus there and the app makes no foreground call afterwards. The quick note stays visible (sticky); search and input dismiss, including on a virtual-desktop switch.
+- Pressing the Write shortcut on a visible but inactive quick note re-activates it with text, caret and scroll kept; on the active note it closes and keeps the draft.
+- Toasts are click-through, never activate, stay out of the taskbar and Alt+Tab, and sit topmost 72 DIPs above the work area's bottom edge; geometry, sizes and timings use the Mac's values in DIPs against the monitor's work area, with per-monitor DPI awareness. Panel positions are saved as screen fractions in `settings.json`.
+
+Keyboard keys inside the quick note use Ctrl for ⌘: Ctrl+Enter saves, Ctrl+K opens Actions, Ctrl+P browses, Ctrl+N starts a new note, Ctrl+O opens as note, Ctrl+Shift+P pins, Ctrl+Shift+C copies Markdown, Ctrl+Shift+Backspace discards the draft, Shift+Enter inserts a plain newline, and Ctrl+Z with Ctrl+Y or Ctrl+Shift+Z undo and redo. In search, Enter copies, Ctrl+Enter opens, and Alt+Enter shows the note in File Explorer. ([windows/src/CaptureApp.Platform/Hotkeys/KeyChord.cs](windows/src/CaptureApp.Platform/Hotkeys/KeyChord.cs))
+
+### Toasts
+
+Toast styles, strings and durations follow the Mac. Windows adds these: “Can't capture from apps running as administrator” with “Use Capture Area (<shortcut>) instead”; “Release the shortcut keys and try again” when modifier keys are still held; “Couldn't capture selection” with “Your clipboard is too large to restore safely” when the clipboard fallback cannot restore safely; “Can't capture from secure fields”; “No text selected” with “This app doesn't share its selection; turn on the clipboard fallback in Settings” when the fallback is off; “Finish Setup to capture” before the first Setup page is answered; and “Setup needs attention” with “Open the tray icon → Setup” when a launch-time check regresses. ([windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs), [windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Overlay/ToastView.cs](windows/src/CaptureApp.Overlay/ToastView.cs))
+
+### Setup
+
+Setup opens on the first launch, again at the first incomplete required step on later launches, and from tray → **Setup…**. It is a window with a step list on the left, each step showing Passed, Needs attention, Skipped, “Not done yet” (required) or “Not tested” (recommended). ([windows/src/CaptureApp.App/SetupWindow.cs](windows/src/CaptureApp.App/SetupWindow.cs), [windows/src/CaptureApp.AppCore/Shell/SetupModel.cs](windows/src/CaptureApp.AppCore/Shell/SetupModel.cs))
+
+| Step | Class | What it does |
+| --- | --- | --- |
+| 0 Disclosure and consent | Required | Lists what the app uses and when: system-wide shortcuts, reading the selection through UI Automation, the clipboard fallback, screen pixels during Capture Area, files in the notes folder and state directory, and network use. Asks two explicit questions: use the clipboard fallback or not, and check for updates automatically (daily) or only on request. No shortcut is registered and no capture runs until both are answered. |
+| 1 Notes folder | Required | Shows the default or another folder and runs a write probe; failures explain the cause and offer another folder. Captures still journal meanwhile. |
+| 2 Keyboard shortcuts | Required | Registers all seven, shows each result, runs the AltGr guard, and lets each shortcut be changed, turned off or retried. |
+| 3 Selection capture test | Recommended | Asks the user to select a sample sentence and press the Capture Selection shortcut. |
+| 4 Area capture test | Recommended | Captures a region and confirms the image is written and OCR finds text. |
+| 5 Tray icon | Recommended | Confirms the icon is visible and explains the overflow flyout. |
+| 6 Start at login | Recommended | A pre-checked toggle stored as a per-user Run entry; also manageable in Windows Settings → Apps → Startup. |
+| 7 Updates | Recommended | Shows the choice made in step 0 for review. |
+| 8 Semantic search | Recommended | A pointer to the opt-in; nothing is downloaded here. |
+
+Progress is saved after every step, so closing the window or killing the app resumes where it stopped. Every launch silently re-checks the cheap conditions (notes folder writable, shortcuts registered, Run entry present, update choice present) and flips a regressed step to failed. A release that adds steps shows only the new ones.
+
+### Settings
+
+Settings has three tabs. **Shortcuts** lists the seven actions with **Change…** (press the new combination), **Turn off** or **Turn on**, **Check again** and **Reset to defaults**. **General** holds **Start at login**, **Use the clipboard fallback for Capture Selection** (with a note that the target app's own copy may appear in clipboard history), and the **Notes folder** chooser, which applies after a restart. **Updates** holds the automatic or on-request choice and **Check now**. ([windows/src/CaptureApp.App/SettingsWindow.cs](windows/src/CaptureApp.App/SettingsWindow.cs), [windows/src/CaptureApp.App/ShortcutsPanel.cs](windows/src/CaptureApp.App/ShortcutsPanel.cs))
+
+### Shortcuts, rebinding and the AltGr guard
+
+The defaults are Ctrl+Alt+Shift plus Q (Capture Selection), G (Capture Area), F (Search), A (session), W (Write a Note), H (subheading) and E (notes folder). They were chosen because no global binding was found in Windows, PowerToys or the common apps for them, but that is provisional until tested on real devices. A rebinding is rejected if it uses the Windows key, uses Ctrl+Alt without Shift (Windows treats it as AltGr), duplicates a key used inside the note panels, or cannot be registered; it is test-registered before it is saved. Ctrl+Alt+Shift+letter equals AltGr+Shift+letter on some keyboard layouts, so the guard checks each installed layout, refuses a combination that types a character, and proposes another letter. A registration failure shows the “Some keyboard shortcuts are unavailable” toast, the tray status line and a Retry command. ([windows/src/CaptureApp.Platform/Hotkeys/KeyChord.cs](windows/src/CaptureApp.Platform/Hotkeys/KeyChord.cs), [windows/src/CaptureApp.Platform/Hotkeys/AltGrGuard.cs](windows/src/CaptureApp.Platform/Hotkeys/AltGrGuard.cs), [windows/src/CaptureApp.Platform/Hotkeys/HotkeyBindingStore.cs](windows/src/CaptureApp.Platform/Hotkeys/HotkeyBindingStore.cs))
+
+### Deviations from the Mac
+
+Each difference below is intentional, has a cited platform cause, and is checked by an outcome test.
+
+| ID | Difference | Effect |
+| --- | --- | --- |
+| DV1 | Interactive panels activate for typing instead of borrowing focus; button clicks do not activate. | Same end state; while typing, the other app shows as inactive and may close an open dropdown. |
+| DV2 | Selection capture cannot read apps running as administrator (Windows blocks it for a normal-integrity app). | A toast points to Capture Area, which still works. |
+| DV3 | Different default shortcuts, plus rebinding. | Same seven actions. |
+| DV4 | The English-first Windows POC uses RapidOcrNet's bundled PP-OCRv5 Latin set through ONNX Runtime. | Multilingual language selection is deferred; recognised text can differ slightly from the Mac. |
+| DV5 | No thermal signal exists. | Background embedding runs at low priority with EcoQoS instead of waiting on temperature. |
+| DV6 | A stricter clipboard fallback: it aborts if the clipboard is too large or unreadable, or while keys are held. | A refusal toast where the Mac would capture. |
+| DV7 | Windows file-name rules reject names the Mac accepts (`CON`, `a:b`, a trailing dot). | The same reserved-name message. |
+| DV8 | The target app's own copy may appear in Windows clipboard history during the fallback. | One extra history entry; disclosed in Setup. |
+| DV9 | Ctrl for ⌘, File Explorer for Finder, tray for menu bar. | Wording and keys only. |
+| DV10 | ONNX Runtime ships in the installer, so the semantic opt-in downloads only models. | Larger installer, smaller opt-in. |
+| DV11 | Additions with no Mac counterpart: Setup, Settings, start at login, single instance, log files, update-key rotation. | New windows and settings. |

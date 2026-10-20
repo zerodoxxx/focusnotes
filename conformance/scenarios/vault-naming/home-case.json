@@ -1,0 +1,35 @@
+{
+  "area" : "vault-naming",
+  "description" : "Home operations never read the host home directory.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      null,
+      {
+        "relativePath" : "Desktop/Existing.md",
+        "scope" : "home"
+      }
+    ]
+  },
+  "id" : "home-case",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "write",
+        "path" : "/Desktop/Existing.md",
+        "text" : "# Existing\n"
+      },
+      {
+        "op" : "resolve",
+        "text" : "/desktop/existing"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

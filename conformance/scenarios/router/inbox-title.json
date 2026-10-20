@@ -1,0 +1,30 @@
+{
+  "area" : "router",
+  "description" : "The Inbox title is matched case-insensitively.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "inbox",
+        "path" : "Inbox.md",
+        "title" : "Inbox"
+      }
+    ]
+  },
+  "id" : "inbox-title",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "INBOX"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

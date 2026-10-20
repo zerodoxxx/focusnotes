@@ -1,0 +1,28 @@
+{
+  "area" : "vault-naming",
+  "description" : "Reject a path beyond the component limit.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "tooDeep"
+      }
+    ]
+  },
+  "id" : "depth-33",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

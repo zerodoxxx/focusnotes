@@ -1,0 +1,26 @@
+{
+  "area" : "captureformat",
+  "description" : "Whitespace-only captures use the empty placeholder.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n(empty)\n"
+    ]
+  },
+  "id" : "empty-text",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "block",
+        "text" : " \n\t "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "area" : "captureformat",
+  "description" : "The calendar zone supplies daylight saving offsets.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-06-30T20:15:00-04:00 app=\"\" -->\n\nDST\n"
+    ]
+  },
+  "id" : "dst-clock",
+  "input" : {
+    "clock" : "2026-07-01T00:15:00Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "block",
+        "text" : "DST"
+      }
+    ],
+    "timeZone" : "America/New_York"
+  }
+}

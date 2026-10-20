@@ -1,0 +1,28 @@
+{
+  "area" : "notewriter",
+  "description" : "Append creates one title and one capture block.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nbody\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "new-file",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

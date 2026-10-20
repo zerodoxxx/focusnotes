@@ -1,5 +1,7 @@
 # Release review checklist
 
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
 until the open items below are closed.
@@ -95,6 +97,30 @@ results above do not replace them. See [releasing.md](releasing.md).
   `EmbedChecks/generate-reference.py`: see
   `Sources/EmbedChecks/requirements-reference.txt` (fixture-recorded versions;
   numpy bounded).
+
+## Windows distribution status
+
+The Windows edition is implemented, but Windows installers are not part of the currently published releases.
+Nothing here is closed; do not attach Windows files to a release until every item below is checked. macOS items above
+are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the setup behind these items.
+
+- [ ] Code signing: a SignPath (or fallback) certificate chains to a Trusted Root Program CA; `SIGNPATH_API_TOKEN`,
+  `WINDOWS_SIGN_TEMPLATE` and the repository variable `WINDOWS_SIGNER_THUMBPRINTS` are set.
+- [ ] Update keys: `scripts/make-windows-update-key.sh` was run for K1 and K2, `WINDOWS_UPDATE_ED_KEYS` is committed,
+  K1 is the `WINDOWS_UPDATE_ED_KEY_1` secret, and K2 is backed up offline and kept out of CI.
+- [ ] The enforced signing inventory passes for x64 and arm64, with every file ours-and-signed, vendor-signed or on
+  the upstream allow-list.
+- [ ] Smart App Control run on Windows 11 x64 and arm64 in enforcement and evaluation mode: install, every feature
+  (including OCR and the semantic opt-in), an update, and uninstall all work, and the CodeIntegrity log shows no
+  event 3076 or 3077 for any file we ship.
+- [ ] Install and update on native Windows 11 x64, Windows 11 arm64 and Windows 10 22H2 x64; the arm64 installer is
+  refused on x64.
+- [ ] The device checks in the Windows section of [manual-tests.md](manual-tests.md) pass on all three targets.
+- [ ] Deviations DV1-DV11, OCR languages not covered by the bundled models, and any exception to the measured focus,
+  OCR and resource gates are signed off by the maintainer.
+- [ ] `THIRD_PARTY_NOTICES.md` lists every shipped Windows component at its shipped version.
+- [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, and their release-availability
+  statements are updated in the same change that publishes Windows installers.
 
 ## Review limits
 

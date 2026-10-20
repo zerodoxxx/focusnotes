@@ -1,0 +1,29 @@
+{
+  "area" : "captureformat",
+  "description" : "A grouped capture can omit its visible heading.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Editor\" -->\n\nbody\n"
+    ]
+  },
+  "id" : "no-source-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "Editor",
+        "includeSourceHeading" : false,
+        "op" : "block",
+        "text" : "body",
+        "window" : "Window"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "area" : "noteparser",
+  "description" : "Backtick and tilde fences hide structural markers.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body\n\n````\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n````",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fences"
+      },
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body\n\n~~~\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n~~~",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fences"
+      }
+    ]
+  },
+  "id" : "fenced-markers",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Fences\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n\n````\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n````\n"
+      },
+      {
+        "op" : "parse",
+        "text" : "# Fences\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n\n~~~\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n~~~\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

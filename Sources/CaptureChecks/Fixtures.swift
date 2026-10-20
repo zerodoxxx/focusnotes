@@ -31,6 +31,16 @@ enum Fixtures {
         return data as Data
     }
 
+    static func exportOCRFixtures(to directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var fixtures = try make()
+        fixtures.append(Fixture(name: "empty", image: try empty(), expectedText: false))
+        for fixture in fixtures {
+            try png(fixture.image).write(to: directory.appendingPathComponent("\(fixture.name).png"), options: .atomic)
+        }
+        print("OCR fixtures: exported \(fixtures.count) PNGs to \(directory.path)")
+    }
+
     private static func canvas(width: Int = 720, height: Int = 420, draw: (CGContext, CGFloat) -> Void) throws -> CGImage {
         guard let context = CGContext(data: nil, width: width * 2, height: height * 2, bitsPerComponent: 8,
                                       bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -138,6 +148,10 @@ enum Fixtures {
                 context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 720, y: 420), options: [])
             }
         }
+    }
+
+    private static func empty() throws -> CGImage {
+        try canvas { _, _ in }
     }
 
     private static func table() throws -> CGImage {

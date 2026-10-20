@@ -1,0 +1,37 @@
+{
+  "area" : "searchindex",
+  "description" : "Title-only notes produce no searchable body blocks.",
+  "expected" : {
+    "files" : {
+      "Empty.md" : "# Lonely\n"
+    },
+    "results" : [
+      {
+        "added" : 1,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+
+      ]
+    ]
+  },
+  "id" : "empty-title-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Empty.md" : "# Lonely\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "lonely"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

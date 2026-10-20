@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>$(AppName)</AssemblyName>
+    <RootNamespace>CaptureApp.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(CIUpdateTests)' == 'true'">
+    <DefineConstants>$(DefineConstants);CI_UPDATE_TESTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CaptureApp.AppCore/CaptureApp.AppCore.csproj" />
+    <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
+    <ProjectReference Include="../CaptureApp.Platform/CaptureApp.Platform.csproj" />
+    <ProjectReference Include="../CaptureApp.Overlay/CaptureApp.Overlay.csproj" />
+    <ProjectReference Include="../CaptureApp.Embed/CaptureApp.Embed.csproj" />
+    <ProjectReference Include="../CaptureApp.ModelInstall/CaptureApp.ModelInstall.csproj" />
+    <ProjectReference Include="../CaptureApp.Updates/CaptureApp.Updates.csproj" />
+    <!-- The embedding helper ships next to the app; the controller launches it by path. -->
+    <ProjectReference Include="../CaptureApp.EmbedHelper/CaptureApp.EmbedHelper.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CaptureApp.App.Tests" />
+  </ItemGroup>
+</Project>

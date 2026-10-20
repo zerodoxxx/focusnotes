@@ -1,0 +1,151 @@
+{
+  "area" : "searchindex",
+  "description" : "Queries containing FTS operators or punctuation are sanitized.",
+  "expected" : {
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "results" : [
+      {
+        "added" : 4,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+
+      ],
+      [
+        {
+          "id" : "Token.md#loose-0",
+          "title" : "Token bucket"
+        },
+        {
+          "id" : "Other.md#loose-0",
+          "title" : "Other"
+        }
+      ],
+      [
+
+      ],
+      [
+        {
+          "id" : "Token.md#loose-0",
+          "title" : "Token bucket"
+        },
+        {
+          "id" : "Other.md#loose-0",
+          "title" : "Other"
+        }
+      ],
+      [
+        {
+          "id" : "Token.md#loose-0",
+          "title" : "Token bucket"
+        }
+      ]
+    ]
+  },
+  "id" : "syntax-sanitization",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : ""
+      },
+      {
+        "op" : "query",
+        "text" : "   "
+      },
+      {
+        "op" : "query",
+        "text" : "\""
+      },
+      {
+        "op" : "query",
+        "text" : "*"
+      },
+      {
+        "op" : "query",
+        "text" : "AND"
+      },
+      {
+        "op" : "query",
+        "text" : "OR NOT"
+      },
+      {
+        "op" : "query",
+        "text" : "NEAR("
+      },
+      {
+        "op" : "query",
+        "text" : "-x"
+      },
+      {
+        "op" : "query",
+        "text" : "a:b"
+      },
+      {
+        "op" : "query",
+        "text" : "😀"
+      },
+      {
+        "op" : "query",
+        "text" : "\" OR token*"
+      },
+      {
+        "op" : "query",
+        "text" : "{body}:^token+bucket"
+      },
+      {
+        "op" : "query",
+        "text" : "\u0000token"
+      },
+      {
+        "op" : "query",
+        "text" : "token -bucket"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

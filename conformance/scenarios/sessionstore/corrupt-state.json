@@ -1,0 +1,34 @@
+{
+  "area" : "sessionstore",
+  "description" : "Corrupt persisted JSON recovers as no current session.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      null,
+      null,
+      null
+    ]
+  },
+  "id" : "corrupt-state",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "writeState",
+        "text" : "{broken"
+      },
+      {
+        "op" : "reload"
+      },
+      {
+        "op" : "current"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

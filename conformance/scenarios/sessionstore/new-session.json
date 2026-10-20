@@ -1,0 +1,50 @@
+{
+  "area" : "sessionstore",
+  "description" : "Start persists a fixed-clock session and creates its note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Design.md" : "# Design\n"
+    },
+    "results" : [
+      {
+        "name" : "Design",
+        "notePath" : "Sessions/Design.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Design",
+        "notePath" : "Sessions/Design.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Design",
+        "notePath" : "Sessions/Design.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "new-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "  Design  ",
+        "op" : "start"
+      },
+      {
+        "op" : "current"
+      },
+      {
+        "op" : "persisted"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

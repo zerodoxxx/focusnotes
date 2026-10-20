@@ -1,0 +1,29 @@
+{
+  "area" : "notewriter",
+  "description" : "Legacy marker-only saved captures remain idempotent.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Source\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\nbody\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "legacy-replay",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Source\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\nbody\n"
+    },
+    "ops" : [
+      {
+        "op" : "appendIfMissing",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note",
+        "window" : "Source"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

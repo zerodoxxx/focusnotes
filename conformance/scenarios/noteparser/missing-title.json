@@ -1,0 +1,49 @@
+{
+  "area" : "noteparser",
+  "description" : "Ordinary Markdown keeps the first line as loose text.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "No leading title",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "paragraph",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          }
+        ],
+        "title" : "Stem"
+      }
+    ]
+  },
+  "id" : "missing-title",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "fallback" : "Stem",
+        "op" : "parse",
+        "text" : "No leading title\n\nparagraph"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

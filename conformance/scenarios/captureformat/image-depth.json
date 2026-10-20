@@ -1,0 +1,42 @@
+{
+  "area" : "captureformat",
+  "description" : "Images encode each URL segment and walk out of nested note folders.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](assets/my%20shot%20%23%C3%A9.png)\n",
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](../assets/my%20shot%20%23%C3%A9.png)\n",
+      "### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](../../../assets/my%20shot%20%23%C3%A9.png)\n"
+    ]
+  },
+  "id" : "image-depth",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "assetPath" : "assets/my shot #é.png",
+        "content" : "image",
+        "dir" : "",
+        "op" : "block"
+      },
+      {
+        "assetPath" : "assets/my shot #é.png",
+        "content" : "image",
+        "dir" : "Sessions",
+        "op" : "block"
+      },
+      {
+        "assetPath" : "assets/my shot #é.png",
+        "content" : "image",
+        "dir" : "Projects/Research/Deep",
+        "op" : "block"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

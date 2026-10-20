@@ -1,0 +1,26 @@
+{
+  "area" : "captureformat",
+  "description" : "Note headers preserve the supplied title.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "# Café 😀\n"
+    ]
+  },
+  "id" : "header",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "noteHeader",
+        "text" : "Café 😀"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

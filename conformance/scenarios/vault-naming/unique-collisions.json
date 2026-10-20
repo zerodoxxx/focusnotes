@@ -1,0 +1,28 @@
+{
+  "area" : "vault-naming",
+  "description" : "Choose the first available numeric collision suffix.",
+  "expected" : {
+    "files" : {
+      "Plan 2.md" : "# Plan\n",
+      "Plan.md" : "# Plan\n"
+    },
+    "results" : [
+      "Plan 3.md"
+    ]
+  },
+  "id" : "unique-collisions",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Plan 2.md" : "# Plan\n",
+      "Plan.md" : "# Plan\n"
+    },
+    "ops" : [
+      {
+        "op" : "unique",
+        "text" : "Plan"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

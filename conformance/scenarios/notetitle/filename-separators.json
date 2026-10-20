@@ -1,0 +1,26 @@
+{
+  "area" : "notetitle",
+  "description" : "Flatten filename separators and control characters.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "a-b-c-d-e"
+    ]
+  },
+  "id" : "filename-separators",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "fileStem",
+        "text" : "a/b:c\\d\u0007e"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

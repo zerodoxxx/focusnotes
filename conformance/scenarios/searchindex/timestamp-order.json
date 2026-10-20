@@ -1,0 +1,46 @@
+{
+  "area" : "searchindex",
+  "description" : "Equal relevance orders capture hits by newest timestamp.",
+  "expected" : {
+    "files" : {
+      "A.md" : "# Same\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:29:42+05:30 app=\"Browser\" -->\n\nshared\n",
+      "B.md" : "# Same\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nshared\n"
+    },
+    "results" : [
+      {
+        "added" : 2,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+        {
+          "id" : "B.md#00000000-0000-4000-8000-000000000002",
+          "title" : "Same"
+        },
+        {
+          "id" : "A.md#00000000-0000-4000-8000-000000000001",
+          "title" : "Same"
+        }
+      ]
+    ]
+  },
+  "id" : "timestamp-order",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "A.md" : "# Same\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:29:42+05:30 app=\"Browser\" -->\n\nshared\n",
+      "B.md" : "# Same\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nshared\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "shared"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "area" : "sessionstore",
+  "description" : "Legacy date-prefixed sessions can be resumed by bare name.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/2026-10-12 Standup.md" : "# Standup\n\nExisting notes\n"
+    },
+    "results" : [
+      {
+        "name" : "Standup",
+        "notePath" : "Sessions/2026-10-12 Standup.md",
+        "resumed" : true,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "resume-dated",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Sessions/2026-10-12 Standup.md" : "# Standup\n\nExisting notes\n"
+    },
+    "ops" : [
+      {
+        "name" : "standup",
+        "op" : "start"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

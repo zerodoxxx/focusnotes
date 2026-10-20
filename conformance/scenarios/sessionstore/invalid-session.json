@@ -1,0 +1,42 @@
+{
+  "area" : "sessionstore",
+  "description" : "Traversal and home-relative session names are rejected.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n"
+    },
+    "results" : [
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "invalid-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "../Escape",
+        "op" : "start"
+      },
+      {
+        "name" : "/Desktop/Session",
+        "op" : "start"
+      },
+      {
+        "name" : "folder/~$draft",
+        "op" : "start"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "area" : "vault-naming",
+  "description" : "The root assets directory is reserved case-insensitively.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "reserved-assets",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "assets/Note"
+      },
+      {
+        "op" : "resolve",
+        "text" : "ASSETS/Note"
+      },
+      {
+        "op" : "resolve",
+        "text" : "Assets/Note"
+      },
+      {
+        "op" : "resolve",
+        "text" : "~$draft"
+      },
+      {
+        "op" : "resolve",
+        "text" : "folder/~$draft"
+      },
+      {
+        "op" : "resolve",
+        "text" : "folder/../escape"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

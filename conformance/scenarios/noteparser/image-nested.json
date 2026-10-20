@@ -1,0 +1,40 @@
+{
+  "area" : "noteparser",
+  "description" : "Image links resolve relative to their note directory.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : "assets/my shot.png",
+            "body" : "![](../../assets/my%20shot.png)",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "image",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      }
+    ]
+  },
+  "id" : "image-nested",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "path" : "Projects/Deep/Note.md",
+        "text" : "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\n![](../../assets/my%20shot.png)\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

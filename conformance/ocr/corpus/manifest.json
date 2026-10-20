@@ -1,0 +1,82 @@
+[
+  {
+    "category": "ui",
+    "dark": false,
+    "file": "en-US/ui-01@2.0-light.png",
+    "groundTruth": "Project library\nSearch your notes\nRecent captures\nOpen folder\nSaved just now",
+    "language": "en-US",
+    "scale": 2
+  },
+  {
+    "category": "ui",
+    "dark": true,
+    "file": "en-US/ui-02@1.0-dark.png",
+    "groundTruth": "Quick note\nAdd a heading\nStart a session\nCancel     Save note\nChanges are synced",
+    "language": "en-US",
+    "scale": 1
+  },
+  {
+    "category": "code",
+    "dark": false,
+    "file": "en-US/code-01@1.5-light.png",
+    "groundTruth": "// Keep the newest capture\nstruct CaptureRecord {\n    let title: String\n    func save() { writeVault() }\n}",
+    "language": "en-US",
+    "scale": 1.5
+  },
+  {
+    "category": "code",
+    "dark": true,
+    "file": "en-US/code-02@2.0-dark.png",
+    "groundTruth": "func collectRecords() -> [CaptureRecord] {\n    let recent = loadRecords()\n    return recent.sorted { $0.date > $1.date }\n}",
+    "language": "en-US",
+    "scale": 2
+  },
+  {
+    "category": "docs",
+    "dark": false,
+    "file": "en-US/docs-01@1.0-light.png",
+    "groundTruth": "A clearer view of the work\nCapture useful details while they are fresh.\nSmall observations can connect distant ideas.\nReview these notes before the next session.",
+    "language": "en-US",
+    "scale": 1
+  },
+  {
+    "category": "docs",
+    "dark": true,
+    "file": "en-US/docs-02@1.5-dark.png",
+    "groundTruth": "Project notes\nUse a short title for each new thought.\nKeep related decisions in the same section.\nUpdated October 19, 2026",
+    "language": "en-US",
+    "scale": 1.5
+  },
+  {
+    "category": "chat",
+    "dark": false,
+    "file": "en-US/chat-01@2.0-light.png",
+    "groundTruth": "Mira  09:42\nThe new capture flow is ready to review.\nJon  09:46\nI will test it after the design check.",
+    "language": "en-US",
+    "scale": 2
+  },
+  {
+    "category": "chat",
+    "dark": true,
+    "file": "en-US/chat-02@1.0-dark.png",
+    "groundTruth": "Team channel  #planning\nMira: Please keep the first screen simple.\nJon: The table now includes source links.\n2 replies     Add a reaction",
+    "language": "en-US",
+    "scale": 1
+  },
+  {
+    "category": "table",
+    "dark": false,
+    "file": "en-US/table-01@1.5-light.png",
+    "groundTruth": "Item        Count        Status\nDrafts      12           Ready\nImages      4            Review\nExports     2            Complete",
+    "language": "en-US",
+    "scale": 1.5
+  },
+  {
+    "category": "table",
+    "dark": true,
+    "file": "en-US/table-02@2.0-dark.png",
+    "groundTruth": "Task        Owner        Due\nOCR review  Mira         Today\nCI runner   Jon          Friday\nRelease     Team         Oct 28",
+    "language": "en-US",
+    "scale": 2
+  }
+]

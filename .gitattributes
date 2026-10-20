@@ -1,0 +1,3 @@
+# Hash-pinned text files must keep their exact bytes on every checkout (Windows CI uses core.autocrlf).
+licenses/*.txt -text
+conformance/** -text

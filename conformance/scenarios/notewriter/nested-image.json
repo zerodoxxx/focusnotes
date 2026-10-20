@@ -1,0 +1,29 @@
+{
+  "area" : "notewriter",
+  "description" : "Nested note creation writes a relative encoded image link.",
+  "expected" : {
+    "files" : {
+      "Projects/Deep/Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](../../assets/my%20shot.png)\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "nested-image",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "assetPath" : "assets/my shot.png",
+        "content" : "image",
+        "op" : "append",
+        "path" : "Projects/Deep/Note.md",
+        "title" : "Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

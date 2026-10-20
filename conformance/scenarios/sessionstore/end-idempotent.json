@@ -1,0 +1,44 @@
+{
+  "area" : "sessionstore",
+  "description" : "Ending twice deletes state and preserves the session note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Design.md" : "# Design\n"
+    },
+    "results" : [
+      {
+        "name" : "Design",
+        "notePath" : "Sessions/Design.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      null,
+      null,
+      null
+    ]
+  },
+  "id" : "end-idempotent",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Design",
+        "op" : "start"
+      },
+      {
+        "op" : "end"
+      },
+      {
+        "op" : "end"
+      },
+      {
+        "op" : "reload"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

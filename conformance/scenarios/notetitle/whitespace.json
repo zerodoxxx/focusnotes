@@ -1,0 +1,26 @@
+{
+  "area" : "notetitle",
+  "description" : "Trim and collapse Unicode whitespace.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "Rate Limiting notes"
+    ]
+  },
+  "id" : "whitespace",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "cleanTitle",
+        "text" : "  Rate\t Limiting\n notes  "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

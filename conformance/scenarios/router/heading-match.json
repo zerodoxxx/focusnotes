@@ -1,0 +1,30 @@
+{
+  "area" : "router",
+  "description" : "Match the note heading independently of its filename.",
+  "expected" : {
+    "files" : {
+      "Other.md" : "# Café Notes\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Other.md",
+        "title" : "Café Notes"
+      }
+    ]
+  },
+  "id" : "heading-match",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Other.md" : "# Café Notes\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "  café  notes "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

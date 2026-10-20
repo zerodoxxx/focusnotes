@@ -1,0 +1,47 @@
+{
+  "area" : "notewriter",
+  "description" : "A subheading separates source groups without capture metadata.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Editor\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Editor\" -->\n\nbody\n\n## Section\n<!-- subheading:00000000-0000-4000-8000-000000000002 -->\n\n### Editor\n<!-- capture:00000000-0000-4000-8000-000000000003 at=2026-10-13T14:30:42+05:30 app=\"Editor\" -->\n\nbody\n"
+    },
+    "results" : [
+      null,
+      null,
+      null
+    ]
+  },
+  "id" : "subheading-grouping",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "Editor",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note"
+      },
+      {
+        "content" : "subheading",
+        "id" : "00000000-0000-4000-8000-000000000002",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "## Section",
+        "title" : "Note"
+      },
+      {
+        "app" : "Editor",
+        "id" : "00000000-0000-4000-8000-000000000003",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

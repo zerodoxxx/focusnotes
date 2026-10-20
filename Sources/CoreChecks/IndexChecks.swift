@@ -340,11 +340,26 @@ func checkSearchIndexPerformance() async throws {
         }
         try checkWrite(markdown, to: vault.root.appendingPathComponent("Synthetic \(note).md"))
     }
-    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("Cache/search.sqlite"), calendar: calendar)
+    let coldSampleCount = 3
+    let coldIndexes = try (0..<coldSampleCount).map { sample in
+        try SearchIndex(vault: vault,
+                        databaseURL: base.appendingPathComponent("Cache/search-cold-\(sample).sqlite"),
+                        calendar: calendar)
+    }
+    let index = coldIndexes[coldSampleCount - 1]
     let clock = ContinuousClock()
     var start = clock.now
-    let coldStats = try await index.sync()
-    let cold = indexSeconds(start.duration(to: clock.now))
+    var coldSamples: [Double] = []
+    for (sample, coldIndex) in coldIndexes.enumerated() {
+        start = clock.now
+        let coldStats = try await coldIndex.sync()
+        coldSamples.append(indexSeconds(start.duration(to: clock.now)))
+        if sample == coldSampleCount - 1 {
+            try require(coldStats.added == 2_000, "performance fixture should index all notes")
+        }
+    }
+    let sortedColdSamples = coldSamples.sorted()
+    let cold = sortedColdSamples[sortedColdSamples.count / 2]
     var warmSamples: [Double] = []
     for _ in 0..<5 {
         start = clock.now
@@ -364,10 +379,10 @@ func checkSearchIndexPerformance() async throws {
     }
     searches.sort()
     let median = (searches[9] + searches[10]) / 2
+    let coldSampleText = coldSamples.map { String(format: "%.3f", $0) }.joined(separator: ", ")
     let warmSampleText = warmSamples.map { String(format: "%.1f", $0 * 1_000) }.joined(separator: ", ")
-    print(String(format: "Index performance (2,000 notes × 10 captures): cold sync %.3f s; no-change sync samples [%@] ms, median %.1f ms; search median %.2f ms.", cold, warmSampleText, warm * 1_000, median * 1_000))
-    try require(coldStats.added == 2_000, "performance fixture should index all notes")
-    try require(cold < 6, "cold sync exceeded 6 seconds: \(cold)")
+    print(String(format: "Index performance (2,000 notes × 10 captures): cold sync samples [%@] s, median %.3f s; no-change sync samples [%@] ms, median %.1f ms; search median %.2f ms.", coldSampleText, cold, warmSampleText, warm * 1_000, median * 1_000))
+    try require(cold < 6, "cold sync median exceeded 6 seconds: \(cold) s; samples [\(coldSampleText)] s")
     try require(warm < 0.4, "no-change sync median exceeded 400 milliseconds: \(warm)")
     try require(median < 0.04, "search median exceeded 40 milliseconds: \(median)")
 }

@@ -1,0 +1,31 @@
+{
+  "area" : "captureformat",
+  "description" : "Direct helpers preserve body indentation and clean heading prefixes.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "  body  \nnext",
+      "Ideas here"
+    ]
+  },
+  "id" : "note-body-and-subheading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "noteBody",
+        "text" : "  body  \nnext  \n\n"
+      },
+      {
+        "op" : "cleanSubheading",
+        "text" : " ###  Ideas \n here "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

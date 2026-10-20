@@ -1,0 +1,67 @@
+{
+  "area" : "searchindex",
+  "description" : "Reindex replaces old blocks with updated file content.",
+  "expected" : {
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\nreplacementunique new body\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "results" : [
+      {
+        "added" : 4,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      null,
+      null,
+      [
+        {
+          "id" : "Other.md#loose-0",
+          "title" : "Other"
+        }
+      ],
+      [
+        {
+          "id" : "Token.md#loose-0",
+          "title" : "Token bucket"
+        }
+      ]
+    ]
+  },
+  "id" : "update-reindex",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "write",
+        "path" : "Other.md",
+        "text" : "# Other\n\nreplacementunique new body\n"
+      },
+      {
+        "op" : "reindex",
+        "path" : "Other.md"
+      },
+      {
+        "op" : "query",
+        "text" : "replacementunique"
+      },
+      {
+        "op" : "query",
+        "text" : "token"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

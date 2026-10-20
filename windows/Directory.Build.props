@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <_AppEnvironment>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../Config/app.env'))</_AppEnvironment>
+    <AppName>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^APPNAME=([^\r\n]+)').Groups[1].Value)</AppName>
+    <BundlePrefix>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^BUNDLE_PREFIX=([^\r\n]+)').Groups[1].Value)</BundlePrefix>
+    <AppVersion>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^VERSION=([^\r\n]+)').Groups[1].Value)</AppVersion>
+    <AppBuild>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^BUILD=([^\r\n]+)').Groups[1].Value)</AppBuild>
+    <GitHubRepo>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^GITHUB_REPO=([^\r\n]+)').Groups[1].Value)</GitHubRepo>
+    <WindowsUpdateKeys>$([System.Text.RegularExpressions.Regex]::Match('$(_AppEnvironment)', '(?m)^WINDOWS_UPDATE_ED_KEYS=([^\r\n]*)').Groups[1].Value)</WindowsUpdateKeys>
+    <Version>$(AppVersion)</Version>
+    <FileVersion>$(AppVersion).$(AppBuild)</FileVersion>
+  </PropertyGroup>
+</Project>

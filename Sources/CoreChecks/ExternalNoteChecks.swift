@@ -277,6 +277,10 @@ private func checkDirectHomeWatcherFiltering(base: URL, now: Date, calendar: Cal
     let directChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains(directLocation.id) }
     try require(directChange != nil, "direct-HOME watcher should report the registered note by its scoped ID")
 
+    // Drain late coalesced events for the registered note so only the sibling write is measured.
+    var drained = false
+    for _ in 0..<10 where !drained { drained = recorder.waitForQuiet(for: 0.5) }
+    try require(drained, "direct-HOME watcher should go quiet after the registered note change")
     try checkWrite("# Unregistered sibling\n\nchanged", to: unregisteredSibling)
     try require(recorder.waitForQuiet(for: 0.5), "direct-HOME watcher must ignore unregistered sibling files")
 }

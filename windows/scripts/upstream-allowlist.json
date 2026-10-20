@@ -1,0 +1,4 @@
+{
+  "_comment": "Class-3 signing inventory entries: unmodified upstream binaries that ship unsigned. Each entry is the SHA-256 (lowercase hex) of one exact file, with where it comes from. Review every addition; signing-inventory.ps1 matches by hash only.",
+  "entries": []
+}

@@ -1,0 +1,29 @@
+{
+  "area" : "vault-naming",
+  "description" : "Reuse case-insensitive existing folder and Markdown filename spelling.",
+  "expected" : {
+    "files" : {
+      "Science/Math/Trigonometry.MD" : "# Existing nested title\n"
+    },
+    "results" : [
+      {
+        "relativePath" : "Science/Math/Trigonometry.MD",
+        "scope" : "vault"
+      }
+    ]
+  },
+  "id" : "folders-and-case",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Science/Math/Trigonometry.MD" : "# Existing nested title\n"
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "science/math/trigonometry"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

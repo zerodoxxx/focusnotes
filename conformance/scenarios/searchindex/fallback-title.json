@@ -1,0 +1,46 @@
+{
+  "area" : "searchindex",
+  "description" : "Ordinary Markdown indexes its filename fallback title.",
+  "expected" : {
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "results" : [
+      {
+        "added" : 4,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+        {
+          "id" : "Manual.md#loose-0",
+          "title" : "Manual"
+        }
+      ]
+    ]
+  },
+  "id" : "fallback-title",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "fallbackunique"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

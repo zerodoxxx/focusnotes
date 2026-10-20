@@ -1,0 +1,35 @@
+{
+  "area" : "notetitle",
+  "description" : "Path components preserve cleaned folder names and sanitized punctuation.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "components" : [
+          "science",
+          "math-trig",
+          "triangles"
+        ],
+        "displayTitle" : "triangles",
+        "relativePath" : "science/math-trig/triangles",
+        "scope" : "vault"
+      }
+    ]
+  },
+  "id" : "nested-name",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "pathName",
+        "text" : " science / math:trig / triangles "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

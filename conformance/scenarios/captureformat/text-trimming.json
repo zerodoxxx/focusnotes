@@ -1,0 +1,28 @@
+{
+  "area" : "captureformat",
+  "description" : "Text blocks normalize CRLF and trim outer blank lines.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\n  First  \n\nSecond\n"
+    ]
+  },
+  "id" : "text-trimming",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "Browser",
+        "op" : "block",
+        "text" : " \n\r\n  First  \r\n\r\nSecond  \r\n\r\n",
+        "window" : "Page - Google Chrome"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "area" : "router",
+  "description" : "An explicit session heading matches before creating a note.",
+  "expected" : {
+    "files" : {
+      "Sessions/2026-10-13 Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      {
+        "kind" : "session",
+        "path" : "Sessions/2026-10-13 Standup.md",
+        "title" : "Standup"
+      }
+    ]
+  },
+  "id" : "session-title",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Sessions/2026-10-13 Standup.md" : "# Standup\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "standup"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

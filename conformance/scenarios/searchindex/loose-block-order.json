@@ -1,0 +1,50 @@
+{
+  "area" : "searchindex",
+  "description" : "Equal relevance loose blocks use deterministic descending block order.",
+  "expected" : {
+    "files" : {
+      "A.md" : "# Same\n\ncommon\n\ncommon\n",
+      "B.md" : "# Same\n\ncommon\n"
+    },
+    "results" : [
+      {
+        "added" : 2,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+        {
+          "id" : "B.md#loose-0",
+          "title" : "Same"
+        },
+        {
+          "id" : "A.md#loose-1",
+          "title" : "Same"
+        },
+        {
+          "id" : "A.md#loose-0",
+          "title" : "Same"
+        }
+      ]
+    ]
+  },
+  "id" : "loose-block-order",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "A.md" : "# Same\n\ncommon\n\ncommon\n",
+      "B.md" : "# Same\n\ncommon\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "common"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

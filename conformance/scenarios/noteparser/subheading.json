@@ -1,0 +1,48 @@
+{
+  "area" : "noteparser",
+  "description" : "Subheading markers stay out of capture results.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "## Section",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Note"
+      }
+    ]
+  },
+  "id" : "subheading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Note\n\n## Section\n<!-- subheading:00000000-0000-4000-8000-000000000001 -->\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

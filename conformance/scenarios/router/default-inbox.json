@@ -1,0 +1,38 @@
+{
+  "area" : "router",
+  "description" : "Missing and blank explicit titles select Inbox.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "inbox",
+        "path" : "Inbox.md",
+        "title" : "Inbox"
+      },
+      {
+        "kind" : "inbox",
+        "path" : "Inbox.md",
+        "title" : "Inbox"
+      }
+    ]
+  },
+  "id" : "default-inbox",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route"
+      },
+      {
+        "op" : "route",
+        "title" : " \t "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

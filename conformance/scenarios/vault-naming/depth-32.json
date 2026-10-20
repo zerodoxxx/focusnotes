@@ -1,0 +1,29 @@
+{
+  "area" : "vault-naming",
+  "description" : "Accept the maximum path depth.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "relativePath" : "x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x.md",
+        "scope" : "vault"
+      }
+    ]
+  },
+  "id" : "depth-32",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

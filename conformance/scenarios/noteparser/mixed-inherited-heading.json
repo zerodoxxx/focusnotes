@@ -1,0 +1,48 @@
+{
+  "area" : "noteparser",
+  "description" : "Heading-less new captures inherit the previous source title.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : "2026-10-13T09:00:00Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          },
+          {
+            "assetPath" : null,
+            "body" : "second",
+            "createdAt" : "2026-10-13T09:01:00Z",
+            "id" : "00000000-0000-4000-8000-000000000002",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      }
+    ]
+  },
+  "id" : "mixed-inherited-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "### 2026-10-13 14:30 · Browser · Page\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\nbody\n\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:00+05:30 app=\"Browser\" -->\n\nsecond\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

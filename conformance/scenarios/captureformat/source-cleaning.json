@@ -1,0 +1,51 @@
+{
+  "area" : "captureformat",
+  "description" : "Strip browser suffixes and replace metadata separators.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "Page",
+      "Page",
+      "Page",
+      "Safari - Beta",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    ]
+  },
+  "id" : "source-cleaning",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "Safari · Beta",
+        "op" : "sourceHeading",
+        "window" : " Page — Mozilla Firefox "
+      },
+      {
+        "app" : "Safari · Beta",
+        "op" : "sourceHeading",
+        "window" : "Page - Google Chrome"
+      },
+      {
+        "app" : "Safari · Beta",
+        "op" : "sourceHeading",
+        "window" : "Page – Microsoft Edge"
+      },
+      {
+        "app" : "Safari · Beta",
+        "op" : "sourceHeading",
+        "window" : "   "
+      },
+      {
+        "app" : "Safari · Beta",
+        "op" : "sourceHeading",
+        "window" : "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

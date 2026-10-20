@@ -1,0 +1,66 @@
+{
+  "area" : "noteparser",
+  "description" : "Malformed dates and UUIDs degrade to loose Markdown.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "### 2026-02-30 10:04\n<!-- capture:00000000-0000-4000-8000-000000000001 -->",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "Bad date",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "### 2026-10-13 10:04\n<!-- capture:not-a-uuid -->",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          },
+          {
+            "assetPath" : null,
+            "body" : "Bad marker",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          }
+        ],
+        "title" : "Bad"
+      }
+    ]
+  },
+  "id" : "malformed-marker",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Bad\n\n### 2026-02-30 10:04\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\nBad date\n\n### 2026-10-13 10:04\n<!-- capture:not-a-uuid -->\n\nBad marker"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

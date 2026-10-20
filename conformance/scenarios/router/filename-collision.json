@@ -1,0 +1,30 @@
+{
+  "area" : "router",
+  "description" : "An existing filename can be selected even if its heading differs.",
+  "expected" : {
+    "files" : {
+      "Foo.md" : "# Something Else\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Foo.md",
+        "title" : "Foo"
+      }
+    ]
+  },
+  "id" : "filename-collision",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Foo.md" : "# Something Else\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "Foo"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

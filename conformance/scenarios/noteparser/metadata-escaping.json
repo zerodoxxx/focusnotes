@@ -1,0 +1,39 @@
+{
+  "area" : "noteparser",
+  "description" : "Marker metadata unescapes exactly once.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "A & \"B\" -->",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      }
+    ]
+  },
+  "id" : "metadata-escaping",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"A &amp; &quot;B&quot; &#45;&#45;&gt;\" -->\n\nbody\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

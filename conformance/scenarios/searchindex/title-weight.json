@@ -1,0 +1,46 @@
+{
+  "area" : "searchindex",
+  "description" : "Title matches have greater relevance than body-only matches.",
+  "expected" : {
+    "files" : {
+      "A.md" : "# Quasar\n\nnormal body text\n",
+      "B.md" : "# Other\n\nquasar body text\n"
+    },
+    "results" : [
+      {
+        "added" : 2,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+        {
+          "id" : "A.md#loose-0",
+          "title" : "Quasar"
+        },
+        {
+          "id" : "B.md#loose-0",
+          "title" : "Other"
+        }
+      ]
+    ]
+  },
+  "id" : "title-weight",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "A.md" : "# Quasar\n\nnormal body text\n",
+      "B.md" : "# Other\n\nquasar body text\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "op" : "query",
+        "text" : "quasar"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

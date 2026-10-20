@@ -214,4 +214,102 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    click-away and Space changes. Opening another focusnotes panel, save, esc/✕, Open as Note and
    app quit still close the note.
 
-Last Updated: 2026-10-18 (previous commit: `962ea7d78abc0298c7d1a66063a3d24476c95d8e`)
+# Windows release device checks
+
+The Windows edition is implemented, but these device checks are still required before publishing Windows installers.
+The automated Windows runners cannot cover them. Nothing counts toward a release until every section passes on all
+three targets (Windows 11 arm64, Windows 11 x64, Windows 10 22H2 x64). Automated tests tagged
+`Needs=InteractiveDesktop` (set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`, then `dotnet test --filter "Needs=InteractiveDesktop"`) are part of 11a and 11b. Record the
+target, build and result for each item.
+
+## 11a Interactive desktop (Windows 11 arm64 VM)
+
+1. **Focus (click-away, return, no lost keys):** In each of Notepad, Word, Chrome, Edge, Firefox, VS Code, Windows
+   Terminal, Teams and File Explorer, put the caret in a text field and press the Write a Note shortcut. Type 20
+   characters at once: all 20 reach the note. Press Esc, then Ctrl+Enter, then ✕ in turn: after each, the original
+   window is foreground with its caret where it was. Reopen, click another window: focus stays there, the note stays
+   visible, and an open Actions/Browse card closes. Do the same with Search and Input: they dismiss on click-away and on a
+   virtual-desktop switch. Minimize or close the original window before an explicit close: focusnotes must not
+   change the foreground window. Click a panel button while the panel is inactive: it runs on the first click and the
+   foreground window does not change. Toasts never take focus, ignore clicks, and never appear in the taskbar or Alt+Tab.
+2. **Selection capture per app:** Select a distinctive sentence in each app above, plus Word, Excel (a cell range) and a
+   PDF viewer, and press Capture Selection with the clipboard fallback both off and on. Expect the sentence and the
+   app name as the source (UI Automation first, the fallback only where the app does not share its selection). With
+   the fallback off in an app that needs it, expect "No text selected" with the hint to turn it on. Seed the clipboard
+   with text, an image and rich text first: each must be intact afterwards. Hold Ctrl+Shift for over 200 ms during
+   capture: expect "Release the shortcut keys and try again" and no injected copy. Focus a password field: expect
+   "Can't capture from secure fields". Put an image over 64 MB on the clipboard in an app that needs the fallback:
+   expect "Couldn't capture selection" and an untouched clipboard.
+3. **Administrator apps:** Run Notepad as administrator, select text, press Capture Selection: expect "Can't capture
+   from apps running as administrator" with the Capture Area hint. Capture Area over that window still saves an image
+   and its OCR text.
+4. **Area capture and DPI:** With two monitors at 100%, 150% and 200% scale (mixed), drag an area on each and across
+   both. The PNG matches the dragged region, OCR finds the text, and Esc cancels without a file. Change a monitor's
+   scale while a panel is open: it re-lays out on the correct monitor.
+5. **Tray:** Restart Explorer (`taskkill /f /im explorer.exe`, then start it): the icon returns. On Windows 11, confirm
+   where a new icon first appears and that Setup explains how to show it. Check light and dark taskbar themes and the
+   attention variant.
+6. **Hotkey conflicts:** With PowerToys, Teams, VS Code, Chrome, Firefox, Zoom and Discord installed and running,
+   press each default shortcut with each app focused. The app's action runs and the other app does not also react.
+   Record any app that shadows a default; rebinding must fix it.
+7. **AltGr layouts:** Add the Polish (Programmers) and German keyboard layouts. In Settings → Shortcuts, try a
+   Ctrl+Alt+Shift+letter combination that types a character on that layout: it is refused with a suggested free letter.
+8. **IME:** With a Japanese IME, compose text in the quick note and press Return during composition: it confirms the
+   composition and does not save or insert a newline.
+9. **Panels and accessibility:** Turn Windows animations off: panels and toasts appear without motion. With Narrator on,
+   the editor ("Note text"), chrome buttons and Actions/Browse rows are announced with labels.
+10. **Emulation:** Run the x64 build on Windows 11 arm64: Setup offers the native build.
+
+## 11b Native x64 (Windows 11 and Windows 10 22H2)
+
+1. Repeat 11a items 1 to 3 and 6 on both systems.
+2. Install the x64 `Setup.exe` without administrator rights, then update from vN to vN+1. The app relaunches, the tray
+   icon returns, shortcuts re-register, Setup does not reappear, and `Get-Process`/PE inspection shows the x64 build
+   stays AMD64.
+3. Run the arm64 installer on x64: it is refused.
+
+## 11c Signed builds and Smart App Control
+
+1. Run the signing inventory on the released artifacts and confirm every file is classified.
+2. On Windows 11 x64 and arm64 with Smart App Control in enforcement mode, then in evaluation mode: install from the
+   signed `Setup.exe`, exercise every feature including OCR and the semantic opt-in (which starts the helper), apply
+   an update, relaunch and uninstall. In Event Viewer → Microsoft → Windows → CodeIntegrity → Operational, there must
+   be no event 3076 or 3077 for any file the app ships.
+3. Confirm SmartScreen shows the publisher name for the signed installer.
+
+## 11d Hardware-only
+
+1. **Unplug test:** On a Windows laptop with image-bearing notes and the semantic models installed, start a re-index on
+   AC power, then unplug it and enable battery saver: image and OCR embedding stop and resume only after AC power returns
+   and battery saver is off. Keyword search keeps working throughout.
+2. **Hard reset during update (VM):** Reset the VM while an update applies. The next launch runs a working version,
+   `--self-test` passes, the vault and state directory are intact, and re-running `Setup.exe` repairs the install if
+   it does not launch.
+
+## 11e Fresh-profile Setup walkthrough
+
+On a new Windows user profile on each target:
+
+1. First launch opens Setup. Before the first page is answered, no shortcut works and the tray menu shows only
+   **Finish Setup…** and **Quit**.
+2. Answer both questions, then pass the notes folder with a Controlled Folder Access block (Windows Security → Virus
+   & threat protection → Ransomware protection) and with an online-only OneDrive folder; the explanations name the cause
+   and the fix, and captures journal in the meantime.
+3. Close Setup midway, relaunch: it reopens at the first incomplete required step, once per launch.
+4. Skip each recommended step: it shows "Not tested" and no badge. Fail each required step (occupy a hotkey, make the
+   folder read-only, delete the start-at-login entry): the badge, **Finish Setup… (n left)** and the "Setup needs
+   attention" toast appear on the next launch.
+
+## 11f Release candidate
+
+Build the candidate from one tagged commit and run every section above plus the Mac-equivalent sections of this file
+(the capture, folder-path, external-note and quick-note sections apply on Windows with Ctrl for ⌘ and `\` or `/`
+separators). Any code change needs a new candidate and a full rerun. Compare vault bytes with the Mac for the same
+captures.
+
+## 11g Sign-offs
+
+The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
+language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
+
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)

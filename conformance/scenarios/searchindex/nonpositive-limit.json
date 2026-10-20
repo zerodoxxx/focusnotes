@@ -1,0 +1,52 @@
+{
+  "area" : "searchindex",
+  "description" : "Zero and negative limits return no results.",
+  "expected" : {
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "results" : [
+      {
+        "added" : 4,
+        "removed" : 0,
+        "unchanged" : 0,
+        "updated" : 0
+      },
+      [
+
+      ],
+      [
+
+      ]
+    ]
+  },
+  "id" : "nonpositive-limit",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Manual.md" : "ordinary fallbackunique text\n",
+      "Nested/Note.md" : "# Nested\n\nnestedindexneedle\n",
+      "Other.md" : "# Other\n\ntoken only\n",
+      "Token.md" : "# Token bucket\n\nCafé token bucket rate limiting\n"
+    },
+    "ops" : [
+      {
+        "op" : "sync"
+      },
+      {
+        "limit" : 0,
+        "op" : "query",
+        "text" : "token"
+      },
+      {
+        "limit" : -1,
+        "op" : "query",
+        "text" : "token"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

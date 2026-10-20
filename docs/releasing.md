@@ -1,5 +1,7 @@
 # Releasing focusnotes
 
+Last Updated: 2026-10-20 (previous commit: `82f3696`)
+
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
 notarization, so users approve the first launch once in System Settings. What
@@ -117,9 +119,9 @@ that no release exists for it. If a release exists or GitHub cannot confirm its
 state, the workflow leaves the release and tag untouched; inspect and resolve
 that state before retrying. `BUILD` always goes up.
 
-This repository already has a tag and empty release for `v0.1.1`, so that
-version cannot be reused. Choose an unused version such as `0.1.2` for the next
-release.
+The published [v0.1.1 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1)
+already uses that version, so it cannot be reused. Choose an unused version
+such as `0.1.2` for the next release.
 
 The workflow writes only to a release branch and opens a PR; the version commit
 reaches the default branch through the usual review and merge process. Its
@@ -136,7 +138,7 @@ The release script:
   (in tag mode it requires the local tag to point at `HEAD` instead);
 - unlocks the signing keychain;
 - runs all checks (`CoreChecks`, `CaptureChecks`, `OverlayGallery --check`,
-  `check-name.sh`, `ModelInstallChecks`, `EmbedChecks`). `EmbedChecks` must not SKIP;
+  `ModelInstallChecks`, `EmbedChecks`). `EmbedChecks` must not SKIP;
 - builds and signs the app;
 - checks the bundle: `codesign --verify --strict`, the signing Authority,
   arm64 binaries, no local build paths, version and build numbers, bundled
@@ -185,6 +187,112 @@ Publish the draft in the GitHub UI or with `gh release edit v<version> --draft=f
 Only then does `releases/latest/download/appcast.xml` point to this release, so
 existing users are offered the update.
 
+## Windows release prerequisites
+
+The Windows edition is implemented, but Windows installers are not part of the currently published releases. The
+public [v0.1.1](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1) and
+[v0.1.0](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.0) releases contain macOS DMGs and checksums,
+with no Windows assets. The macOS release above is unchanged and does not wait on Windows prerequisites. Windows
+files are attached only when every prerequisite below is configured; otherwise `windows-gate` skips those assets and
+the macOS release proceeds. Unsigned Windows builds exist only as short-lived CI workflow artifacts and are never
+attached to a release or served by the updater.
+
+Setting up these prerequisites is a maintainer task; agents never handle the secrets.
+
+| Item | Kind | Purpose |
+| --- | --- | --- |
+| `SIGNPATH_API_TOKEN` | Secret | Lets the signing step reach SignPath. Exported to the Pack step as an environment variable. |
+| `WINDOWS_SIGN_TEMPLATE` | Secret | The `vpk --signTemplate` command line that signs `Setup.exe` and the app binaries. It must read the token from the environment (for example `%SIGNPATH_API_TOKEN%`), never inline. |
+| `WINDOWS_UPDATE_ED_KEY_1` | Secret | Private half of update key K1, used by the Mac release job to sign each `releases.win-*.json`. |
+| `WINDOWS_SIGNER_THUMBPRINTS` | Repository variable | Comma-separated thumbprints of the certificates that may sign our own binaries; the signing inventory fails on any other signer. |
+| `WINDOWS_UPDATE_ED_KEYS` | `Config/app.env` | Public keys the app trusts, as `<keyId>:<base64>` entries. Committed. |
+
+The gate enables Windows assets only when `SIGNPATH_API_TOKEN` and `WINDOWS_SIGN_TEMPLATE` are both set. If they are
+set but `WINDOWS_UPDATE_ED_KEYS` is empty or `WINDOWS_UPDATE_ED_KEY_1` is missing, the release run fails rather than
+shipping Windows files that cannot be updated.
+
+### Applying for SignPath Foundation signing
+
+SignPath Foundation offers a free OSS subscription, but approval is discretionary. Its published requirements include
+an OSI-approved license without commercial dual licensing, no proprietary components, active maintenance, documented
+platform functionality, and an existing release in the form to be signed. The terms set no numeric project-age, star,
+or download threshold; downloadable executables still need verifiable project reputation. FocusNotes has public macOS
+releases but no Windows release, so ask the Foundation whether it can assess a Windows candidate before its first
+public release; the published terms do not guarantee an exception. Apply at [SignPath Foundation](https://signpath.org/apply)
+and include the [public repository](https://github.com/zerodoxxx/focusnotes), [`LICENSE`](../LICENSE),
+[third-party notices](../THIRD_PARTY_NOTICES.md), [published releases](https://github.com/zerodoxxx/focusnotes/releases),
+[Windows CI workflow](https://github.com/zerodoxxx/focusnotes/actions/workflows/checks.yml), and the Windows edition
+details and source-build route in the [README](../README.md#windows-support) and
+[contributing guide](../CONTRIBUTING.md#windows). See the [eligibility terms](https://signpath.org/terms).
+
+Before applying, enable MFA for GitHub and SignPath, define author, reviewer and signing-approver roles with their
+members, and publish a “Code signing policy” with team and privacy details on the project home page and Windows
+download page. State that signing enrollment is pending; do not imply SignPath Foundation sponsorship. If accepted,
+add this required attribution to those pages before distributing signed builds: “Free code signing provided by
+SignPath.io, certificate by SignPath Foundation”. Require manual approval for each release signing request. See the
+[Foundation terms](https://signpath.org/terms) for the policy requirements.
+
+Foundation signing uses SignPath's GitHub trusted-build integration: configure the GitHub trusted build system, run
+the OSS signing build on GitHub-hosted agents, upload the unsigned artifact to GitHub Actions, then submit that artifact
+through SignPath's action and retrieve the signed output. The action needs the SignPath organization, project and
+signing-policy identifiers plus a token with submitter permission. Enable origin verification and review the repo,
+branch, commit and job metadata. The current VPK
+`--signTemplate` path in [`pack.ps1`](../windows/scripts/pack.ps1) has not been established as this Foundation-approved
+integration, so adapt and verify the workflow after a project and signing policy are approved. Follow the official
+[GitHub integration](https://docs.signpath.io/trusted-build-systems/github) and [origin verification](https://docs.signpath.io/origin-verification/)
+guides. The Windows Ed25519 update-index keys above are separate from Authenticode code signing.
+
+### Windows update keys (K1 and K2)
+
+The Windows update index is signed with Ed25519 keys that are separate from the Sparkle key, so a Mac key compromise
+cannot extend to Windows. Every signed Windows build trusts two keys from the start: an online key (K1) and an offline
+standby (K2).
+
+```sh
+scripts/make-windows-update-key.sh 1   # K1: online signing key
+scripts/make-windows-update-key.sh 2   # K2: offline rotation key
+```
+
+Each run generates a key, writes the private half to a mode-0600 backup file `~/<app name>-windows-update-key-K<n>.txt`
+(never printed), and appends the public half to `WINDOWS_UPDATE_ED_KEYS` in `Config/app.env`. Run it on the
+maintainer's machine, never in CI. Then:
+
+1. Store the K1 backup as the `WINDOWS_UPDATE_ED_KEY_1` secret.
+2. Back K2 up separately and keep it out of CI until it is needed.
+3. Delete both backup files after they are in the password manager, and commit `Config/app.env`.
+
+The signature covers the exact index bytes and the channel, and installed copies refuse an index signed by an unknown
+or dropped key, so never remove a key from `Config/app.env` without a release that trusts its replacement.
+
+- **Planned rotation.** Sign with K2, ship a release that trusts K2 and a new K3, and later drop K1.
+- **K1 compromise.** Ship an emergency release signed with K2 that drops K1 and adds a new standby. Installed copies
+  already trust K2 and move over automatically.
+- **Both keys lost.** Delete the affected index from the release assets so installed copies fail closed ("Update check
+  failed") and never trust a new key, say so in the release notes, and have users reinstall from the new signed
+  `Setup.exe`. Their notes and app state are kept.
+
+Authenticode certificate renewals do not affect updates, because the app trusts the index key, not a certificate.
+
+### What a Windows release contains
+
+For each of `win-x64` and `win-arm64`, the Windows matrix packs `<app name>-win-<arch>-Setup.exe`, the full and delta
+`.nupkg` files, `releases.win-<arch>.json` and `assets.win-<arch>.json`. The Mac `release` job downloads them, rejects
+duplicate asset names across architectures, signs each `releases.win-*.json` (writing the `.sig` beside it), adds all
+Windows files to `SHA256SUMS.txt`, attests the DMG and every `*-win-*` asset, and uploads everything to the same draft release.
+
+### Signing inventory
+
+Before upload, `windows/scripts/signing-inventory.ps1 -Enforce` installs each architecture's `Setup.exe`, then lists
+every `.exe` and `.dll` in the installed layout and in every shipped installer artifact and writes
+`signing-inventory-<arch>.json` (path, SHA-256, signer, chain). Every file must be one of:
+
+1. **Ours**, signed by a certificate whose thumbprint is in `WINDOWS_SIGNER_THUMBPRINTS`.
+2. **Vendor-signed** with a Trusted Root chain.
+3. **An unmodified upstream binary** whose hash is on `windows/scripts/upstream-allowlist.json`.
+
+Anything else fails the release. When a dependency update changes an allow-listed binary, review it and update the
+allow-list in the same PR. The report-only mode (no `-Enforce`) runs in `checks.yml` on every PR.
+
 ## Rollback
 
 Sparkle never downgrades. To roll back a bad release, publish a new release
@@ -219,8 +327,11 @@ Secrets used by `release.yml`:
 | `SIGNING_P12_PASSWORD` | Password for the `.p12` |
 | `SIGNING_KEYCHAIN_PASSWORD` | Password for the CI keychain |
 | `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key for `appcast.xml` |
+| `SIGNPATH_API_TOKEN`, `WINDOWS_SIGN_TEMPLATE`, `WINDOWS_UPDATE_ED_KEY_1` | Windows signing and update-index signing; see [Windows release prerequisites](#windows-release-prerequisites). Optional: without the first two, Windows assets are skipped. |
 
 The maintainer still smoke-tests the draft and publishes it manually.
+
+The repository variable `WINDOWS_SIGNER_THUMBPRINTS` is also read by the Windows signing inventory.
 
 ### `release.sh` environment variables
 

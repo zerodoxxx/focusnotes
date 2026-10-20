@@ -1,0 +1,42 @@
+{
+  "area" : "router",
+  "description" : "Unsafe explicit names return stable path error kinds.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "invalid-path",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "../Escape"
+      },
+      {
+        "op" : "route",
+        "title" : "assets/Note"
+      },
+      {
+        "op" : "route",
+        "title" : "~$draft"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

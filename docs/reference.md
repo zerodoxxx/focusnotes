@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-18 (previous commit: `962ea7d78abc0298c7d1a66063a3d24476c95d8e`)
+Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -126,3 +126,16 @@ same file and clears the draft after saving, including when the title line was r
 
 The app links macOS's system SQLite and checks for FTS5 when the search index opens. macOS 14 ships SQLite 3.43 or
 newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQLite versions before 3.44.
+
+## Windows differences
+
+The implemented Windows edition writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. Windows installers are not part of the currently published releases. This section lists where behaviour differs. Everything above applies unless stated here.
+
+- **Keys.** Ctrl replaces ⌘ in the quick note (Ctrl+Enter saves, Ctrl+K Actions, Ctrl+P Browse, Ctrl+N new, Ctrl+O open as note, Ctrl+Shift+P pin, Ctrl+Shift+C copy Markdown, Ctrl+Shift+Backspace discard) and Alt+Enter replaces ⌥↩ ("Show in File Explorer"). The global shortcuts default to Ctrl+Alt+Shift plus Q, G, F, A, W, H and E (selection, area, search, session, write, subheading, notes folder) and can be rebound in Settings.
+- **Paths.** The vault defaults to `Documents\focusnotes` and app state to `%LocalAppData%\com.zerodoxxx.focusnotes`. In a note name, `/` and `\` both separate folders, and a leading `/` resolves from `%USERPROFILE%` instead of the home folder. External-note registry entries are stored `/`-separated and home-relative, as on the Mac. A path that crosses a symbolic link, junction or other reparse point is rejected where the Mac rejects symlinks. Paths longer than 260 characters work.
+- **Reserved names (DV7).** Windows file-name rules are applied on top of the Mac's. Any component is rejected if it is a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`), also with an extension such as `con.txt`; contains `<`, `>`, `:`, `"`, `|`, `?`, `*` or a control character; or ends with a space or period. Rejection uses the same message as the Mac's reserved-name errors. The Mac accepts some of these names, so a note named `a:b` is valid on the Mac but not on Windows.
+- **Selection capture (DV2, DV6, DV8).** Capture reads the selection through UI Automation. Only if that fails, and only when the clipboard fallback is turned on, it briefly sends Ctrl+C to the app and restores the clipboard. The fallback is stricter than the Mac's: it aborts without injecting if modifier keys are still held after 200 ms ("Release the shortcut keys and try again"), or if the clipboard holds more than 64 MB or a format that cannot be copied safely ("Couldn't capture selection" with "Your clipboard is too large to restore safely"). The clipboard is restored only if nothing newer was copied in the meantime. The target app's own copy can still appear in Windows clipboard history. Apps running as administrator cannot be read: the toast "Can't capture from apps running as administrator" points to Capture Area.
+- **OCR.** Windows area OCR uses RapidOcrNet's bundled PP-OCRv5 Latin models and starts English-first. The Mac's preferred-language model selection is not part of this POC; reading order, paragraph joining and the 1.5-second classification budget remain shared behavior.
+- **Search index.** The index uses a bundled SQLite with FTS5 through `Microsoft.Data.Sqlite` rather than the system library, with the same schema and ranking. The watcher uses `ReadDirectoryChangesW`; on an overflow or error it rescans by enumerating the folder.
+- **Semantic search.** The opt-in downloads only the model files (about 455 MB), because ONNX Runtime is bundled. Image embedding waits for AC power and battery saver off; Windows has no thermal state, so the helper runs with EcoQoS, below-normal priority and background I/O instead.
+- **Additions.** Setup, Settings, start at login (on by default), single instance, and log files in the state directory's `logs` folder. See [DESIGN.md](../DESIGN.md#windows-edition).

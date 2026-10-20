@@ -1,0 +1,46 @@
+{
+  "area" : "notetitle",
+  "description" : "Comparison folds case, width, and composed or decomposed accents.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "cafe notes",
+      "cafe notes",
+      "cafe notes",
+      "foo",
+      "foo 2"
+    ]
+  },
+  "id" : "comparison-folding",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "matchKey",
+        "text" : "  CAFÉ  notes "
+      },
+      {
+        "op" : "matchKey",
+        "text" : "Café notes"
+      },
+      {
+        "op" : "matchKey",
+        "text" : "ＣＡＦＥ notes"
+      },
+      {
+        "op" : "matchKey",
+        "text" : "Foo"
+      },
+      {
+        "op" : "matchKey",
+        "text" : "Foo 2"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

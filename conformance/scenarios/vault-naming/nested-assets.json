@@ -1,0 +1,29 @@
+{
+  "area" : "vault-naming",
+  "description" : "Only root assets is reserved.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "relativePath" : "Projects/assets/Note.md",
+        "scope" : "vault"
+      }
+    ]
+  },
+  "id" : "nested-assets",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "Projects/assets/Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

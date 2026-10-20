@@ -1,0 +1,30 @@
+{
+  "area" : "router",
+  "description" : "Qualified home destinations use fake home scope.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "/Desktop/Research.md",
+        "title" : "Research"
+      }
+    ]
+  },
+  "id" : "home-path",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "/Desktop/Research"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "area" : "notetitle",
+  "description" : "A leading slash selects the home scope.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "components" : [
+          "Desktop",
+          "science",
+          "math",
+          "trigonometry"
+        ],
+        "displayTitle" : "trigonometry",
+        "relativePath" : "Desktop/science/math/trigonometry",
+        "scope" : "home"
+      }
+    ]
+  },
+  "id" : "home-name",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "pathName",
+        "text" : "/Desktop/science/math/trigonometry"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

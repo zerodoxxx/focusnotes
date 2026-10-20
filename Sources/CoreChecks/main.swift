@@ -59,6 +59,10 @@ func runChecks() throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--write-conformance") {
+        try await checkConformance(writeExpected: true)
+        exit(EXIT_SUCCESS)
+    }
     try runChecks()
     print("Core checks passed (SQLite \(SQLiteVersion.string), FTS5 MATCH).")
     try checkCaptureFormat()
@@ -74,6 +78,7 @@ do {
     try await checkSearchIndexPerformance()
     try checkVaultWatcher()
     try await checkExternalNoteRegistry()
+    try await checkConformance(writeExpected: false)
 } catch {
     fputs("Core checks failed: \(error)\n", stderr)
     exit(EXIT_FAILURE)

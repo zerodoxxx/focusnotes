@@ -1,0 +1,29 @@
+{
+  "area" : "vault-naming",
+  "description" : "Resolve a nested destination without creating folders.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "relativePath" : "Projects/Research/New note.md",
+        "scope" : "vault"
+      }
+    ]
+  },
+  "id" : "new-folders",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "Projects/Research/New note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

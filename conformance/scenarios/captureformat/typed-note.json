@@ -1,0 +1,27 @@
+{
+  "area" : "captureformat",
+  "description" : "Typed notes preserve indentation and internal Markdown hard breaks.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "<!-- note:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n\n  indented  \nnext\n"
+    ]
+  },
+  "id" : "typed-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "content" : "note",
+        "op" : "block",
+        "text" : "  indented  \nnext  \n\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

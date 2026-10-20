@@ -1,0 +1,29 @@
+{
+  "area" : "vault-naming",
+  "description" : "Leading slash resolves below the isolated fake home.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "relativePath" : "Desktop/Notes/First.md",
+        "scope" : "home"
+      }
+    ]
+  },
+  "id" : "home-path",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "/Desktop/Notes/First"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

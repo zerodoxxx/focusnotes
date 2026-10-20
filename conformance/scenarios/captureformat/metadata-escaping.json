@@ -1,0 +1,28 @@
+{
+  "area" : "captureformat",
+  "description" : "Escape quotes, ampersands, hyphens, and marker delimiters.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "### One - Two\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"A &amp; &quot;B&quot; &#45;&#45;&gt;\" -->\n\nbody\n"
+    ]
+  },
+  "id" : "metadata-escaping",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "A & \"B\" -->",
+        "op" : "block",
+        "text" : "body",
+        "window" : "One · Two"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

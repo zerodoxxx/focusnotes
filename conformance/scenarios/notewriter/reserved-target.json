@@ -1,0 +1,39 @@
+{
+  "area" : "notewriter",
+  "description" : "Writer refuses note targets in assets or temporary files.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "reserved-target",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "append",
+        "path" : "assets/Note.md",
+        "text" : "body",
+        "title" : "Unsafe"
+      },
+      {
+        "op" : "append",
+        "path" : "~$draft.md",
+        "text" : "body",
+        "title" : "Unsafe"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

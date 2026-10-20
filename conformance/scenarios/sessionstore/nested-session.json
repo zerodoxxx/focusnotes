@@ -1,0 +1,41 @@
+{
+  "area" : "sessionstore",
+  "description" : "Qualified session paths live below Sessions.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/archive/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      {
+        "name" : "Standup",
+        "notePath" : "Sessions/archive/Standup.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Standup",
+        "notePath" : "Sessions/archive/Standup.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "nested-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "archive/Standup",
+        "op" : "start"
+      },
+      {
+        "op" : "reload"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

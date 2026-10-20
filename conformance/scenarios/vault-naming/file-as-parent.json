@@ -1,0 +1,28 @@
+{
+  "area" : "vault-naming",
+  "description" : "A file cannot be used as a parent directory.",
+  "expected" : {
+    "files" : {
+      "Parent" : "not a directory\n"
+    },
+    "results" : [
+      {
+        "error" : "invalidFileName"
+      }
+    ]
+  },
+  "id" : "file-as-parent",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Parent" : "not a directory\n"
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "text" : "Parent/Child"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "area" : "noteparser",
+  "description" : "Escaping or encoded traversal never becomes an indexed asset.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "![](../../outside.png)",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      },
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "![](../../assets/shot.png)",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      },
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "![](%2E%2E/%2E%2E/assets/shot.png)",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Fallback"
+      }
+    ]
+  },
+  "id" : "image-traversal",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "path" : "Nested/Note.md",
+        "text" : "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\n![](../../outside.png)\n"
+      },
+      {
+        "op" : "parse",
+        "path" : "Nested/Note.md",
+        "text" : "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\n![](../../assets/shot.png)\n"
+      },
+      {
+        "op" : "parse",
+        "path" : "Nested/Note.md",
+        "text" : "### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\n![](%2E%2E/%2E%2E/assets/shot.png)\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

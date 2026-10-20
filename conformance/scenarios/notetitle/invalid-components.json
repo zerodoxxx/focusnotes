@@ -1,0 +1,77 @@
+{
+  "area" : "notetitle",
+  "description" : "Reject empty, traversal, NUL, and temporary note components.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "emptyPath"
+      },
+      {
+        "error" : "emptyPath"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "invalid-components",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "pathName",
+        "text" : ""
+      },
+      {
+        "op" : "pathName",
+        "text" : "/"
+      },
+      {
+        "op" : "pathName",
+        "text" : "science/"
+      },
+      {
+        "op" : "pathName",
+        "text" : "science//math"
+      },
+      {
+        "op" : "pathName",
+        "text" : "./math"
+      },
+      {
+        "op" : "pathName",
+        "text" : "science/../math"
+      },
+      {
+        "op" : "pathName",
+        "text" : "math\u0000x"
+      },
+      {
+        "op" : "pathName",
+        "text" : "science/~$draft"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

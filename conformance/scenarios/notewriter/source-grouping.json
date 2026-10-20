@@ -1,0 +1,50 @@
+{
+  "area" : "notewriter",
+  "description" : "Consecutive captures from one source share the visible heading.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n\n### Other\n<!-- capture:00000000-0000-4000-8000-000000000003 at=2026-10-13T14:30:42+05:30 app=\"Browser\" -->\n\nbody\n"
+    },
+    "results" : [
+      null,
+      null,
+      null
+    ]
+  },
+  "id" : "source-grouping",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "app" : "Browser",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note",
+        "window" : "Page"
+      },
+      {
+        "app" : "Browser",
+        "id" : "00000000-0000-4000-8000-000000000002",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note",
+        "window" : "Page"
+      },
+      {
+        "app" : "Browser",
+        "id" : "00000000-0000-4000-8000-000000000003",
+        "op" : "append",
+        "path" : "Note.md",
+        "text" : "body",
+        "title" : "Note",
+        "window" : "Other"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

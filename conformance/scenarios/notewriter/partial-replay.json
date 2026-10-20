@@ -1,0 +1,28 @@
+{
+  "area" : "notewriter",
+  "description" : "A truncated body with the same marker is completed on replay.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\ncomp\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\ncomplete body\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "partial-replay",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\ncomp"
+    },
+    "ops" : [
+      {
+        "op" : "appendIfMissing",
+        "path" : "Note.md",
+        "text" : "complete body",
+        "title" : "Note"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

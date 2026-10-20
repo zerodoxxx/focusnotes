@@ -2,9 +2,13 @@
 
 **Take notes without breaking focus.**
 
-focusnotes is a small macOS menu-bar app for capturing what you're reading or thinking without leaving the app you're
-in. Select text and press a shortcut, drag over part of the screen, or jot a quick note in a floating panel. Your
-window keeps focus the whole time, and everything lands in plain Markdown files you own.
+focusnotes is a small native app for capturing what you're reading or thinking without leaving the app you're in.
+The macOS edition runs from the menu bar; select text and press a shortcut, drag over part of the screen, or jot a
+quick note in a floating panel. Everything lands in plain Markdown files you own.
+
+> **Platforms.** FocusNotes supports macOS and Windows. The Windows edition is implemented in this branch, but
+> Windows installers are not part of the published releases yet; see [Windows support](#windows-support). The
+> product details, shortcuts and install steps below describe the macOS edition and currently published macOS build.
 
 ## Features
 
@@ -122,7 +126,7 @@ defaults write com.zerodoxxx.focusnotes vaultPath "~/Obsidian/Notes"
 App state (drafts, search index, pending saves, models) lives in
 `~/Library/Application Support/com.zerodoxxx.focusnotes`.
 
-## Semantic search
+## Semantic search on macOS
 
 Keyword search works out of the box. For meaning-based search, choose **Enable Semantic Search…** from the menu to
 download the on-device models (about 492 MB, Apple silicon only): EmbeddingGemma (Apache-2.0) from huggingface.co and
@@ -131,7 +135,7 @@ interrupted, and **Semantic Search → Remove Models…** deletes them. See [doc
 
 ## Privacy
 
-Note content, captures and search queries are processed on your Mac and sent nowhere. The app uses the network only
+Note content, captures and search queries are processed on your device and sent nowhere. The app uses the network only
 to download the optional semantic models and to check for and download updates.
 
 ## Uninstall
@@ -146,7 +150,70 @@ tccutil reset ScreenCapture com.zerodoxxx.focusnotes
 
 Your notes stay in your notes folder.
 
+## Windows support
+
+A native Windows edition (C# on .NET 10 with WPF) lives in [`windows/`](windows/). It implements the FocusNotes
+features on Windows 10 22H2 and Windows 11, for x64 and arm64. Windows installers are not included in the currently
+published [releases](https://github.com/zerodoxxx/focusnotes/releases); use the [Windows build instructions](CONTRIBUTING.md#windows)
+to build from source. Any Windows installers published in the future will be signed.
+
+- **Targets.** Windows 10 22H2 and Windows 11, on x64 and arm64. Each architecture gets its own installer and
+  update channel.
+- **Same behaviour, Windows mechanics.** The same seven actions, sessions, search, toasts and plain-Markdown vault.
+  The vault layer is checked against the same shared fixtures as the Mac app (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+  Selection capture uses UI Automation, with an opt-in clipboard fallback. Area OCR runs locally with RapidOcrNet's
+  bundled PP-OCRv5 Latin models; this Windows POC is English-first, with multilingual coverage deferred. OCR models
+  ship with the app and are not downloaded at runtime; captured images stay on your PC.
+- **Tray, not menu bar.** The app lives in the notification area and has no taskbar button or main window. On
+  Windows 11 a new tray icon may start in the overflow flyout; drag it out (Settings → Personalization → Taskbar →
+  Other system tray icons).
+- **Setup on first launch.** A Setup window runs once: it explains what the app uses, asks two questions (the
+  clipboard fallback and automatic update checks), then checks the notes folder, registers and tests the shortcuts,
+  and offers a selection and an area capture test, the tray icon, start at login and the semantic search pointer.
+  Nothing is registered or captured until the first page is answered. Reopen it from the tray icon → **Setup…**.
+  Windows has no permission prompts for these features, so Setup is where a problem shows up early.
+
+### Shortcuts on Windows
+
+| Action | Windows | Mac |
+| --- | --- | --- |
+| Capture selected text | <kbd>Ctrl+Alt+Shift+Q</kbd> | <kbd>⌥⇧C</kbd> |
+| Capture an area of the screen | <kbd>Ctrl+Alt+Shift+G</kbd> | <kbd>⌥⇧S</kbd> |
+| Write a quick note | <kbd>Ctrl+Alt+Shift+W</kbd> | <kbd>⌥⇧N</kbd> |
+| Search notes | <kbd>Ctrl+Alt+Shift+F</kbd> | <kbd>⌥⇧F</kbd> |
+| Start or end a session | <kbd>Ctrl+Alt+Shift+A</kbd> | <kbd>⌥⇧A</kbd> |
+| Add a subheading | <kbd>Ctrl+Alt+Shift+H</kbd> | <kbd>⌥⇧H</kbd> |
+| Open the notes folder | <kbd>Ctrl+Alt+Shift+E</kbd> | <kbd>⌥⇧L</kbd> |
+
+These defaults are provisional until they are tested against common apps on real devices. Rebind any of them in
+**Settings… → Shortcuts**. In the quick note, <kbd>Ctrl+Enter</kbd> saves, <kbd>Ctrl+K</kbd> opens actions,
+<kbd>Ctrl+P</kbd> browses notes and <kbd>Esc</kbd> closes it and keeps your draft.
+
+### Where things live on Windows
+
+| What | Location |
+| --- | --- |
+| Notes | `Documents\focusnotes` (override in **Settings… → General → Notes folder**; applies after a restart) |
+| App state (settings, drafts, search index, pending saves, models, logs) | `%LocalAppData%\com.zerodoxxx.focusnotes` |
+| The installed app | `%LocalAppData%\focusnotes-win-<arch>` (per user, no administrator rights needed) |
+
+The notes are the same plain Markdown files as on the Mac, so a vault can be shared between the two. Uninstalling
+removes only the installed app; your notes and app state stay.
+
+### Windows install notes
+
+- **Smart App Control and SmartScreen.** Windows blocks unsigned programs, and Smart App Control cannot be bypassed
+  for a single app. For that reason Windows releases will be signed, and signed builds only. Do not turn off Smart
+  App Control or SmartScreen to run a focusnotes build, and do not run copies from unknown sources.
+- **Administrator windows.** Windows does not let a normal app read another app that runs as administrator. Capture
+  Selection shows "Can't capture from apps running as administrator"; use Capture Area instead.
+- **Updates** come from GitHub and are verified with an EdDSA signature on the update index before anything is
+  downloaded, then checked against package hashes. Semantic search downloads only the model files (about 455 MB),
+  because the ONNX Runtime ships with the app.
+
 ## Build from source
+
+This section covers the macOS app; Windows build commands are in [CONTRIBUTING.md](CONTRIBUTING.md#windows).
 
 Requirements: macOS 14+, a Swift 6.4 toolchain (current Xcode or Command Line Tools), and Python 3. Semantic search
 needs Apple silicon.
@@ -174,7 +241,6 @@ swift build                        # build every target
 swift run CoreChecks               # storage, index and Markdown checks
 swift run OverlayGallery --check   # UI behaviour checks for the panels
 swift run OverlayGallery           # render UI snapshots to build/gallery/
-scripts/check-name.sh              # the app name must live only in Config/app.env
 ```
 
 | Target | What it holds |

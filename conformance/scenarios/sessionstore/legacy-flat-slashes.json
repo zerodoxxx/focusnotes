@@ -1,0 +1,32 @@
+{
+  "area" : "sessionstore",
+  "description" : "Whitespace around slashes retains legacy flat naming.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Design - Review.md" : "# Design / Review\n"
+    },
+    "results" : [
+      {
+        "name" : "Design / Review",
+        "notePath" : "Sessions/Design - Review.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "legacy-flat-slashes",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Design / Review",
+        "op" : "start"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

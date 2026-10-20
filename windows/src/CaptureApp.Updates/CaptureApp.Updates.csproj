@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>CaptureApp.Updates</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(CIUpdateTests)' == 'true'">
+    <DefineConstants>$(DefineConstants);CI_UPDATE_TESTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Velopack" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
+  </ItemGroup>
+</Project>

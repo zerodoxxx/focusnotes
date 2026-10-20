@@ -1,0 +1,46 @@
+{
+  "area" : "notetitle",
+  "description" : "Dots and whitespace cannot produce empty file stems.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "hidden",
+      "hidden",
+      "Untitled",
+      "Untitled",
+      "Untitled"
+    ]
+  },
+  "id" : "dot-and-blank-stems",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "fileStem",
+        "text" : ".hidden"
+      },
+      {
+        "op" : "fileStem",
+        "text" : " .. hidden "
+      },
+      {
+        "op" : "fileStem",
+        "text" : ".."
+      },
+      {
+        "op" : "fileStem",
+        "text" : "   "
+      },
+      {
+        "op" : "fileStem",
+        "text" : ""
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "area" : "vault-naming",
+  "description" : "List recursively while excluding hidden, temporary, and assets notes.",
+  "expected" : {
+    "files" : {
+      ".cache/Note.md" : "# Hidden\n",
+      ".hidden.md" : "# Hidden\n",
+      "ASSETS/secret.md" : "# Secret\n",
+      "Inbox.md" : "# Inbox\n",
+      "Nested/Note.md" : "#  Clean   title \n",
+      "No Title.md" : "ordinary body\n",
+      "Sessions/Archive/Standup.md" : "# Standup\n",
+      "~$draft.md" : "# Temporary\n"
+    },
+    "results" : [
+      null,
+      [
+        {
+          "kind" : "inbox",
+          "path" : "Inbox.md",
+          "title" : "Inbox"
+        },
+        {
+          "kind" : "note",
+          "path" : "Nested/Note.md",
+          "title" : "Clean title"
+        },
+        {
+          "kind" : "note",
+          "path" : "No Title.md",
+          "title" : "No Title"
+        },
+        {
+          "kind" : "session",
+          "path" : "Sessions/Archive/Standup.md",
+          "title" : "Standup"
+        }
+      ]
+    ]
+  },
+  "id" : "listing-filter",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      ".cache/Note.md" : "# Hidden\n",
+      ".hidden.md" : "# Hidden\n",
+      "ASSETS/secret.md" : "# Secret\n",
+      "Nested/Note.md" : "﻿#  Clean   title \n",
+      "No Title.md" : "ordinary body\n",
+      "Sessions/Archive/Standup.md" : "# Standup\n",
+      "~$draft.md" : "# Temporary\n"
+    },
+    "ops" : [
+      {
+        "op" : "prepare"
+      },
+      {
+        "op" : "list"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

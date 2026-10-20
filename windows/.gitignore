@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+.vs/
+TestResults/
+/.ocr-models/
+/.semantic-models/
+/spikes/.models/

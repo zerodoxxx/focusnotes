@@ -1,0 +1,40 @@
+{
+  "area" : "noteparser",
+  "description" : "BOM and empty cleaned headers use the fallback title.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : null,
+            "id" : null,
+            "kind" : "loose",
+            "sourceApp" : null,
+            "windowTitle" : null
+          }
+        ],
+        "title" : "Stem"
+      }
+    ]
+  },
+  "id" : "bom-empty-title",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "fallback" : "Stem",
+        "op" : "parse",
+        "text" : "﻿# \t \n\nbody"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

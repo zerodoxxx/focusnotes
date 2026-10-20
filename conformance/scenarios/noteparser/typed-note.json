@@ -1,0 +1,39 @@
+{
+  "area" : "noteparser",
+  "description" : "Typed note markers preserve indentation and body breaks.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "  indented\nnext  ",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "note",
+            "sourceApp" : null,
+            "windowTitle" : null
+          }
+        ],
+        "title" : "Note"
+      }
+    ]
+  },
+  "id" : "typed-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Note\n\n<!-- note:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n\n  indented\nnext  \n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

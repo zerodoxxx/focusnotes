@@ -1,0 +1,32 @@
+{
+  "area" : "router",
+  "description" : "Qualified paths bypass unrelated matching headings.",
+  "expected" : {
+    "files" : {
+      "Other.md" : "# science/math/trigonometry\n",
+      "Science/Math/Trigonometry.md" : "# Existing\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Science/Math/Trigonometry.md",
+        "title" : "trigonometry"
+      }
+    ]
+  },
+  "id" : "qualified-path",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Other.md" : "# science/math/trigonometry\n",
+      "Science/Math/Trigonometry.md" : "# Existing\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "science/math/trigonometry"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

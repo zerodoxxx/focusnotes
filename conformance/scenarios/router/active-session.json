@@ -1,0 +1,31 @@
+{
+  "area" : "router",
+  "description" : "An active session wins when no explicit title is present.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "session",
+        "path" : "Sessions/Standup.md",
+        "title" : "Standup"
+      }
+    ]
+  },
+  "id" : "active-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "sessionName" : "Standup",
+        "sessionPath" : "Sessions/Standup.md"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

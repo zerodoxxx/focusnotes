@@ -224,14 +224,106 @@ jobs:
             fi
           fi
 
-  release:
+  # Windows assets ride the release only when BOTH SIGNPATH_API_TOKEN and WINDOWS_SIGN_TEMPLATE are set:
+  # unsigned builds must never reach a GitHub Release. Without them the Windows jobs are skipped and the
+  # Mac release is unchanged. The sign template must reference the token through the environment
+  # (SIGNPATH_API_TOKEN is exported to the Pack step); never put the token inline in the template.
+  windows-gate:
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: gate
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          WINDOWS_SIGN_TEMPLATE: ${{ secrets.WINDOWS_SIGN_TEMPLATE }}
+          WINDOWS_UPDATE_ED_KEY_1: ${{ secrets.WINDOWS_UPDATE_ED_KEY_1 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SIGNPATH_API_TOKEN" || -z "$WINDOWS_SIGN_TEMPLATE" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "SIGNPATH_API_TOKEN and WINDOWS_SIGN_TEMPLATE are not both set: Windows assets are skipped."
+            exit 0
+          fi
+          keys="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' Config/app.env | head -n 1)"
+          [[ -n "$keys" ]] || {
+            echo "Windows signing is configured but WINDOWS_UPDATE_ED_KEYS is empty in Config/app.env; run scripts/make-windows-update-key.sh." >&2
+            exit 1
+          }
+          [[ -n "$WINDOWS_UPDATE_ED_KEY_1" ]] || {
+            echo "Windows signing is configured but WINDOWS_UPDATE_ED_KEY_1 is missing; run scripts/make-windows-update-key.sh 1." >&2
+            exit 1
+          }
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: windows-gate
+    if: needs.windows-gate.outputs.enabled == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    # Read-only: this job can upload workflow artifacts but cannot touch a release.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: windows/global.json
+
+      - name: Pack
+        shell: pwsh
+        env:
+          WINDOWS_SIGN_TEMPLATE: ${{ secrets.WINDOWS_SIGN_TEMPLATE }}
+          # For the template to reference by name (for example %SIGNPATH_API_TOKEN%), never inline.
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          $version = (Select-String -Path Config/app.env -Pattern '^VERSION=(.+)$').Matches[0].Groups[1].Value
+          ./windows/scripts/pack.ps1 -Arch '${{ matrix.arch }}' -Version $version -OutDir "$env:RUNNER_TEMP/pack"
+
+      - name: Signing inventory (enforced)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNER_THUMBPRINTS: ${{ vars.WINDOWS_SIGNER_THUMBPRINTS }}
+        run: |
+          $appName = (Select-String -Path Config/app.env -Pattern '^APPNAME=(.+)$').Matches[0].Groups[1].Value
+          $packId = "$appName-win-${{ matrix.arch }}"
+          $packages = "$env:RUNNER_TEMP/pack/win-${{ matrix.arch }}"
+          Start-Process -FilePath (Join-Path $packages "$packId-Setup.exe") -ArgumentList '--silent' -Wait
+          ./windows/scripts/signing-inventory.ps1 -Layout (Join-Path $env:LOCALAPPDATA $packId) -Packages $packages -Out "$packages/signing-inventory-${{ matrix.arch }}.json" -Enforce
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-release-${{ matrix.arch }}
+          path: ${{ runner.temp }}/pack/win-${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    needs: [windows-gate, windows]
+    # Runs when Windows assets are off (windows skipped) or built successfully; never after a Windows failure.
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      needs.windows-gate.result == 'success' &&
+      (needs.windows.result == 'success' || needs.windows.result == 'skipped')
     # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
     runs-on: xcode-27
     permissions:
       contents: write
       id-token: write
       attestations: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -371,10 +463,57 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: scripts/release.sh
 
+      - name: Set up .NET for Windows index signing
+        if: needs.windows-gate.outputs.enabled == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: windows/global.json
+
+      - name: Sign Windows update indexes and add to checksums
+        if: needs.windows-gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WINDOWS_UPDATE_ED_KEY_1: ${{ secrets.WINDOWS_UPDATE_ED_KEY_1 }}
+        run: |
+          set -euo pipefail
+          keys="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' Config/app.env | head -n 1)"
+          key_id="$(cut -d, -f1 <<<"$keys" | cut -d: -f1)"
+          [[ -n "$key_id" ]] || { echo "WINDOWS_UPDATE_ED_KEYS is empty in Config/app.env; run scripts/make-windows-update-key.sh 1." >&2; exit 1; }
+
+          rm -rf windows-dist
+          gh run download "$GITHUB_RUN_ID" --pattern 'windows-release-*' --dir windows-dist
+          dups="$(find windows-dist -type f -exec basename {} \; | sort | uniq -d)"
+          [[ -z "$dups" ]] || { echo "Duplicate Windows asset names across architectures:" >&2; echo "$dups" >&2; exit 1; }
+
+          dotnet build windows/tools/IndexSigner -c Release --artifacts-path "$RUNNER_TEMP/signer" >/dev/null
+          signer="$RUNNER_TEMP/signer/bin/CaptureApp.IndexSigner/release/CaptureApp.IndexSigner.dll"
+          for index in windows-dist/*/releases.win-*.json; do
+            channel="$(basename "$index" .json)"; channel="${channel#releases.}"
+            dotnet "$signer" sign --key-env WINDOWS_UPDATE_ED_KEY_1 --key-id "$key_id" --channel "$channel" "$index"
+            dotnet "$signer" verify --keys "$keys" --channel "$channel" "$index"
+          done
+          [[ -n "$(ls windows-dist/*/releases.win-*.json 2>/dev/null)" ]] || { echo "No Windows release indexes were downloaded." >&2; exit 1; }
+
+          find windows-dist -type f ! -name 'signing-inventory-*.json' -exec cp {} dist/ \;
+          (
+            cd dist
+            for file in $(find ../windows-dist -type f ! -name 'signing-inventory-*.json' -exec basename {} \; | sort); do
+              shasum -a 256 "$file" >> SHA256SUMS.txt
+            done
+            shasum -a 256 -c SHA256SUMS.txt
+          )
+
       - name: Attest DMG
         uses: actions/attest@v4
         with:
           subject-path: dist/*.dmg
+
+      - name: Attest Windows assets
+        if: needs.windows-gate.outputs.enabled == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*-win-*
 
       - name: Push release tag
         env:
@@ -388,11 +527,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.version.outputs.version }}
+          WINDOWS_ENABLED: ${{ needs.windows-gate.outputs.enabled }}
         run: |
           set -euo pipefail
           appname="$(sed -n 's/^APPNAME=//p' Config/app.env | head -n 1)"
           [[ -n "$appname" ]] || { echo "APPNAME is missing in Config/app.env" >&2; exit 1; }
-          gh release create "v$VERSION" --draft --verify-tag --title "$appname $VERSION" --generate-notes dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml
+          assets=(dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml)
+          if [[ "$WINDOWS_ENABLED" == "true" ]]; then
+            while IFS= read -r file; do assets+=("dist/$(basename "$file")"); done < <(find windows-dist -type f ! -name 'signing-inventory-*.json' | sort)
+          fi
+          gh release create "v$VERSION" --draft --verify-tag --title "$appname $VERSION" --generate-notes "${assets[@]}"
 
       - name: Remove signing material
         if: always()

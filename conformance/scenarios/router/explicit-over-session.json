@@ -1,0 +1,32 @@
+{
+  "area" : "router",
+  "description" : "An explicit note overrides the active session.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "New.md",
+        "title" : "New"
+      }
+    ]
+  },
+  "id" : "explicit-over-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "sessionName" : "Standup",
+        "sessionPath" : "Sessions/Standup.md",
+        "title" : "New"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

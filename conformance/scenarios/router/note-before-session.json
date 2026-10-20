@@ -1,0 +1,32 @@
+{
+  "area" : "router",
+  "description" : "A normal note title wins over the same session title.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Shared\n",
+      "Sessions/Shared.md" : "# Shared\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Note.md",
+        "title" : "Shared"
+      }
+    ]
+  },
+  "id" : "note-before-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Shared\n",
+      "Sessions/Shared.md" : "# Shared\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "Shared"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

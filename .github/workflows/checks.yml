@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -91,3 +92,246 @@ jobs:
           MNT: ${{ runner.temp }}/mnt
         run: |
           hdiutil detach "$MNT" -force || true
+
+  windows:
+    defaults:
+      run:
+        working-directory: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: windows/global.json
+
+      - name: Cache semantic models
+        uses: actions/cache@v6
+        with:
+          path: windows/.semantic-models
+          key: semantic-models-${{ runner.os }}-${{ hashFiles('windows/src/CaptureApp.ModelInstall/ModelManifest.cs') }}
+
+      - name: Fetch and verify semantic models
+        shell: pwsh
+        run: ./scripts/fetch-semantic-models.ps1
+
+      - name: Restore locked dependencies
+        run: dotnet restore CaptureApp.sln --locked-mode
+
+      - name: Build
+        run: dotnet build CaptureApp.sln -c Release --no-restore -warnaserror
+
+      - name: Test
+        env:
+          CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
+          CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
+          CAPTUREAPP_REQUIRE_MODELS: "1"
+        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category!=Perf"
+
+      - name: Perf gates
+        env:
+          CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
+          CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
+          CAPTUREAPP_REQUIRE_MODELS: "1"
+        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category=Perf" -m:1
+
+      - name: Publish and self-test
+        shell: pwsh
+        timeout-minutes: 3
+        env:
+          CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
+          CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
+          CAPTUREAPP_REQUIRE_MODELS: "1"
+        run: |
+          $rid = "win-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}"
+          $publishDir = Join-Path $env:RUNNER_TEMP 'publish'
+          dotnet publish src/CaptureApp.App -c Release -r $rid --self-contained -o $publishDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $appName = (Select-String -Path "$env:GITHUB_WORKSPACE/Config/app.env" -Pattern '^APPNAME=(.+)$').Matches[0].Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($appName)) { throw 'Config/app.env does not define APPNAME' }
+          $exe = Join-Path $publishDir "$appName.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Published app executable not found: $exe" }
+          Write-Host "Running published self-test: $exe"
+          $started = Get-Date
+          & $exe --self-test "$env:RUNNER_TEMP/selftest" --models "$env:CAPTUREAPP_MODELS_DIR" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/selftest.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # A crash leaves no managed output; the runtime and WER entries name the faulting module and exception.
+            Write-Host "Self-test exited with $code"
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $started } -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
+              ForEach-Object { Write-Host "[$($_.ProviderName)] $($_.Message)" }
+            Get-ChildItem "$env:RUNNER_TEMP/selftest" -Recurse -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content $_.FullName -Tail 40 }
+            exit $code
+          }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/selftest.log" -Pattern "architecture .* \(runtime $rid\)" -Quiet)) { throw "Self-test did not report architecture $rid" }
+
+      - name: Gallery
+        shell: pwsh
+        run: |
+          dotnet run --project src/CaptureApp.Gallery/CaptureApp.Gallery.csproj -c Release --no-build -- --check "$env:RUNNER_TEMP/gallery"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload gallery
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gallery-${{ matrix.runner }}
+          path: ${{ runner.temp }}/gallery
+          if-no-files-found: error
+
+      - name: Probe runner desktop capabilities
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          dotnet run --project tools/RunnerProbe/CaptureApp.RunnerProbe.csproj -c Release --no-build |
+            Tee-Object -FilePath ../runner-probe.md
+          Get-Content ../runner-probe.md | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload runner capability table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runner-probe-${{ matrix.runner }}
+          path: runner-probe.md
+          if-no-files-found: warn
+
+  windows-package:
+    # Packs two CI versions per architecture, then proves install, signed-index update and tamper refusal.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    env:
+      CI_UPDATE_PORT: "8765"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: windows/global.json
+
+      - name: Pack two CI versions
+        shell: pwsh
+        run: |
+          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $base = (Select-String -Path Config/app.env -Pattern '^VERSION=(.+)$').Matches[0].Groups[1].Value
+          "ARCH=$arch" | Add-Content $env:GITHUB_ENV
+          foreach ($n in 1, 2) {
+            ./windows/scripts/pack.ps1 -Arch $arch -Version "$base-ci.$n" -OutDir "$env:RUNNER_TEMP/pack/v$n" -CiUpdateTests
+          }
+
+      - name: Install, update and tamper test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appName = (Select-String -Path Config/app.env -Pattern '^APPNAME=(.+)$').Matches[0].Groups[1].Value
+          $rid = "win-$env:ARCH"
+          $packId = "$appName-$rid"
+          $v1 = "$env:RUNNER_TEMP/pack/v1/$rid"
+          $v2 = "$env:RUNNER_TEMP/pack/v2/$rid"
+
+          # Throwaway signing key, trusted only through the CI-build override.
+          $keyFile = Join-Path $env:RUNNER_TEMP 'ci-update-key.txt'
+          dotnet build windows/tools/IndexSigner -c Release --artifacts-path "$env:RUNNER_TEMP/signer"
+          if ($LASTEXITCODE -ne 0) { throw 'IndexSigner build failed' }
+          $signer = "$env:RUNNER_TEMP/signer/bin/CaptureApp.IndexSigner/release/CaptureApp.IndexSigner.dll"
+          $trusted = @(dotnet $signer keygen --out $keyFile)[-1]
+          if ($LASTEXITCODE -ne 0) { throw 'keygen failed' }
+          $keyId = $trusted.Split(':')[0]
+          function Sign-Index { dotnet $signer sign --key-file $keyFile --key-id $keyId --channel $rid "$v2/releases.$rid.json"; if ($LASTEXITCODE -ne 0) { throw 'sign failed' } }
+          Sign-Index
+          $env:CAPTUREAPP_UPDATE_KEYS_OVERRIDE = $trusted
+          $env:CAPTUREAPP_UPDATE_URL_OVERRIDE = "http://127.0.0.1:$env:CI_UPDATE_PORT/"
+
+          $server = Start-Job -ArgumentList $v2, $env:CI_UPDATE_PORT -ScriptBlock {
+            param($root, $port)
+            $listener = [System.Net.HttpListener]::new()
+            $listener.Prefixes.Add("http://127.0.0.1:$port/")
+            $listener.Start()
+            while ($listener.IsListening) {
+              $context = $listener.GetContext()
+              $path = Join-Path $root ([Uri]::UnescapeDataString($context.Request.Url.AbsolutePath.TrimStart('/')))
+              if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $bytes = [System.IO.File]::ReadAllBytes($path)
+                $context.Response.ContentLength64 = $bytes.Length
+                $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+              } else { $context.Response.StatusCode = 404 }
+              $context.Response.Close()
+            }
+          }
+
+          function Invoke-App([string[]] $Arguments) {
+            $out = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString('N') + '.txt')
+            $process = Start-Process -FilePath $exe -ArgumentList $Arguments -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+            [pscustomobject]@{ Code = $process.ExitCode; Out = (Get-Content -Raw -Path $out -ErrorAction SilentlyContinue) + (Get-Content -Raw -Path "$out.err" -ErrorAction SilentlyContinue) }
+          }
+          function Assert-Contains($Result, [string] $Text) {
+            if ($Result.Out -notmatch [regex]::Escape($Text)) { throw "Expected '$Text' in: $($Result.Out)" }
+          }
+
+          try {
+            $setup = Join-Path $v1 "$packId-Setup.exe"
+            Start-Process -FilePath $setup -ArgumentList '--silent' -Wait
+            $exe = Join-Path $env:LOCALAPPDATA "$packId/current/$appName.exe"
+            if (-not (Test-Path -LiteralPath $exe)) { throw "Installed exe not found at $exe" }
+
+            $info = Invoke-App @('--ci-update', 'info')
+            $processArch = if ($env:ARCH -eq 'arm64') { 'Arm64' } else { 'X64' }
+            Assert-Contains $info "arch=$processArch"
+            Assert-Contains $info "channel=$rid"
+            Assert-Contains $info '-ci.1'
+
+            $selfTest = Invoke-App @('--self-test', (Join-Path $env:RUNNER_TEMP 'installed-self-test'))
+            if ($selfTest.Code -ne 0) { throw "Installed --self-test failed: $($selfTest.Out)" }
+
+            # Tampered index and missing signature are refused.
+            $index = "$v2/releases.$rid.json"
+            $original = [System.IO.File]::ReadAllBytes($index)
+            [System.IO.File]::WriteAllBytes($index, $original + [byte[]] (32))
+            $tampered = Invoke-App @('--ci-update', 'check')
+            if ($tampered.Code -ne 3) { throw "Tampered index was not refused: $($tampered.Out)" }
+            Assert-Contains $tampered 'status=CheckFailed'
+            [System.IO.File]::WriteAllBytes($index, $original)
+            Move-Item "$index.sig" "$index.sig.off"
+            $unsigned = Invoke-App @('--ci-update', 'check')
+            if ($unsigned.Code -ne 3) { throw "Unsigned index was not refused: $($unsigned.Out)" }
+            Move-Item "$index.sig.off" "$index.sig"
+
+            $check = Invoke-App @('--ci-update', 'check')
+            if ($check.Code -ne 0) { throw "Valid update check failed: $($check.Out)" }
+            Assert-Contains $check 'status=ReadyToRestart'
+
+            Invoke-App @('--ci-update', 'apply') | Out-Null
+            $deadline = (Get-Date).AddMinutes(3)
+            do {
+              Start-Sleep -Seconds 3
+              $after = Invoke-App @('--ci-update', 'info')
+            } until ($after.Out -match '-ci\.2' -or (Get-Date) -gt $deadline)
+            Assert-Contains $after '-ci.2'
+            Assert-Contains $after "arch=$processArch"
+          }
+          finally {
+            Stop-Job $server -ErrorAction SilentlyContinue
+          }
+
+          Copy-Item -LiteralPath (Join-Path $v1 "$packId-Setup.exe") -Destination (Join-Path $env:RUNNER_TEMP 'upload-setup.exe')
+          ./windows/scripts/signing-inventory.ps1 -Layout (Join-Path $env:LOCALAPPDATA $packId) -Packages $v2 -Out (Join-Path $env:RUNNER_TEMP "signing-inventory-$env:ARCH.json")
+
+      - name: Upload signing inventory
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-package-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/signing-inventory-*.json
+            ${{ runner.temp }}/upload-setup.exe
+          retention-days: 3
+          if-no-files-found: warn

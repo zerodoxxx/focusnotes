@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" />
+    <PackageReference Include="RapidOcrNet" GeneratePathProperty="true" />
+    <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets/tray-*.ico"
+             Link="Assets/%(Filename)%(Extension)"
+             TargetPath="Assets/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(PkgRapidOcrNet)/models/v5/*.*"
+             Link="models/v5/%(Filename)%(Extension)"
+             TargetPath="models/v5/%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

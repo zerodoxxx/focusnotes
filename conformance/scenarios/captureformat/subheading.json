@@ -1,0 +1,27 @@
+{
+  "area" : "captureformat",
+  "description" : "Subheading captures clean hashes and whitespace.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "## Deep ideas\n<!-- subheading:00000000-0000-4000-8000-000000000001 -->\n"
+    ]
+  },
+  "id" : "subheading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "content" : "subheading",
+        "op" : "block",
+        "text" : " ###  Deep \n ideas  "
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

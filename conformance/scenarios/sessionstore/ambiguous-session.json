@@ -1,0 +1,35 @@
+{
+  "area" : "sessionstore",
+  "description" : "Multiple dated filename matches require a candidate.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/2026-10-12 Standup.md" : "# One\n",
+      "Sessions/2026-10-13 Standup.md" : "# Two\n"
+    },
+    "results" : [
+      {
+        "error" : "ambiguousSession"
+      },
+      null
+    ]
+  },
+  "id" : "ambiguous-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Sessions/2026-10-12 Standup.md" : "# One\n",
+      "Sessions/2026-10-13 Standup.md" : "# Two\n"
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "start"
+      },
+      {
+        "op" : "current"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

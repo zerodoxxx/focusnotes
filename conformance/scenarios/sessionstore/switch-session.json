@@ -1,0 +1,61 @@
+{
+  "area" : "sessionstore",
+  "description" : "Starting another session replaces current persisted state.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/One.md" : "# One\n",
+      "Sessions/Two.md" : "# Two\n"
+    },
+    "results" : [
+      {
+        "name" : "One",
+        "notePath" : "Sessions/One.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Two",
+        "notePath" : "Sessions/Two.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Two",
+        "notePath" : "Sessions/Two.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      },
+      {
+        "name" : "Two",
+        "notePath" : "Sessions/Two.md",
+        "resumed" : false,
+        "startedAt" : "2026-10-13T09:00:42Z"
+      }
+    ]
+  },
+  "id" : "switch-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "One",
+        "op" : "start"
+      },
+      {
+        "name" : "Two",
+        "op" : "start"
+      },
+      {
+        "op" : "reload"
+      },
+      {
+        "op" : "persisted"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

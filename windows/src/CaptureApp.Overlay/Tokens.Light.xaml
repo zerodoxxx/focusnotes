@@ -1,0 +1,28 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="SurfaceTint" Color="#F7FBFBFB" />
+  <SolidColorBrush x:Key="SurfaceBorder" Color="#1A000000" />
+  <SolidColorBrush x:Key="BrandAccent" Color="#FFE5483C" />
+  <SolidColorBrush x:Key="TextPrimary" Color="#E4000000" />
+  <SolidColorBrush x:Key="Secondary" Color="#9E000000" />
+  <SolidColorBrush x:Key="Tertiary" Color="#72000000" />
+  <SolidColorBrush x:Key="HintFill" Color="#1A000000" />
+  <SolidColorBrush x:Key="Separator" Color="#0F000000" />
+  <SolidColorBrush x:Key="SelectedFill" Color="#FF0067C0" />
+  <SolidColorBrush x:Key="SelectedText" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="SelectedSecondary" Color="#D9FFFFFF" />
+  <SolidColorBrush x:Key="CardFill" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="CardBorder" Color="#1A000000" />
+  <SolidColorBrush x:Key="MenuSelectedFill" Color="#14000000" />
+  <SolidColorBrush x:Key="KeycapBoxBorder" Color="#2E000000" />
+  <SolidColorBrush x:Key="QuickClusterFill" Color="#0A000000" />
+  <SolidColorBrush x:Key="QuickClusterBorder" Color="#14000000" />
+  <SolidColorBrush x:Key="QuickButtonHoverFill" Color="#14000000" />
+  <SolidColorBrush x:Key="QuickButtonPressedFill" Color="#24000000" />
+  <SolidColorBrush x:Key="CodeBackground" Color="#0D000000" />
+  <SolidColorBrush x:Key="Warning" Color="#FFFF9500" />
+  <SolidColorBrush x:Key="Session" Color="#FFFF3B30" />
+  <SolidColorBrush x:Key="Transparent" Color="#00000000" />
+  <SolidColorBrush x:Key="Shadow" Color="#FF000000" />
+  <SolidColorBrush x:Key="EditorCheckboxCheck" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="EditorLink" Color="#FF0067C0" />
+</ResourceDictionary>

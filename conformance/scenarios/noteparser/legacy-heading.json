@@ -1,0 +1,39 @@
+{
+  "area" : "noteparser",
+  "description" : "Parse the legacy timestamp and source heading.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "body",
+            "createdAt" : "2026-10-13T09:00:00Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : "Browser",
+            "windowTitle" : "Page"
+          }
+        ],
+        "title" : "Legacy"
+      }
+    ]
+  },
+  "id" : "legacy-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Legacy\n\n### 2026-10-13 14:30 · Browser · Page\n<!-- capture:00000000-0000-4000-8000-000000000001 -->\n\nbody\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

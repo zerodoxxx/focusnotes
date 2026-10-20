@@ -1,0 +1,34 @@
+{
+  "area" : "notewriter",
+  "description" : "Images in fake home notes link back to vault assets.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      null,
+      "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n![](../../vault/assets/shot.png)\n"
+    ]
+  },
+  "id" : "home-image",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "assetPath" : "assets/shot.png",
+        "content" : "image",
+        "op" : "appendIfMissing",
+        "path" : "/Desktop/Note.md",
+        "title" : "Note"
+      },
+      {
+        "op" : "read",
+        "path" : "/Desktop/Note.md"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "area" : "sessionstore",
+  "description" : "A deleted candidate fails without creating a replacement.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n"
+    },
+    "results" : [
+      {
+        "error" : "candidateNoLongerExists"
+      }
+    ]
+  },
+  "id" : "missing-candidate",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Gone",
+        "op" : "resume",
+        "path" : "Sessions/Gone.md"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}
