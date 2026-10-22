@@ -2,12 +2,25 @@ using System.IO;
 using CaptureApp.App;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Overlay;
+using System.Windows.Input;
 using Xunit;
 
 namespace CaptureApp.App.Tests;
 
 public sealed class WiringTests
 {
+    [Theory]
+    [InlineData(ModifierKeys.None, true, InputSubmitAction.Submit)]
+    [InlineData(ModifierKeys.Control, true, InputSubmitAction.Alternate)]
+    [InlineData(ModifierKeys.Control, false, InputSubmitAction.Submit)]
+    [InlineData(ModifierKeys.Alt, true, InputSubmitAction.Ignore)]
+    [InlineData(ModifierKeys.Shift, true, InputSubmitAction.Ignore)]
+    [InlineData(ModifierKeys.Windows, true, InputSubmitAction.Ignore)]
+    [InlineData(ModifierKeys.Control | ModifierKeys.Shift, true, InputSubmitAction.Ignore)]
+    [InlineData(ModifierKeys.Control | ModifierKeys.Alt, true, InputSubmitAction.Ignore)]
+    public void SessionPickerEnterUsesControlOnlyForRename(ModifierKeys modifiers, bool hasAlternate, InputSubmitAction expected) =>
+        Assert.Equal(expected, InputPanelController.SubmissionAction(modifiers, hasAlternate));
+
     [Fact]
     public void ToastMappingKeepsStyleTextAndHint()
     {

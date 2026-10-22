@@ -107,6 +107,7 @@ private func fixtureError(_ error: any Error) throws -> FixtureValue {
         kind = switch error {
         case .ambiguous: "ambiguousSession"
         case .candidateNoLongerExists: "candidateNoLongerExists"
+        case .invalidRename, .renameConflict, .caseOnlyRename: throw error
         }
     case let error as CocoaError where error.code == .fileWriteInvalidFileName:
         kind = "invalidFileName"

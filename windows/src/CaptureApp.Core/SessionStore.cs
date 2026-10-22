@@ -1,18 +1,40 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace CaptureApp.Core;
 
 public sealed record Session(string Name, string NotePath, DateTimeOffset StartedAt, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Resumed = null);
 public sealed record SessionCandidate(string Name, string NotePath, DateTimeOffset ModifiedAt);
+public sealed record ManagedFileIdentity(ulong Device, ulong Inode)
+{
+    public bool Matches(VaultFileSnapshot snapshot) => Device == snapshot.Device && Inode == snapshot.Inode;
+}
+public sealed record SessionRenameStage(ManagedFileIdentity Identity, string TemporaryPath);
+public sealed record SessionRenameHashes
+{
+    public required string Original { get; init; }
+    public required string Rewritten { get; init; }
+}
+public sealed record SessionRenamePlan(string OldPath, Session Target, ManagedFileIdentity Source,
+    SessionRenameHashes Hashes, SessionRenameStage? Installation = null);
+public sealed record SessionRenameOutcome(Session Session, bool IdentityUpdatePending);
+public sealed class SessionRenamePendingException(Exception original, Exception rollback)
+    : IOException("The session moved, but rollback failed; rename recovery is pending.", original)
+{
+    public Exception RollbackError { get; } = rollback;
+}
 public enum SessionStoreError
 {
     Ambiguous,
-    CandidateNoLongerExists
+    CandidateNoLongerExists,
+    NameAlreadyExists,
+    CaseOnlyRename
 }
 
-public sealed class SessionStoreException(SessionStoreError kind, IReadOnlyList<SessionCandidate>? candidates = null, string? path = null) : IOException(kind.ToString())
+public sealed class SessionStoreException(SessionStoreError kind, IReadOnlyList<SessionCandidate>? candidates = null, string? path = null)
+    : IOException(kind == SessionStoreError.CaseOnlyRename ? "Choose a name that changes more than letter casing." : kind.ToString())
 {
     public SessionStoreError Kind { get; } = kind;
     public IReadOnlyList<SessionCandidate> Candidates { get; } = candidates ?? [];
@@ -152,6 +174,105 @@ public sealed class SessionStore
         }
     }
 
+    public Session RenameAndResume(SessionCandidate candidate, string newName, Action<SessionRenamePlan>? beforeRename = null,
+        Action? beforeReplace = null)
+    {
+        lock (gate)
+        {
+            vault.Prepare();
+            _ = Existing().FirstOrDefault(n => vault.NoteId(n.Url) == candidate.NotePath)
+                ?? throw new SessionStoreException(SessionStoreError.CandidateNoLongerExists, path: candidate.NotePath);
+            var title = RenameTitle(newName);
+            var parts = NoteFile.PathComponents(candidate.NotePath);
+            if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName)
+            {
+                throw new NotePathNameException(NotePathNameError.InvalidComponent);
+            }
+            var components = parts.SkipLast(1).Append(NoteTitle.FileStem(title)).ToArray();
+            var name = NotePathName.Validated(NotePathScope.Vault, components, vault.NamingRules);
+            var newPath = name.RelativePath + ".md";
+            var target = new Session(title, newPath, clock.GetUtcNow(), true);
+            NoteFile.RenameSession(vault.Root, candidate.NotePath, newPath, title, (snapshot, rewritten, stage) =>
+            {
+                beforeRename?.Invoke(new(candidate.NotePath, target, new(snapshot.Device, snapshot.Inode),
+                    new() { Original = Hash(snapshot.Contents!), Rewritten = Hash(rewritten) }, stage));
+            }, beforeReplace);
+            session = target;
+            return Persist(target);
+        }
+    }
+
+    // A pending intent survives a crash between the exclusive move, heading rewrite and
+    // state migration. Only the original inode or the exact prepared replacement may finish it.
+    public Session CompleteRename(SessionRenamePlan plan, Action<SessionRenamePlan>? beforeRepair = null)
+    {
+        lock (gate)
+        {
+            vault.Prepare();
+            var parts = NoteFile.PathComponents(plan.Target.NotePath);
+            var old = NoteFile.PathComponents(plan.OldPath);
+            if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName ||
+                !parts.SkipLast(1).SequenceEqual(old.SkipLast(1)) || RenameTitle(plan.Target.Name) != plan.Target.Name ||
+                parts[^1] != NoteTitle.FileStem(plan.Target.Name) + ".md")
+            {
+                throw new VaultFileException(VaultFileError.InvalidFileName);
+            }
+            _ = NotePathName.Validated(NotePathScope.Vault, parts.SkipLast(1).Append(NoteTitle.FileStem(plan.Target.Name)), vault.NamingRules);
+            if (plan.OldPath != plan.Target.NotePath && vault.FileSnapshot(plan.OldPath, false) is { } source && plan.Source.Matches(source))
+            {
+                throw new VaultFileException(VaultFileError.Changed);
+            }
+            var snapshot = vault.FileSnapshot(plan.Target.NotePath) ?? throw new FileNotFoundException(plan.Target.NotePath);
+            var hash = Hash(snapshot.Contents!);
+            var isSource = plan.Source.Matches(snapshot);
+            var isInstalled = plan.Installation?.Identity.Matches(snapshot) == true;
+            if (!isSource && !isInstalled && hash != plan.Hashes.Rewritten)
+            {
+                throw new VaultFileException(VaultFileError.Changed);
+            }
+            // Only finish an untouched old heading. Edits on either known inode belong to the user.
+            if (isSource && hash == plan.Hashes.Original && hash != plan.Hashes.Rewritten)
+            {
+                NoteFile.RenameSession(vault.Root, plan.Target.NotePath, plan.Target.NotePath, plan.Target.Name,
+                    (current, rewritten, stage) =>
+                    {
+                        if (!plan.Source.Matches(current) || Hash(current.Contents!) != plan.Hashes.Original ||
+                            Hash(rewritten) != plan.Hashes.Rewritten)
+                        {
+                            throw new VaultFileException(VaultFileError.Changed);
+                        }
+                        beforeRepair?.Invoke(plan with { Installation = stage });
+                    });
+            }
+            session = plan.Target;
+            return Persist(plan.Target);
+        }
+    }
+
+    public void CleanupRename(SessionRenamePlan plan)
+    {
+        if (plan.Installation is { } stage)
+            NoteFile.RemoveSessionTemporary(vault.Root, stage);
+    }
+
+    private string RenameTitle(string raw)
+    {
+        if (raw.IndexOfAny(['/', '\\', '\0']) >= 0)
+        {
+            throw new NotePathNameException(NotePathNameError.InvalidComponent);
+        }
+        if (vault.NamingRules.WindowsRules) { vault.NamingRules.ValidateComponent(raw); }
+        var title = NoteTitle.CleanTitle(raw);
+        if (title is "" or "." or ".." || NoteTitle.FileStem(title).StartsWith("~$", StringComparison.Ordinal))
+        {
+            throw new NotePathNameException(NotePathNameError.InvalidComponent);
+        }
+        vault.NamingRules.ValidateComponent(title);
+        return title;
+    }
+
+    private static string Hash(byte[] contents) => Convert.ToHexString(SHA256.HashData(contents));
+
     private Session StartAt(string title, string notePath, NoteRef? existing)
     {
         var now = clock.GetUtcNow();
@@ -173,13 +294,18 @@ public sealed class SessionStore
         beforeNoteWrite?.Invoke(notePath);
         NoteFile.Create(NoteFile.Utf8.GetBytes(CaptureFormat.NoteHeader(title)), vault.Root, notePath);
         var started = new Session(display, notePath, now, existing is not null);
+        return Persist(started);
+    }
+
+    private Session Persist(Session started)
+    {
         // Swift's persisted ISO-8601 representation has whole seconds and UTC Z.
         var persisted = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
             ["name"] = started.Name,
             ["notePath"] = started.NotePath,
             ["resumed"] = started.Resumed,
-            ["startedAt"] = now.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            ["startedAt"] = started.StartedAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
         };
         NoteFile.AtomicWrite(JsonSerializer.SerializeToUtf8Bytes(persisted, Options), stateDirectory, "session.json");
         session = started;

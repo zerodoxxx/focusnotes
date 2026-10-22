@@ -22,11 +22,11 @@ private func currentPanel() throws -> OverlayPanel {
 }
 
 @MainActor
-private func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) throws {
+private func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false) throws {
     let panel = try currentPanel()
     guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
-        characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+        characters: "", charactersIgnoringModifiers: "", isARepeat: isRepeat, keyCode: code) else {
         throw GalleryError("Could not construct key event")
     }
     if modifiers.contains(.command) { _ = panel.performKeyEquivalent(with: event) }
@@ -153,6 +153,64 @@ func runBehaviorChecks() async throws {
     try key(36)
     try require(acceptedBeforeClose && submittedAfterClose, "Note title acceptance must precede dismissal and final callbacks")
     try require(!acceptingPanel.isVisible && !acceptingPanel.isKeyWindow, "Input retained key status during closing")
+
+    var resumedSessions: [String] = []
+    var renamedSessions: [String] = []
+    let sessionOptions = [Suggestion(title: "Standup", value: "Sessions/Standup.md"),
+                          Suggestion(title: "Standup", value: "Sessions/archive/Standup.md")]
+    func presentSessionPicker(selected: String? = nil) {
+        input.present(placeholder: "Select a session…", selectionOnly: true, selectedValue: selected,
+                      suggestions: { _ in sessionOptions },
+                      onAlternateSubmit: { renamedSessions.append($0) },
+                      onSubmit: { resumedSessions.append($0) }, onCancel: {})
+    }
+    presentSessionPicker()
+    try key(36, modifiers: .command)
+    try require(input.isVisible && renamedSessions.isEmpty && resumedSessions.isEmpty,
+                "Command Enter without a highlighted session must do nothing")
+    try key(125); try key(125)
+    try key(36, modifiers: .command, isRepeat: true)
+    try require(input.isVisible && renamedSessions.isEmpty, "Repeating Command Enter must not open or confirm a rename")
+    let unsupportedSessionModifiers: [NSEvent.ModifierFlags] = [.control, [.command, .shift], .option]
+    for modifiers in unsupportedSessionModifiers {
+        try key(36, modifiers: modifiers)
+        try require(input.isVisible && renamedSessions.isEmpty && resumedSessions.isEmpty,
+                    "Unsupported session-picker modifiers must not submit or rename")
+    }
+    try key(36, modifiers: .command)
+    try await settle()
+    try require(renamedSessions == ["Sessions/archive/Standup.md"] && resumedSessions.isEmpty && !input.isVisible,
+                "Command Enter must submit the highlighted session identity to rename after dismissal")
+    presentSessionPicker(selected: "Sessions/archive/Standup.md")
+    try key(36)
+    try await settle()
+    try require(resumedSessions == ["Sessions/archive/Standup.md"] && renamedSessions.count == 1,
+                "Restored picker selection must support plain Enter resume")
+    var renameEscapes = 0
+    var renameCancels = 0
+    var renameValues: [String] = []
+    func presentRenameField() {
+        input.present(placeholder: "New session name", initialText: "Standup", selectInitialText: true, allowEmptySubmission: true,
+                      suggestions: { _ in [] }, onEscape: { renameEscapes += 1 },
+                      onSubmit: { renameValues.append($0) }, onCancel: { renameCancels += 1 })
+    }
+    presentRenameField()
+    let initialRename = try field(in: currentPanel())
+    try require(initialRename.stringValue == "Standup" && initialRename.currentEditor()?.selectedRange == NSRange(location: 0, length: 7),
+                "Rename field must prefill and select the current title")
+    try key(36, isRepeat: true)
+    try require(input.isVisible && renameValues.isEmpty, "Repeating Enter must not confirm the prefilled rename")
+    try key(53); try await settle()
+    try require(renameEscapes == 1 && renameCancels == 0 && renameValues.isEmpty, "Escape must have its own rename cancellation callback")
+    presentRenameField()
+    input.dismiss(); try await settle()
+    try require(renameEscapes == 1 && renameCancels == 1, "Closing a rename for another action must not reopen the picker")
+    presentRenameField()
+    let emptyRename = try field(in: currentPanel())
+    emptyRename.stringValue = ""
+    input.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: emptyRename))
+    try key(36); try await settle()
+    try require(renameValues == [""], "An empty rename must reach validation instead of silently cancelling")
 
     let toast = ToastController()
     var expired = 0

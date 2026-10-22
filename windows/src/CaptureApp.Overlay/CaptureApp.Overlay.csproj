@@ -7,5 +7,6 @@
   <ItemGroup>
     <PackageReference Include="AvalonEdit" />
     <InternalsVisibleTo Include="CaptureApp.Gallery" />
+    <InternalsVisibleTo Include="CaptureApp.App.Tests" />
   </ItemGroup>
 </Project>

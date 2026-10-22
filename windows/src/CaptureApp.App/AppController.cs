@@ -61,6 +61,13 @@ internal sealed partial class AppController : IDisposable
         menuCapture = new MenuCaptureFlow(new WindowsForegroundProbe(foreground, focusProbe));
     }
 
+    internal AppController(Application app, string stateDirectory, CapturePipeline testPipeline)
+        : this(app, stateDirectory, firstRun: false)
+    {
+        pipeline = testPipeline;
+        Coordinator = new(testPipeline, new HeadlessCaptureHost());
+    }
+
     public string SettingsPath { get; }
     public SettingsStore Settings { get; }
     public SetupState Setup { get; }

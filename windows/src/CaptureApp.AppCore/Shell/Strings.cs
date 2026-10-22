@@ -55,10 +55,30 @@ public static class Strings
     public const string SessionNamePlaceholder = "Session name";
     public const string SelectSessionPlaceholder = "Select a session…";
     public const string MultipleSessionsTitle = "Multiple sessions found with the given name";
+    public const string SessionPickerHint = "Enter resumes · Ctrl+Enter renames";
+    public const string RenameSessionTitle = "Rename and resume session";
+    public const string RenameSessionHint = "Enter renames and resumes · Esc returns to sessions";
+    public const string RenameSessionFailureHint = "Check the name and file access. Existing files are kept.";
+    public const string RenameSessionNameInUseHint = "A session with that name already exists. Choose a different name.";
+    public const string RenameSessionCaseOnlyHint = "Choose a name that changes more than letter casing.";
+    public const string RenameSessionInvalidNameHint = "Enter a valid session name without folder separators.";
+    public const string RenameSessionMissingHint = "This session no longer exists. Choose another session.";
+    public const string RenameSessionChangedHint = "This session changed. Select it again before renaming.";
+    public const string CouldNotRenameSession = "Couldn't rename session";
     public const string SubheadingPlaceholder = "Subheading";
     public const string AddSubheadingTitle = "Add subheading";
     public const string RecentSection = "Recent";
     public const string ResultsSection = "Results";
+
+    public static string RenameSessionErrorHint(Exception error) => error switch
+    {
+        SessionStoreException { Kind: SessionStoreError.NameAlreadyExists } => RenameSessionNameInUseHint,
+        SessionStoreException { Kind: SessionStoreError.CaseOnlyRename } => RenameSessionCaseOnlyHint,
+        SessionStoreException { Kind: SessionStoreError.CandidateNoLongerExists } or FileNotFoundException => RenameSessionMissingHint,
+        NotePathNameException or VaultFileException { Kind: VaultFileError.InvalidFileName } => RenameSessionInvalidNameHint,
+        VaultFileException { Kind: VaultFileError.Changed } => RenameSessionChangedHint,
+        _ => RenameSessionFailureHint
+    };
 
     public static string NoTextSelectedSubtitle(string areaBinding) => $"Select text first, or use {areaBinding} for an area";
 

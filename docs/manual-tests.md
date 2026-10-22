@@ -98,6 +98,38 @@ Use a temporary vault and a disposable test folder under your home directory.
    Escape leaves the session state and both notes untouched. A unique nested
    bare-name match resumes its exact path, while `archive/Standup` resolves
    directly without a chooser. A missing qualified name creates a nested session.
+   **Rename from the chooser:** Highlight the archived session and press ⌘↩
+   (Ctrl+Enter on Windows). Confirm its current title is selected for editing.
+   Escape returns to the chooser without changing either file. Open rename again,
+   enter `Daily sync`, and confirm: only the archived file becomes
+   `Sessions/archive/Daily sync.md`, its `# ` heading changes, and the session
+   resumes there. Subsequent captures append to the renamed note. Check that
+   existing image links still resolve, a pin follows the renamed note, pending
+   journaled captures recover there, and Search drops the old path and finds the
+   new title. Try a separator-containing name and an existing filename with
+   different casing: both must show an error and leave the original intact.
+   Try renaming `Standup` to `standup`: expect “Choose a name that changes more
+   than letter casing.” On Windows, an occupied name should say “A session with
+   that name already exists. Choose a different name.” Invalid names should say
+   “Enter a valid session name without folder separators.” Confirm the retry
+   field retains and selects the attempted name and neither note changes.
+   **Windows rename recovery (disposable state/vault only):** Pin the session,
+   back up `pinned-notes.json`, replace it with a directory of the same name,
+   then rename the session to `Daily sync`. Confirm the file moves and the warning
+   reads “Session rename pending · Daily sync” / “State updates will retry before
+   the next save.” Restore
+   the pin file, capture again, and confirm the capture and pin follow the new
+   path and `session-rename.json` is cleared. Repeat with a restart before the
+   capture and confirm recovery completes once. For an interrupted rename that
+   leaves `session-rename.json` and the source at its old path, edit that source
+   before restarting: the intent must be abandoned, the edited bytes preserved,
+   and startup and later captures must work. If the interrupted move already
+   reached the new path, edit that same file before restarting: recovery must
+   adopt it, preserve the edits, and complete state migration. A missing or
+   unrelated target must also abandon the stale intent without overwriting a
+   note. The reproducible interruption fixtures are in
+   `windows/tests/CaptureApp.AppCore.Tests/SessionRenameTests.cs`; ordinary
+   pre-move failures now clear their intent immediately.
 6. **Registry preservation and recovery:** With a disposable state directory,
    register two external notes, then replace `external-notes.json` with malformed
    bytes, version 2, or a symlink. Confirm Focusnotes warns that the registry was
@@ -319,4 +351,4 @@ captures.
 The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-22 (previous commit: `3c96523`)

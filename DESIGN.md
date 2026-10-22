@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-20 (previous commit: `0710812`)
+Last Updated: 2026-10-22 (previous commit: `1000d71`)
 
 ## Product surfaces
 
@@ -11,6 +11,10 @@ The default global shortcuts are ⌥⇧C for selection capture, ⌥⇧S for area
 The interactive surfaces are borderless, nonactivating panels: they borrow keyboard focus while leaving the app inactive, and they cannot become the main window. Passive toast panels ignore mouse events. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L39-L64), [Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L66-L76)) Interactive panels without a saved movable position are centered on the pointer's screen, with their top edge 22% of the visible screen height below the top; toasts are placed 72 points above the visible bottom. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L210-L223), [Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L137-L149))
 
 ### Sessions
+
+In the duplicate-session picker, ⌘↩ on macOS or Ctrl+Enter on Windows opens a rename field with the highlighted session's title selected. Return renames its file and title heading, keeps it in the same folder, and resumes it. Escape returns to the picker with the same selection. Rename rejects folder separators and existing destination names, including case-insensitive matches. The rewrite preserves the remaining Markdown and relative image links, and pins, pending captures, session state, and search follow the new path. A unique match still resumes directly without a picker.
+
+Changing only letter casing is rejected with “Choose a name that changes more than letter casing.” On Windows, other rename failures keep the entered name selected and show guidance for an occupied name, invalid name, missing session, or changed file; unexpected failures show “Check the name and file access. Existing files are kept.” If the file has moved but state migration needs another attempt, the app shows “Session rename pending · Daily sync” (using the new title) with “State updates will retry before the next save.” Recovery retries at startup and before further saves. Windows abandons stale uncommitted intents without modifying either note, and preserves edits to a known renamed file while completing migration. macOS abandons them the same way, so a stale rename never keeps the app from starting. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.AppCore/Shell/CaptureCoordinator.cs](windows/src/CaptureApp.AppCore/Shell/CaptureCoordinator.cs), [windows/src/CaptureApp.AppCore/CapturePipeline.cs](windows/src/CaptureApp.AppCore/CapturePipeline.cs))
 
 Starting a session with a bare name resumes its only matching note at the existing path, or creates a new top-level note under `Sessions/` when there is no match. Duplicate bare-name matches open a picker with each note's title, path, and modification date, newest first; Up/Down selects, Return resumes the selected path, and Escape cancels. A valid slash-qualified name such as `archive/Standup` resolves directly under `Sessions/` and skips the picker. Relative malformed slash forms, including whitespace next to a slash or trailing/repeated separators, use the cleaned flat-name matching flow; a leading slash after title cleaning is an explicit HOME-relative target for typed notes and remains invalid for sessions. ([Sources/Core/SessionStore.swift](Sources/Core/SessionStore.swift), [Sources/App/AppController.swift](Sources/App/AppController.swift), [Sources/OverlayKit/InputPanel.swift](Sources/OverlayKit/InputPanel.swift))
 

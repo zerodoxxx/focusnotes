@@ -217,7 +217,7 @@ public sealed class CaptureCoordinator
         var job = capture.Png is not null
             ? Pipeline.PrepareImage(capture.Png, capture.Source, route, capture.Ocr, capture.Id, capture.CreatedAt)
             : Pipeline.PrepareText(capture.Content.Value, capture.Source, route, null, capture.Id, capture.CreatedAt);
-        return destination is null ? job : job with { Prepared = job.Prepared with { Destination = destination } };
+        return destination is null ? job : Pipeline.WithDestination(job, destination);
     }
 
     // Staging and commit.
@@ -508,8 +508,7 @@ public sealed class CaptureCoordinator
         await WaitForProcessingAsync().ConfigureAwait(false);
         _ = CommitPending();
         var capture = new Capture(Guid.NewGuid(), DateTimeOffset.UtcNow, CaptureContent.Subheading(text), new CaptureSource());
-        var preparation = Task.Run(() => new CaptureJob(destination is null
-            ? Pipeline.Service.Prepare(capture) : new PreparedCapture(capture, destination)));
+        var preparation = Task.Run(() => Pipeline.PrepareSubheading(capture, destination));
         Task<SavedCapture> task;
         int generation;
         lock (gate)
@@ -556,6 +555,26 @@ public sealed class CaptureCoordinator
     public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.Start(name)));
 
     public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.Sessions.Resume(candidate)));
+
+    public Task<SessionRenameOutcome> RenameSessionAsync(SessionCandidate candidate, string newName) => Task.Run(() =>
+    {
+        try
+        {
+            var outcome = Pipeline.RenameSession(candidate, newName);
+            ActiveSession = outcome.Session;
+            host.StatusChanged();
+            if (outcome.IdentityUpdatePending)
+                ShowToast(new(AppToastStyle.Warning, $"Session rename pending · {outcome.Session.Name}", "State updates will retry before the next save."));
+            else ShowToast(new(AppToastStyle.Session, Strings.SessionStarted(outcome.Session.Name, true),
+                Strings.SessionCapturesGoHere(host.SessionBinding)));
+            return outcome;
+        }
+        finally
+        {
+            // Disk rename can succeed before a later state/cache write fails. Keep tray state in sync.
+            host.StatusChanged();
+        }
+    });
 
     private Session ActivateSession(Session session)
     {

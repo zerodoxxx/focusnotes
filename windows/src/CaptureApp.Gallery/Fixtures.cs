@@ -55,9 +55,11 @@ internal static class Fixtures
         yield return Input("input-selected", "Name this session", "System", Suggestions, 0);
         yield return Input("input-subheading", "Subheading", "", [], null, "Add subheading", "In System Design");
         yield return Input("input-max-suggestions", "Name this session", "", Suggestions.Concat(Suggestions).ToArray(), 0);
-        yield return Input("session-picker", "Select a session…", "", Sessions, null, "Multiple sessions found with the given name");
-        yield return Input("session-picker-selected", "Select a session…", "", Sessions, 0, "Multiple sessions found with the given name");
-        yield return Input("session-picker-empty", "Select a session…", "zzz", [], null, "Multiple sessions found with the given name");
+        yield return Input("session-picker", "Select a session…", "", Sessions, null, "Multiple sessions found with the given name", "Enter resumes · Ctrl+Enter renames");
+        yield return Input("session-picker-selected", "Select a session…", "", Sessions, 0, "Multiple sessions found with the given name", "Enter resumes · Ctrl+Enter renames");
+        yield return Input("session-picker-empty", "Select a session…", "zzz", [], null, "Multiple sessions found with the given name", "Enter resumes · Ctrl+Enter renames");
+        yield return Input("session-rename", "Name this session", "System Design", [], null, "Rename and resume session", "Enter renames and resumes · Esc returns to sessions");
+        yield return Input("session-rename-error", "Name this session", "Daily sync", [], null, "Rename and resume session", "Check the name and file access. Existing files are kept.");
         foreach (var quick in QuickFixtures()) yield return quick;
     }
     internal static readonly BrowseItem[] BrowseItems =

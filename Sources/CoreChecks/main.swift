@@ -76,6 +76,7 @@ do {
     try checkRouter()
     try await checkNoteWriter()
     try await checkSessionStore()
+    try await checkSessionRename()
     try await checkCaptureService()
     try checkNoteParser()
     try await checkTypedNotes()

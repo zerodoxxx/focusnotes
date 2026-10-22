@@ -80,7 +80,7 @@ struct CapturePipeline: Sendable {
         }
         let sessions = SessionStore(stateDirectory: stateDirectory, vault: vault, calendar: calendar, now: Date.init)
         let writer = NoteWriter(vault: vault, calendar: calendar)
-        return Self(
+        let pipeline = Self(
             vault: vault, sessions: sessions,
             service: CaptureService(vault: vault, sessions: sessions, writer: writer, now: Date.init),
             index: index,
@@ -90,9 +90,13 @@ struct CapturePipeline: Sendable {
             pins: NotePinStore(stateDirectory: stateDirectory),
             calendar: calendar, logger: logger
         )
+        try await pipeline.recoverSessionRename(allowFileRename: true)
+        try await pipeline.journal.discardPreviousProcessRedirects()
+        return pipeline
     }
 
     func prepare(_ capture: PendingCapture, noteTitle: String?, destination: Destination? = nil) async throws -> CaptureJob {
+        try await recoverSessionIdentity()
         let content: CaptureContent
         let png: Data?
         let ocr: String?
@@ -113,8 +117,25 @@ struct CapturePipeline: Sendable {
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 
-    func commit(_ job: CaptureJob, pinOnSave: Bool? = nil,
+    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool) async throws -> PreparedCapture {
+        try await recoverSessionIdentity()
+        return try await service.prepareNote(capture, destination: destination, newNote: newNote, calendar: calendar)
+    }
+
+    func prepareCapture(_ capture: Capture, destination: Destination?) async throws -> PreparedCapture {
+        try await recoverSessionIdentity()
+        if let destination { return PreparedCapture(capture: capture, destination: destination) }
+        return try await service.prepare(capture, noteTitle: nil)
+    }
+
+    func recoverSessionIdentity() async throws {
+        try await recoverSessionRename(allowFileRename: false)
+    }
+
+    func commit(_ originalJob: CaptureJob, pinOnSave: Bool? = nil,
                 onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
+        try await recoverSessionRename(allowFileRename: false)
+        let job = try await journal.redirected(originalJob)
         let saved = try await service.save(job.prepared, png: job.png)
         monitor.refreshExternalRoots()
         // A cache failure must not retry an already appended capture. Startup sync repairs it.
@@ -141,6 +162,164 @@ struct CapturePipeline: Sendable {
         Task.detached(priority: .utility) { await semantic.schedule() }
         if let pinFailed { await onNoteSaved?(saved, pinFailed) }
         return saved
+    }
+
+    /// Called only after the controller drains capture writes. The durable
+    /// intent survives a crash between the file operation and identity updates.
+    func renameSession(_ candidate: SessionCandidate, to name: String,
+                       preparedJobs: [CaptureJob],
+                       beforeInstall: (@Sendable (SessionRenameStage) throws -> Void)? = nil,
+                       afterSwap: (@Sendable () throws -> Void)? = nil) async throws -> SessionRenameOutcome {
+        try await recoverSessionRename(allowFileRename: true)
+        let renamed = try await sessions.renameDestination(candidate, to: name)
+        let intent = try await journal.beginSessionRename(oldPath: candidate.notePath, session: renamed,
+                                                         vault: vault, preparedJobs: preparedJobs)
+        let recorder = await journal.installationRecorder(for: intent)
+        do {
+            _ = try await sessions.rename(candidate, to: name, beforeInstall: { stage in
+                try recorder(stage)
+                try beforeInstall?(stage)
+            }, afterSwap: afterSwap)
+        }
+        catch {
+            let renameError = error
+            do {
+                if let recorded = try await journal.pendingSessionRename(),
+                   try vault.fileSnapshot(relativePath: renamed.notePath, includingContents: false).map(recorded.isInstalled) != true {
+                    if let source = try vault.fileSnapshot(relativePath: recorded.oldPath, includingContents: false),
+                       recorded.isInstalled(source) {
+                        if try await recoverSessionRename(allowFileRename: true) {
+                            logger.error("Session rename completed after interrupted swap (\(AppErrorLog.summary(renameError), privacy: .public))")
+                            return SessionRenameOutcome(session: renamed, identityUpdatePending: false)
+                        }
+                    } else {
+                        try await abandonSessionRename(recorded, error: renameError)
+                    }
+                }
+            } catch {
+                logger.error("Rename cleanup failed after \(AppErrorLog.summary(renameError), privacy: .public): \(AppErrorLog.summary(error), privacy: .public)")
+            }
+            // Persistence can fail after the file has committed. Detect that
+            // outcome by the staged inode recorded before installation.
+            guard let recorded = try? await journal.pendingSessionRename(),
+                  let target = try? vault.fileSnapshot(relativePath: renamed.notePath, includingContents: false),
+                  recorded.isInstalled(target) else { throw renameError }
+            // The file is installed; report success and let recovery finish identity updates.
+            do {
+                try await recoverSessionRename(allowFileRename: false)
+                return SessionRenameOutcome(session: renamed, identityUpdatePending: false)
+            } catch {
+                logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(renameError), privacy: .public); \(AppErrorLog.summary(error), privacy: .public))")
+                return SessionRenameOutcome(session: renamed, identityUpdatePending: true)
+            }
+        }
+        do {
+            try await recoverSessionRename(allowFileRename: false)
+            return SessionRenameOutcome(session: renamed, identityUpdatePending: false)
+        } catch {
+            logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(error), privacy: .public))")
+            return SessionRenameOutcome(session: renamed, identityUpdatePending: true)
+        }
+    }
+
+    /// Returns true only when a pending rename completed its identity migration.
+    @discardableResult
+    private func recoverSessionRename(allowFileRename: Bool) async throws -> Bool {
+        guard var intent = try await journal.pendingSessionRename() else { return false }
+        if allowFileRename {
+            // Startup must never stay blocked on the file step: any failure before
+            // the target holds the installed identity abandons, leaving files as they are.
+            do { intent = try await resumeSessionRename(intent) }
+            catch {
+                // Abandon the latest intent so stages recorded during the resume are cleaned up too.
+                try await abandonSessionRename((try? await journal.pendingSessionRename()) ?? intent, error: error)
+                return false
+            }
+        } else {
+            let target = try vault.fileSnapshot(relativePath: intent.session.notePath, includingContents: false)
+            if target.map(intent.isInstalled) != true {
+                // Startup finishes the app's own staged swap; anything else is a stale request.
+                if let source = try vault.fileSnapshot(relativePath: intent.oldPath), intent.isInstalled(source) {
+                    throw SessionRenameRecoveryError.changedFile
+                }
+                try await abandonSessionRename(intent, error: SessionRenameRecoveryError.changedFile)
+                return false
+            }
+        }
+        try await sessions.recoverRenamedSession(intent.session)
+        try await journal.finishSessionRename(intent, vault: vault)
+        try pins.rename(from: intent.oldPath, to: intent.session.notePath)
+        try await cleanupSessionRename(intent, completed: true)
+        try await journal.clearSessionRename()
+        do {
+            _ = try await index.sync()
+            await semantic.schedule()
+        } catch {
+            logger.error("Session renamed; index update failed (\(AppErrorLog.summary(error), privacy: .public))")
+        }
+        return true
+    }
+
+    /// Returns the intent whose installed identity is at the target. Throws only
+    /// while the target does not hold that identity.
+    private func resumeSessionRename(_ intent: CaptureJournal.SessionRenameIntent) async throws -> CaptureJournal.SessionRenameIntent {
+        let target = try vault.fileSnapshot(relativePath: intent.session.notePath, includingContents: false)
+        if target.map(intent.isInstalled) == true { return intent }
+        let source = try vault.fileSnapshot(relativePath: intent.oldPath)
+        guard let source, intent.isOriginal(source) || intent.isInstalled(source) else {
+            throw SessionRenameRecoveryError.changedFile
+        }
+        let candidate = SessionCandidate(name: intent.session.name, notePath: intent.oldPath, modifiedAt: source.modifiedAt)
+        let recorder = await journal.installationRecorder(for: intent)
+        do { _ = try await sessions.rename(candidate, to: intent.session.name, beforeInstall: recorder) }
+        catch {
+            // State persistence can fail after installation; keep that committed file.
+            guard let recorded = try await journal.pendingSessionRename(),
+                  let installed = try vault.fileSnapshot(relativePath: recorded.session.notePath, includingContents: false),
+                  recorded.isInstalled(installed) else { throw error }
+            return recorded
+        }
+        guard let recorded = try await journal.pendingSessionRename() else { throw SessionRenameRecoveryError.changedFile }
+        return recorded
+    }
+
+    private func abandonSessionRename(_ intent: CaptureJournal.SessionRenameIntent, error: any Error) async throws {
+        logger.error("Session rename abandoned; preserving note files (\(AppErrorLog.summary(error), privacy: .public))")
+        try await cleanupSessionRename(intent)
+        try await journal.clearSessionRename()
+    }
+
+    private func cleanupSessionRename(_ intent: CaptureJournal.SessionRenameIntent, completed: Bool = false) async throws {
+        for stage in intent.previousInstallations + (intent.installation.map { [$0] } ?? []) {
+            let parent = (intent.session.notePath as NSString).deletingLastPathComponent
+            let path = parent + "/" + stage.temporaryName
+            do {
+                guard let temporary = try vault.fileSnapshot(relativePath: path, includingContents: false) else { continue }
+                let source = try vault.fileSnapshot(relativePath: intent.oldPath, includingContents: false)
+                if !completed {
+                    // Abandoning may only discard an unswapped staged copy whose original is
+                    // still at the old name. Any swapped-out original may hold user edits.
+                    guard ManagedFileIdentity(temporary) == stage.installed,
+                          source.map(ManagedFileIdentity.init) == stage.original else {
+                        logger.error("Session rename temporary retained at \(path, privacy: .private)")
+                        continue
+                    }
+                } else if stage.original == intent.source,
+                          source.map(ManagedFileIdentity.init) != intent.source {
+                    // Only a confirmed completed install may discard its original backup.
+                    let target = try vault.fileSnapshot(relativePath: intent.session.notePath, includingContents: false)
+                    guard target.map(intent.isInstalled) == true else {
+                        logger.error("Session rename temporary retained at \(path, privacy: .private); original identity absent from old path")
+                        continue
+                    }
+                }
+                try await sessions.cleanupRenameTemporary(stage, in: intent.session)
+            }
+            catch {
+                // Cleanup must not block captures or remove an uncertain file.
+                logger.error("Session temporary retained at \(path, privacy: .private) (\(AppErrorLog.summary(error), privacy: .public))")
+            }
+        }
     }
 
     /// Shared by interactive commits, shutdown retry and startup replay. Keep the
@@ -298,6 +477,10 @@ struct CapturePipeline: Sendable {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         return line.count > 100 ? String(line.prefix(99)) + "…" : line
     }
+}
+
+enum SessionRenameRecoveryError: Error {
+    case changedFile
 }
 
 /// An unstructured race returns at the deadline without waiting for Vision to stop.

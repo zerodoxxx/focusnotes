@@ -96,25 +96,39 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
     private var content: InputPanelView?
     private var provider: ((String) -> [Suggestion])?
     private var submit: ((String) -> Void)?
+    private var alternateSubmit: ((String) -> Void)?
     private var accept: ((String) -> Void)?
     private var cancel: (() -> Void)?
+    private var escape: (() -> Void)?
     private var selectionOnly = false
+    private var allowEmptySubmission = false
     private var suggestions: [Suggestion] = []
     private var selection: Int?
-    private var submittedText: String?
+    private enum Outcome { case submit(String), alternate(String), escape, cancel }
+    private var outcome = Outcome.cancel
     public var isVisible: Bool { panel?.isVisible == true }
+    @_spi(Checks) public var selectedValueForChecks: String? {
+        selection.map { suggestions[$0].value ?? suggestions[$0].title }
+    }
+    @_spi(Checks) public func handleKeyForChecks(_ event: NSEvent) -> Bool { handleKey(event) }
     public override init() { super.init() }
 
-    public func present(placeholder: String, initialText: String = "", title: String? = nil, secondary: String? = nil,
-                        selectionOnly: Bool = false, suggestions: @escaping (String) -> [Suggestion],
+    public func present(placeholder: String, initialText: String = "", selectInitialText: Bool = false,
+                        title: String? = nil, secondary: String? = nil,
+                        selectionOnly: Bool = false, selectedValue: String? = nil, allowEmptySubmission: Bool = false,
+                        suggestions: @escaping (String) -> [Suggestion],
                         onAccept: ((String) -> Void)? = nil,
+                        onAlternateSubmit: ((String) -> Void)? = nil,
+                        onEscape: (() -> Void)? = nil,
                         onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         panel?.dismiss(animated: false)
-        provider = suggestions; accept = onAccept; submit = onSubmit; cancel = onCancel
+        provider = suggestions; accept = onAccept; submit = onSubmit; alternateSubmit = onAlternateSubmit; cancel = onCancel; escape = onEscape
         self.selectionOnly = selectionOnly
-        submittedText = nil; selection = nil
+        self.allowEmptySubmission = allowEmptySubmission
+        outcome = .cancel; selection = nil
         self.suggestions = suggestions(initialText)
-        let view = InputPanelView(placeholder: placeholder, text: initialText, suggestions: self.suggestions, selection: nil, title: title, secondary: secondary)
+        selection = selectedValue.flatMap { value in self.suggestions.firstIndex { ($0.value ?? $0.title) == value } }
+        let view = InputPanelView(placeholder: placeholder, text: initialText, suggestions: self.suggestions, selection: selection, title: title, secondary: secondary)
         content = view
         view.field.delegate = self
         view.onSelect = { [weak self] index in
@@ -128,6 +142,7 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
         panel.onKey = { [weak self] event in self?.handleKey(event) ?? false }
         panel.present(content: view)
         panel.makeFirstResponder(view.field)
+        if selectInitialText { view.field.selectText(nil) }
     }
     public func dismiss() { panel?.dismiss() }
     public func controlTextDidChange(_ obj: Notification) {
@@ -143,6 +158,10 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
     }
     private func handleKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
+        case 53:
+            outcome = .escape
+            panel?.dismiss()
+            return true
         case 125, 126:
             guard !suggestions.isEmpty else { return true }
             let next = selection.map { $0 + (event.keyCode == 125 ? 1 : -1) }
@@ -161,24 +180,35 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
             refresh()
             return true
         case 36, 76:
+            guard !event.isARepeat else { return true }
             guard let content else { return true }
             if selectionOnly, selection == nil { return true }
+            let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if alternateSubmit != nil, modifiers == [.command], selection == nil { return true }
+            if selectionOnly, alternateSubmit != nil, !modifiers.isEmpty, modifiers != [.command] { return true }
             let text = selection.map { suggestions[$0].value ?? suggestions[$0].title }
                 ?? content.field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            submittedText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
-            if let submittedText { accept?(submittedText) }
+            if !allowEmptySubmission && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { outcome = .cancel }
+            else if alternateSubmit != nil && selection != nil && modifiers == [.command] { outcome = .alternate(text); accept?(text) }
+            else { outcome = .submit(text); accept?(text) }
             panel?.dismiss()
             return true
         default: return false
         }
     }
     private func didClose() {
-        let text = submittedText
-        let onSubmit = submit
-        let onCancel = cancel
+        let result = outcome
+        let onSubmit = submit, onAlternate = alternateSubmit
+        let onEscape = escape, onCancel = cancel
         content?.field.delegate = nil
-        content = nil; panel = nil; provider = nil; accept = nil; submit = nil; cancel = nil; selectionOnly = false
-        suggestions = []; selection = nil; submittedText = nil
-        if let text { onSubmit?(text) } else { onCancel?() }
+        content = nil; panel = nil; provider = nil; accept = nil; submit = nil; alternateSubmit = nil; cancel = nil; escape = nil
+        selectionOnly = false; allowEmptySubmission = false
+        suggestions = []; selection = nil; outcome = .cancel
+        switch result {
+        case .submit(let text): onSubmit?(text)
+        case .alternate(let text): onAlternate?(text)
+        case .escape: (onEscape ?? onCancel)?()
+        case .cancel: onCancel?()
+        }
     }
 }

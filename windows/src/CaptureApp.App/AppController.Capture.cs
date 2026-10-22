@@ -216,8 +216,11 @@ internal sealed partial class AppController
         });
     }
 
-    private void PresentSessionCandidates(IReadOnlyList<SessionCandidate> candidates)
+    internal InputPanelController? InputForChecks => input;
+
+    internal void PresentSessionCandidates(IReadOnlyList<SessionCandidate> candidates, string? selectedPath = null)
     {
+        if (Coordinator.IsTerminating) { return; }
         var zone = pipeline.TimeZone;
         var choices = candidates.Select(c => new Suggestion(c.Name, Strings.CandidateSecondary(c.ModifiedAt, c.NotePath, zone), "record.circle", c.NotePath)).ToArray();
         var panel = new InputPanelController();
@@ -237,7 +240,45 @@ internal sealed partial class AppController
                 try { await c.ResumeSessionAsync(candidate); }
                 catch (Exception error) { c.Report(error, Strings.CouldNotResumeSession); }
             });
-        }, InputClosed, Title: Strings.MultipleSessionsTitle, SelectionOnly: true));
+        }, InputClosed, Title: Strings.MultipleSessionsTitle, Secondary: Strings.SessionPickerHint,
+            SelectionOnly: true, OnAlternateSubmit: path =>
+            {
+                InputClosed();
+                if (candidates.FirstOrDefault(c => c.NotePath == path) is { } candidate)
+                    PresentSessionRename(candidates, candidate);
+            }, SelectedValue: selectedPath));
+    }
+
+    private void PresentSessionRename(IReadOnlyList<SessionCandidate> candidates, SessionCandidate candidate,
+        string? initialText = null, string? errorMessage = null)
+    {
+        if (Coordinator.IsTerminating) { return; }
+        var panel = new InputPanelController();
+        input = panel;
+        panel.Present(new InputRequest(Strings.SessionNamePlaceholder, _ => [], name =>
+        {
+            InputClosed();
+            Coordinator.Enqueue(async c =>
+            {
+                _ = c.CommitPending();
+                await c.WaitForProcessingAsync();
+                _ = c.CommitPending();
+                await c.WaitForCommitsAsync();
+                if (c.IsTerminating) return;
+                try { await c.RenameSessionAsync(candidate, name); }
+                catch (Exception error)
+                {
+                    c.Report(error, Strings.CouldNotRenameSession);
+                    // A committed move returns SessionRenameOutcome, including pending migration.
+                    PresentSessionRename(candidates, candidate, name, Strings.RenameSessionErrorHint(error));
+                }
+            });
+        }, InputClosed, InitialText: initialText ?? candidate.Name, Title: Strings.RenameSessionTitle,
+            Secondary: errorMessage ?? Strings.RenameSessionHint, SelectInitialText: true, AllowEmptySubmission: true, OnEscape: () =>
+            {
+                InputClosed();
+                PresentSessionCandidates(candidates, candidate.NotePath);
+            }));
     }
 
     // Subheading.

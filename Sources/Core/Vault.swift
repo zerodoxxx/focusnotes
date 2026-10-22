@@ -498,7 +498,7 @@ public struct Vault: Sendable {
     /// Builds a vault URL from a validated relative path. Use this for persisted
     /// paths such as the active session destination; user and search IDs must use
     /// `resolveNoteName` and `noteLocation(forID:)` respectively.
-    func managedURL(forRelativePath path: String) throws -> URL {
+    public func managedURL(forRelativePath path: String) throws -> URL {
         try validateManagedPath(path)
         let url = append(relativePath: path, to: root)
         let managed = try managedLocation(of: url)

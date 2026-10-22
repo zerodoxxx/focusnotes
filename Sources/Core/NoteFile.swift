@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// O_APPEND protects existing bytes even when independent writers share a note.
+/// O_APPEND protects capture writes. Session renames replace a complete snapshot atomically.
 enum NoteFile {
     private static let attempts = 4
 
@@ -460,6 +460,133 @@ enum NoteFile {
             _ = try validateManagedFile(descriptor)
             guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
         }
+    }
+
+    /// Rewrites a session heading without truncating the original inode, then
+    /// moves it within its existing directory without replacing another name.
+    /// Keep the old inode at the temporary name until the exclusive move succeeds
+    /// so a collision can restore the original bytes atomically.
+    static func renameSession(in root: VaultDirectoryAnchor, relativePath: String,
+                              newName: String, title: String,
+                              beforeInstall: @Sendable (SessionRenameStage) throws -> Void,
+                              afterSwap: (@Sendable () throws -> Void)? = nil) throws {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        guard !newName.isEmpty, !newName.contains("/"), !newName.contains("\\"),
+              !newName.contains("\0"), newName != ".", newName != ".." else { throw POSIXError(.EPERM) }
+        guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
+        // Cooperating renames serialize their folded-name checks as well as the
+        // kernel's exclusive destination check (also needed on case-sensitive volumes).
+        guard flock(location.parentDescriptor, LOCK_EX) == 0 else { throw posixError() }
+        defer { flock(location.parentDescriptor, LOCK_UN) }
+        let descriptor = openat(location.parentDescriptor, location.name,
+                                O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+        try withLockedDescriptor(descriptor) {
+            _ = try validateManagedFile(descriptor)
+            guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+            let initial = try fingerprint(descriptor)
+            let contents = try readAll(descriptor)
+            let rewritten = try sessionHeading(title, replacing: contents)
+            let directory = (relativePath as NSString).deletingLastPathComponent
+            if newName != location.name, newName.caseInsensitiveCompare(location.name) == .orderedSame {
+                throw SessionStoreError.caseOnlyRename
+            }
+            func collides(_ names: [String]) -> Bool {
+                names.contains { $0 != location.name && $0.caseInsensitiveCompare(newName) == .orderedSame }
+            }
+            guard !collides(try listManagedDirectoryNames(in: root, relativePath: directory)) else { throw POSIXError(.EEXIST) }
+            let temporaryName = ".session-\(UUID().uuidString).pending"
+            let temporary = FileLocation(directories: location.directories, name: temporaryName)
+            let temporaryDescriptor = openat(location.parentDescriptor, temporaryName,
+                                             O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard temporaryDescriptor >= 0 else { throw posixError() }
+            var retainTemporary = false
+            defer { if !retainTemporary { _ = unlinkat(location.parentDescriptor, temporaryName, 0) } }
+            try withLockedDescriptor(temporaryDescriptor) {
+                _ = try validateManagedFile(temporaryDescriptor)
+                try writeAll(rewritten, to: temporaryDescriptor)
+                guard fsync(temporaryDescriptor) == 0 else { throw posixError() }
+                let staged = try validateManagedFile(temporaryDescriptor)
+                try beforeInstall(SessionRenameStage(
+                    original: ManagedFileIdentity(device: UInt64(truncatingIfNeeded: initial.device), inode: UInt64(truncatingIfNeeded: initial.inode)),
+                    installed: ManagedFileIdentity(device: UInt64(truncatingIfNeeded: staged.st_dev), inode: UInt64(truncatingIfNeeded: staged.st_ino)),
+                    temporaryName: temporaryName))
+                let finalNames = try listManagedDirectoryNames(in: root, relativePath: directory)
+                guard !collides(finalNames) else {
+                    throw POSIXError(.EEXIST)
+                }
+                _ = try validateManagedFile(descriptor)
+                _ = try validateManagedFile(temporaryDescriptor)
+                guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial,
+                      try isCurrent(temporaryDescriptor, at: temporary) else { throw POSIXError(.EAGAIN) }
+                guard renameatx_np(location.parentDescriptor, temporaryName,
+                                   location.parentDescriptor, location.name, UInt32(RENAME_SWAP)) == 0 else { throw posixError() }
+                // The rewritten descriptor is now the visible note; the original
+                // remains locked at the temporary name until the transaction ends.
+                do {
+                    try afterSwap?()
+                    guard try isCurrent(temporaryDescriptor, at: location),
+                          try isCurrent(descriptor, at: temporary) else { throw POSIXError(.EAGAIN) }
+                    _ = try validateManagedFile(temporaryDescriptor)
+                    if newName != location.name {
+                        guard renameatx_np(location.parentDescriptor, location.name,
+                                           location.parentDescriptor, newName, UInt32(RENAME_EXCL)) == 0 else { throw posixError() }
+                    }
+                    let installed = FileLocation(directories: location.directories, name: newName)
+                    _ = try validateManagedFile(temporaryDescriptor)
+                    guard try isCurrent(temporaryDescriptor, at: installed), try isCurrent(location.directories) else {
+                        throw POSIXError(.EAGAIN)
+                    }
+                } catch {
+                    if error is SessionRenameInterruption { retainTemporary = true; throw error }
+                    // Never overwrite a replacement made by a non-cooperating editor.
+                    if (try? isCurrent(temporaryDescriptor, at: location)) == true,
+                       (try? isCurrent(descriptor, at: temporary)) == true {
+                        guard renameatx_np(location.parentDescriptor, temporaryName,
+                                           location.parentDescriptor, location.name, UInt32(RENAME_SWAP)) == 0 else { throw posixError() }
+                    } else { retainTemporary = true }
+                    throw error
+                }
+                _ = fsync(location.parentDescriptor)
+            }
+        }
+    }
+
+    static func removeSessionTemporary(in root: VaultDirectoryAnchor, relativePath: String,
+                                       identities: [ManagedFileIdentity]) throws {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        guard location.name.hasPrefix(".session-"), location.name.hasSuffix(".pending"),
+              UUID(uuidString: String(location.name.dropFirst(9).dropLast(8))) != nil else { throw POSIXError(.EPERM) }
+        let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT { return }
+        guard descriptor >= 0 else { throw posixError() }
+        try withLockedDescriptor(descriptor) {
+            let value = try validateManagedFile(descriptor)
+            let identity = ManagedFileIdentity(device: UInt64(truncatingIfNeeded: value.st_dev), inode: UInt64(truncatingIfNeeded: value.st_ino))
+            guard identities.contains(identity) else { return }
+            guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+            guard unlinkat(location.parentDescriptor, location.name, 0) == 0 else { throw posixError() }
+        }
+    }
+
+    private static func sessionHeading(_ title: String, replacing contents: Data) throws -> Data {
+        // Work in bytes: Swift treats CRLF as one Character, and converting the
+        // body through String could change invalid UTF-8 or newline bytes.
+        let bomCount = contents.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
+        let body = contents.dropFirst(bomCount)
+        var rewritten = Data(contents.prefix(bomCount))
+        rewritten.append(Data("# \(title)".utf8))
+        if body.starts(with: [0x23, 0x20]) {
+            let end = body.firstIndex(of: 0x0A) ?? contents.endIndex
+            if end > body.startIndex, contents[end - 1] == 0x0D { rewritten.append(0x0D) }
+            rewritten.append(contents[end...])
+        } else {
+            let newline = contents.range(of: Data([0x0D, 0x0A])) == nil ? Data([0x0A]) : Data([0x0D, 0x0A])
+            rewritten.append(newline)
+            rewritten.append(newline)
+            rewritten.append(body)
+        }
+        return rewritten
     }
 
     static func append(block: String, header: String, root: VaultDirectoryAnchor, relativePath: String, to url: URL, cache: inout AppendCache, identityPrefix: String,
