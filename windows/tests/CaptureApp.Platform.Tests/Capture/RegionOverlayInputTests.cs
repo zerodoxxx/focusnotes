@@ -12,6 +12,10 @@ using WpfRectangle = System.Windows.Shapes.Rectangle;
 
 namespace CaptureApp.Platform.Tests.Capture;
 
+[CollectionDefinition("CaptureOverlay", DisableParallelization = true)]
+public sealed class CaptureOverlayCollection;
+
+[Collection("CaptureOverlay")]
 public sealed class RegionOverlayInputTests
 {
     [Fact]

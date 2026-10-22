@@ -129,6 +129,19 @@ public sealed class WatcherTests
         recorder.Drain();
         Assert.DoesNotContain(recorder.Changes, c => c.NotesChanged.Any(p => p.StartsWith("ASSETS/", StringComparison.OrdinalIgnoreCase)));
         Assert.DoesNotContain(recorder.Changes, c => c.NeedsFullSync);
+        Assert.False(watcher.HasPollingTimerForChecks);
+    }
+
+    [Fact]
+    public void WatcherIgnoresHiddenMetadataTemporaryAndUnrelatedFiles()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var recorder = new Recorder();
+        using var watcher = new VaultWatcher(e.Vault, 0.08, recorder.Append);
+        watcher.Start();
+        // A quiet gap cannot drain FileSystemWatcher's native event queue. Start with a fresh
+        // watcher so a late duplicate from an earlier real write cannot fail this negative check.
         e.Write(".DS_Store", "metadata");
         e.Write("Foo.md.swp", "swap");
         e.Write("~$draft.md", "lock");
@@ -137,6 +150,7 @@ public sealed class WatcherTests
         e.Write("assets/a.icloud", "placeholder metadata");
         e.Write("plain.txt", "unrelated");
         Assert.True(recorder.Quiet(0.4));
+        Assert.Empty(recorder.Changes);
         Assert.False(watcher.HasPollingTimerForChecks);
     }
 

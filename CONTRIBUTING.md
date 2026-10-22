@@ -43,7 +43,7 @@ The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is
 ```sh
 cd windows
 dotnet build -c Release -warnaserror
-dotnet test -c Release
+dotnet test -c Release -m:1
 ```
 
 Restore is locked (`packages.lock.json` files are committed), so a dependency change must update the lock files and
@@ -57,6 +57,7 @@ semantic assets are missing.
 - `CaptureApp.Core`, `CaptureApp.AppCore`, `CaptureApp.Core.Tests`, `CaptureApp.AppCore.Tests`, `CaptureApp.Updates.Tests`, `CaptureApp.Embed.Tests` and `CaptureApp.Conformance.Tests` are platform neutral and run on any OS with the .NET SDK. `CaptureApp.Platform.Tests` and `CaptureApp.App.Tests` target Windows and are only built as test projects on a Windows host. Tests tagged `Needs=Windows` (file-layer behaviour such as reparse points and reserved names), `Needs=InteractiveDesktop` (hotkeys, focus, UI Automation, clipboard; also set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`) and `Needs=OcrModels` (the English OCR corpus, using the NuGet-bundled assets; set `CAPTUREAPP_REQUIRE_OCR_MODELS=1` to fail instead of skip if those assets are missing) require a Windows desktop. `Category=Perf` timing gates should run serially (`--filter "Category=Perf" -m:1`).
 - Behaviour shared with the Mac app is specified by `conformance/scenarios`. Swift is the reference, so change the Swift behaviour first, then regenerate the expected values with `swift run CoreChecks --write-conformance` and review the diff. Never edit an `expected` block by hand. `swift run CoreChecks` and `dotnet test` must both pass against the same files. See [`conformance/README.md`](conformance/README.md).
 - CI runs the Windows build, tests, self-test and gallery check on `windows-latest` (x64) and `windows-11-arm` (arm64); packaging and update tests run in the `windows-package` job. `windows/scripts/pack.ps1 -Arch x64|arm64 -Version <ver> -OutDir <dir>` builds one architecture's installer locally on a matching Windows machine.
+- Run solution tests with `-m:1` so model inference and other test assemblies do not compete with desktop fixtures. CI retains TRX reports in `test-results-<runner>` artifacts and runs the desktop capability probe after failures; a passing ARM64 run can include skipped desktop tests, so check the report's skipped counts when comparing architectures.
 
 ## Security reports
 
