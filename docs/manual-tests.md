@@ -222,7 +222,8 @@ Use a temporary vault and a disposable test folder under your home directory.
 # One-off notes and captures outside a session
 
 Use a disposable vault. On Windows, use Ctrl in place of ⌘ for editor actions and
-Ctrl+Shift+Q / Ctrl+Shift+G for the outside-session selection / area captures.
+Ctrl+Shift+Q / Ctrl+Shift+G for the outside-session selection / area captures and
+Ctrl+Shift+W for the outside-session quick note.
 
 1. Start `Thermo`, open a quick note, and choose **Write outside session** in Actions
    or press ⇧⌘N. Enter `Biology` and distinctive body text, then save. Confirm
@@ -235,6 +236,10 @@ Ctrl+Shift+Q / Ctrl+Shift+G for the outside-session selection / area captures.
    return to Thermo without clearing the text. Repeat using ⌘N on a blank editor.
    Close a detached draft and reopen: text remains, but the destination is Thermo.
    End the session: the outside-session action is hidden or disabled.
+   With Thermo active, press ⌃⇧N (or choose **Quick-note Outside Session**): the panel opens with
+   Write outside session on. Save `Biology` text and confirm Thermo is unchanged. Reopen with ⌃⇧N,
+   press ⇧⌘N, save, and confirm it appends to Thermo with a “Saved to Thermo” toast. ⌘N on a blank
+   ⌃⇧N editor stays outside. Without a session, ⌃⇧N behaves like ⌥⇧N.
 3. In a detached note, choose an existing target using Browse and confirm the
    save appends there. Try Save as New Note with an existing typed path: a
    numbered sibling is created. Set pin-on-save on an unsaved detached draft and
@@ -384,7 +389,7 @@ target, build and result for each item.
 ## 11a Interactive desktop (Windows 11 arm64 VM)
 
 1. **Focus (click-away, return, no lost keys):** In each of Notepad, Word, Chrome, Edge, Firefox, VS Code, Windows
-   Terminal, Teams and File Explorer, put the caret in a text field and press the Write a Note shortcut. Type 20
+   Terminal, Teams and File Explorer, put the caret in a text field and press the Quick-note shortcut. Type 20
    characters at once: all 20 reach the note. Press Esc, then Ctrl+Enter, then ✕ in turn: after each, the original
    window is foreground with its caret where it was. Reopen, click another window: focus stays there, the note stays
    visible, and an open Actions/Browse card closes. Do the same with Search and Input: they dismiss on click-away and on a
