@@ -53,6 +53,7 @@ public struct Hotkey: Hashable, Sendable {
     public static let search = Self(keyCode: UInt32(kVK_ANSI_F), modifiers: [.option, .shift])
     public static let toggleSession = Self(keyCode: UInt32(kVK_ANSI_A), modifiers: [.option, .shift])
     public static let writeNote = Self(keyCode: UInt32(kVK_ANSI_N), modifiers: [.option, .shift])
+    public static let writeNoteOutsideSession = Self(keyCode: UInt32(kVK_ANSI_N), modifiers: [.control, .shift])
     public static let addSubheading = Self(keyCode: UInt32(kVK_ANSI_H), modifiers: [.option, .shift])
     public static let openLibrary = Self(keyCode: UInt32(kVK_ANSI_L), modifiers: [.option, .shift])
 }

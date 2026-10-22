@@ -440,6 +440,21 @@ extension AppController {
         try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
         try state.restoreSessionDestination(destination, drafts: live.drafts)
         guard !state.outsideSession, state.destination == destination else { throw SelfTestFailure("Blank New Note did not restore session") }
+        // ⌃⇧N starts detached, saves to its typed/Inbox target, and ⇧⌘N / blank ⌘N behave per launch mode.
+        let launched = QuickNoteState(destination: destination, outsideSession: true)
+        guard launched.outsideSession, launched.destination == nil,
+              let inboxNote = try await controller.addNote("Loose thought from the outside shortcut", destination: launched.destination,
+                                                           outsideSession: launched.outsideSession),
+              inboxNote.destination.kind != .session, inboxNote.destination.url != destination.url,
+              try Data(contentsOf: destination.url) == initialSession else {
+            throw SelfTestFailure("Outside-session quick note launch reached the session note")
+        }
+        try launched.restoreSessionDestination(destination, drafts: live.drafts)
+        guard launched.outsideSession, launched.destination == nil else { throw SelfTestFailure("Blank New Note left outside launch mode") }
+        try launched.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
+        guard !launched.outsideSession, launched.destination == destination else {
+            throw SelfTestFailure("Outside launch did not toggle back to the session")
+        }
         let context = FrontmostContext(appName: "Outside session test", bundleIdentifier: nil, processIdentifier: 0, windowTitle: nil)
         let chosen = CapturePipeline.selection(text: "outside chosen capture", context: context)
         await controller.stage(chosen, outsideSession: true)
@@ -467,7 +482,9 @@ extension AppController {
             throw SelfTestFailure("Outside image capture lost its nested destination, OCR or asset")
         }
         guard let nextNote = try await controller.addNote("Another title\nNormal quick note returns to Thermo."),
-              nextNote.destination == destination else { throw SelfTestFailure("Next quick note did not return to the session") }
+              nextNote.destination == destination,
+              feedback.last?.title == "Saved to \(destination.title)",
+              feedback.last?.subtitle == "Another title" else { throw SelfTestFailure("Next quick note did not return to the session") }
         await controller.stage(CapturePipeline.selection(text: "normal capture returns to Thermo", context: context))
         guard let normalTask = controller.commitPending(), try await normalTask.value.destination == destination else {
             throw SelfTestFailure("Next normal capture did not return to the session")

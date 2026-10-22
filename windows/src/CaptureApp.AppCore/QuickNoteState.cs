@@ -10,6 +10,8 @@ public sealed class QuickNoteState
     public NoteFolder? Folder { get; }
     public string? DestinationLabel => Destination?.Title ?? (Folder is { } folder ? "Folder: " + folder.RawValue : null);
     public bool OutsideSession { get; private set; }
+    /// Opened by the outside-session shortcut; blank New note returns here instead of to the session.
+    public bool LaunchedOutside { get; }
     public bool PinOnSave { get; private set; }
     public IReadOnlyList<NoteSuggestion> Suggestions { get; set; } = [];
 
@@ -27,12 +29,15 @@ public sealed class QuickNoteState
         }
     }
 
-    public QuickNoteState(Destination? destination, bool pinOnSave = false, NoteFolder? folder = null)
+    /// An outside launch starts with a session destination toggled off, as Write outside session does.
+    public QuickNoteState(Destination? destination, bool pinOnSave = false, NoteFolder? folder = null, bool outsideSession = false)
     {
-        Destination = destination;
+        outsideSession &= destination is not null;
+        Destination = outsideSession ? null : destination;
         Folder = folder;
-        OutsideSession = folder is not null;
-        PinOnSave = destination is null && pinOnSave;
+        LaunchedOutside = outsideSession;
+        OutsideSession = folder is not null || outsideSession;
+        PinOnSave = Destination is null && pinOnSave;
     }
 
     public bool TogglePinOnSave(NoteDraftStore drafts)
@@ -57,7 +62,7 @@ public sealed class QuickNoteState
 
     public void ReturnToSession(Destination? sessionDestination)
     {
-        OutsideSession = Folder is not null;
-        Destination = Folder is null ? sessionDestination : null;
+        OutsideSession = Folder is not null || LaunchedOutside;
+        Destination = OutsideSession ? null : sessionDestination;
     }
 }

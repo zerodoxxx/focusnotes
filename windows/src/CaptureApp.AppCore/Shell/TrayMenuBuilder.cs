@@ -17,6 +17,7 @@ public static class MenuIds
     public const string Search = "search";
     public const string Session = "session";
     public const string WriteNote = "write-note";
+    public const string WriteNoteOutsideSession = "write-note-outside-session";
     public const string AddSubheading = "add-subheading";
     public const string ShortcutStatus = "shortcut-status";
     public const string RetryShortcuts = "retry-shortcuts";
@@ -79,6 +80,7 @@ public static class TrayMenuBuilder
         items.Add(Command(state, MenuIds.Search, Strings.MenuSearch));
         items.Add(Command(state, MenuIds.Session, state.SessionName is { } name ? Strings.MenuEndSession(name) : Strings.MenuStartSession));
         items.Add(Command(state, MenuIds.WriteNote, Strings.MenuWriteNote));
+        items.Add(Command(state, MenuIds.WriteNoteOutsideSession, Strings.MenuWriteNoteOutsideSession));
         items.Add(Command(state, MenuIds.AddSubheading, Strings.MenuAddSubheading));
         if (state.FailedShortcuts > 0)
         {

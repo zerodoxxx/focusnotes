@@ -216,6 +216,41 @@ public sealed class OutsideSessionTests
         Assert.Equal(session, reopened.Destination);
     }
 
+    [Fact]
+    public void OutsideLaunchStartsToggledOffTheSessionAndPlainLaunchKeepsIt()
+    {
+        var session = new Destination("session.md", "Thermo", NoteKind.Session);
+        var plain = new QuickNoteState(session, pinOnSave: true);
+        Assert.False(plain.OutsideSession);
+        Assert.Equal(session, plain.Destination);
+        Assert.False(plain.PinOnSave);
+
+        var outside = new QuickNoteState(session, pinOnSave: true, outsideSession: true);
+        Assert.True(outside.OutsideSession);
+        Assert.Null(outside.Destination);
+        Assert.Null(outside.DestinationLabel);
+        Assert.True(outside.PinOnSave);
+        outside.ToggleOutsideSession(session);
+        Assert.False(outside.OutsideSession);
+        Assert.Equal(session, outside.Destination);
+        // Blank New note returns to the launch mode, not the session.
+        outside.ReturnToSession(session);
+        Assert.True(outside.OutsideSession);
+        Assert.Null(outside.Destination);
+        plain.ReturnToSession(session);
+        Assert.False(plain.OutsideSession);
+        Assert.Equal(session, plain.Destination);
+
+        // Without a session the outside launch matches the plain one.
+        var idle = new QuickNoteState(null, pinOnSave: true, outsideSession: true);
+        Assert.False(idle.OutsideSession);
+        Assert.Null(idle.Destination);
+        Assert.True(idle.PinOnSave);
+        var folder = new QuickNoteState(null, folder: new NoteFolder("science"), outsideSession: true);
+        Assert.True(folder.OutsideSession);
+        Assert.Equal("Folder: science", folder.DestinationLabel);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]

@@ -52,6 +52,7 @@ internal sealed partial class AppController
             [HotkeyAction.SearchNotes] = () => dispatcher.BeginInvoke(OpenSearch),
             [HotkeyAction.ToggleSession] = () => dispatcher.BeginInvoke(ToggleSession),
             [HotkeyAction.WriteNote] = () => dispatcher.BeginInvoke(OpenNoteEditor),
+            [HotkeyAction.WriteNoteOutsideSession] = () => dispatcher.BeginInvoke(() => OpenNoteEditor(null, outsideSession: true)),
             [HotkeyAction.AddSubheading] = () => dispatcher.BeginInvoke(OpenSubheading),
             [HotkeyAction.OpenNotesFolder] = () => dispatcher.BeginInvoke(OpenNotesFolder)
         };
@@ -110,6 +111,7 @@ internal sealed partial class AppController
             [MenuIds.Search] = BindingText(HotkeyAction.SearchNotes),
             [MenuIds.Session] = BindingText(HotkeyAction.ToggleSession),
             [MenuIds.WriteNote] = BindingText(HotkeyAction.WriteNote),
+            [MenuIds.WriteNoteOutsideSession] = BindingText(HotkeyAction.WriteNoteOutsideSession),
             [MenuIds.AddSubheading] = BindingText(HotkeyAction.AddSubheading),
             [MenuIds.OpenFolder] = BindingText(HotkeyAction.OpenNotesFolder)
         };
@@ -124,6 +126,7 @@ internal sealed partial class AppController
                 HotkeyAction.SearchNotes => MenuIds.Search,
                 HotkeyAction.ToggleSession => MenuIds.Session,
                 HotkeyAction.WriteNote => MenuIds.WriteNote,
+                HotkeyAction.WriteNoteOutsideSession => MenuIds.WriteNoteOutsideSession,
                 HotkeyAction.AddSubheading => MenuIds.AddSubheading,
                 HotkeyAction.OpenNotesFolder => MenuIds.OpenFolder,
                 _ => null
@@ -155,6 +158,7 @@ internal sealed partial class AppController
             case MenuIds.Search: OpenSearch(); break;
             case MenuIds.Session: ToggleSession(); break;
             case MenuIds.WriteNote: OpenNoteEditor(); break;
+            case MenuIds.WriteNoteOutsideSession: OpenNoteEditor(null, outsideSession: true); break;
             case MenuIds.AddSubheading: OpenSubheading(); break;
             case MenuIds.RetryShortcuts: RegisterHotkeys(); break;
             case MenuIds.OpenFolder: OpenNotesFolder(); break;

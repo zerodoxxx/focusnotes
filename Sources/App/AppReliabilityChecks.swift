@@ -663,7 +663,7 @@ private func checkUnavailableShortcutMenu() throws {
           item.toolTip?.contains("macOS could not register") == true else {
         throw SelfTestFailure("Non-conflict registration failures must also explain the unavailable shortcut")
     }
-    for hotkey in [Hotkey.captureSelectionOutsideSession, .captureRegionOutsideSession] {
+    for hotkey in [Hotkey.captureSelectionOutsideSession, .captureRegionOutsideSession, .writeNoteOutsideSession] {
         AppController.configureShortcut(item, title: "Capture Outside Session", hotkey: hotkey, failure: .conflict)
         guard item.keyEquivalent.isEmpty, item.toolTip?.contains("Retry Shortcuts") == true else {
             throw SelfTestFailure("Outside-session capture conflicts must expose shortcut recovery")

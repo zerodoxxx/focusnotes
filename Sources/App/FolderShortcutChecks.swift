@@ -26,6 +26,7 @@ func checkFolderShortcuts() throws {
     try rejects([note, note], "duplicate identities")
     try rejects([note, FolderShortcut(hotkey: chord, action: .startSession, folder: "Other")], "duplicate chords")
     try rejects([FolderShortcut(hotkey: .writeNote, action: .quickNote, folder: "Work")], "a built-in chord")
+    try rejects([FolderShortcut(hotkey: .writeNoteOutsideSession, action: .quickNote, folder: "Work")], "the outside-session quick note chord")
     for reserved in ["assets", "ASSETS/sub"] {
         try rejects([FolderShortcut(hotkey: chord, action: .quickNote, folder: reserved)], "reserved quick note folder \(reserved)")
         try FolderShortcutStore.validate([FolderShortcut(hotkey: chord, action: .startSession, folder: reserved)])

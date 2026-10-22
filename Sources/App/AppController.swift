@@ -256,6 +256,7 @@ final class AppController: NSObject, NSMenuDelegate {
             (.search, { [weak self] in self?.openSearch() }),
             (.toggleSession, { [weak self] in self?.toggleSession() }),
             (.writeNote, { [weak self] in self?.openNoteEditor() }),
+            (.writeNoteOutsideSession, { [weak self] in self?.openNoteEditor(outsideSession: true) }),
             (.addSubheading, { [weak self] in self?.openSubheading() }),
             (.openLibrary, { [weak self] in self?.openNotesFolder() })
         ]
@@ -895,9 +896,9 @@ final class AppController: NSObject, NSMenuDelegate {
         return count
     }
 
-    func openNoteEditor(folder requestedFolder: NoteFolder? = nil) {
+    func openNoteEditor(folder requestedFolder: NoteFolder? = nil, outsideSession requestedOutside: Bool = false) {
         enqueue { controller in
-            if requestedFolder == nil, let editor = controller.editor, editor.isVisible {
+            if requestedFolder == nil, !requestedOutside, let editor = controller.editor, editor.isVisible {
                 if editor.isKey { editor.dismiss() } else { editor.focus() }
                 return
             }
@@ -934,7 +935,9 @@ final class AppController: NSObject, NSMenuDelegate {
                 let draft = restored.text
                 let editor = NoteEditorPanel()
                 controller.editor = editor
-                let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave, folder: folder)
+                // Outside launch only matters with a session; otherwise it is a plain quick note.
+                let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave, folder: folder,
+                                           outsideSession: requestedOutside && sessionDestination != nil)
                 let calendar = pipeline.calendar
                 func noteID(_ destination: Destination?) -> String? {
                     destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
@@ -942,7 +945,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
                     return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession, folder: state.folder)
                 }
-                let initiallyPinned = noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
+                let initiallyPinned = noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 // Persist a shortcut's explicit destination before editing an existing draft.
                 try pipeline.drafts.store(draft, pinOnSave: state.pinOnSave, folder: folder)
                 editor.present(destination: state.destinationLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
@@ -970,7 +973,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         controller?.enqueue { controller in
                             do {
                                 _ = try await save(text, controller: controller)
-                                controller.openNoteEditor(folder: state.folder)
+                                controller.openNoteEditor(folder: state.folder, outsideSession: requestedOutside)
                             } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     },
@@ -1326,7 +1329,8 @@ final class AppController: NSObject, NSMenuDelegate {
         } else if let outsideSessionName {
             showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(outsideSessionName) still active"))
         } else if let created {
-            showToast(Toast(style: .success, title: created ? "Note created" : "Note added",
+            let appended = !created && saved.destination.kind == .session
+            showToast(Toast(style: .success, title: created ? "Note created" : appended ? "Saved to \(saved.destination.title)" : "Note added",
                             subtitle: created ? saved.destination.title : CapturePipeline.firstLine(text)))
         }
     }
@@ -1400,7 +1404,8 @@ final class AppController: NSObject, NSMenuDelegate {
         let session = menuItem("Start Session…", hotkey: .toggleSession, action: #selector(menuSession))
         sessionItem = session
         menu.addItem(session)
-        menu.addItem(menuItem("Write a Note…", hotkey: .writeNote, action: #selector(menuWriteNote)))
+        menu.addItem(menuItem("Quick-note", hotkey: .writeNote, action: #selector(menuWriteNote)))
+        menu.addItem(menuItem("Quick-note Outside Session", hotkey: .writeNoteOutsideSession, action: #selector(menuWriteNoteOutsideSession)))
         menu.addItem(menuItem("Add Subheading…", hotkey: .addSubheading, action: #selector(menuSubheading)))
         menu.addItem(menuItem("Folder Shortcuts…", action: #selector(menuFolderShortcuts)))
         let folders = NSMenuItem(title: "Use Folder Shortcut", action: nil, keyEquivalent: "")
@@ -1584,6 +1589,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }
+    @objc private func menuWriteNoteOutsideSession() { afterMenu { [weak self] in self?.openNoteEditor(outsideSession: true) } }
     @objc private func menuFolderShortcuts() { afterMenu { [weak self] in self?.openFolderShortcuts() } }
     @objc private func menuUseFolderShortcut(_ item: NSMenuItem) {
         guard let id = item.representedObject as? UUID,

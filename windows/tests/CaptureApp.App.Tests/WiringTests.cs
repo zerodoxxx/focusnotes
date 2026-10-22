@@ -6,6 +6,7 @@ using CaptureApp.AppCore;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
 using CaptureApp.Overlay;
+using CaptureApp.Platform.Hotkeys;
 using System.Windows.Input;
 using Xunit;
 
@@ -89,6 +90,19 @@ public sealed class WiringTests
         var action = Assert.Single(ActionItem.Standard(false, true, canWriteOutsideSession: true), item => item.Id == NoteActionId.WriteOutsideSession);
         Assert.Equal("Write outside session", action.Title);
         Assert.Equal(new[] { "Ctrl", "Shift", "N" }, action.Keys);
+    }
+
+    [Fact]
+    public void OutsideQuickNoteHotkeyIsGlobalAndLeavesThePanelToggleOnControlShiftN()
+    {
+        var chord = HotkeyDefaults.For(HotkeyAction.WriteNoteOutsideSession);
+        Assert.Equal("Ctrl+Shift+W", chord.DisplayString);
+        Assert.True(HotkeyValidator.Validate(chord).IsValid);
+        Assert.Null(QuickNoteView.ShortcutAction(Key.W, ModifierKeys.Control | ModifierKeys.Shift));
+        Assert.False(HotkeyValidator.Validate(KeyChord.Parse("Ctrl+Shift+N")).IsValid);
+        var session = new Destination("session.md", "Thermo", NoteKind.Session);
+        Assert.True(new QuickNoteState(session, outsideSession: true).OutsideSession);
+        Assert.Equal(session, new QuickNoteState(session).Destination);
     }
 
     [Theory]
