@@ -270,7 +270,7 @@ internal sealed partial class AppController
                 {
                     c.Report(error, Strings.CouldNotRenameSession);
                     // A committed move returns SessionRenameOutcome, including pending migration.
-                    PresentSessionRename(candidates, candidate, name, error.Message);
+                    PresentSessionRename(candidates, candidate, name, Strings.RenameSessionErrorHint(error));
                 }
             });
         }, InputClosed, InitialText: initialText ?? candidate.Name, Title: Strings.RenameSessionTitle,

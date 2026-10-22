@@ -271,6 +271,13 @@ public sealed class TrayMenuTests
 public sealed class StringTableTests
 {
     [Fact]
+    public void UnexpectedRenameFailureUsesSafeGuidanceInsteadOfRawExceptionText()
+    {
+        Assert.Equal(Strings.RenameSessionFailureHint,
+            Strings.RenameSessionErrorHint(new IOException("internal state path and implementation details")));
+    }
+
+    [Fact]
     public void MappedWording()
     {
         Assert.Equal("Open the tray icon → Setup", Strings.OpenTraySetup);

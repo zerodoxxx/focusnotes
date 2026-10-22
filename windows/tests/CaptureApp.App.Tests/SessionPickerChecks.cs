@@ -1,8 +1,10 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Input;
 using CaptureApp.App;
 using CaptureApp.AppCore;
+using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
 using CaptureApp.Overlay;
 using Xunit;
@@ -57,6 +59,37 @@ internal static class SessionPickerChecks
                 Assert.Null(controller.InputForChecks); // Programmatic cancel must not restore a picker.
                 Assert.True(File.Exists(pipeline.Vault.ManagedUrl(first.NotePath)));
                 Assert.True(File.Exists(pipeline.Vault.ManagedUrl(second.NotePath)));
+
+                var occupied = pipeline.Sessions.Start("archive/Taken");
+                pipeline.Sessions.End();
+                var before = File.ReadAllBytes(pipeline.Vault.ManagedUrl(second.NotePath));
+                foreach (var (name, hint) in new[]
+                {
+                    ("Taken", Strings.RenameSessionNameInUseHint),
+                    ("standup", Strings.RenameSessionCaseOnlyHint),
+                    ("folder/name", Strings.RenameSessionInvalidNameHint)
+                })
+                {
+                    controller.PresentSessionCandidates([new(second.Name, second.NotePath, DateTimeOffset.UtcNow)], second.NotePath);
+                    controller.InputForChecks!.HandleInput(Key.Enter, ModifierKeys.Control);
+                    Settle();
+                    var attempt = Assert.IsType<InputPanelController>(controller.InputForChecks);
+                    attempt.ViewForChecks!.Field.Text = name;
+                    attempt.HandleInput(Key.Enter);
+                    Settle();
+                    var completed = new TaskCompletionSource();
+                    controller.Coordinator.Enqueue(_ => { completed.SetResult(); return Task.CompletedTask; });
+                    UiWait.Pump(completed.Task, TimeSpan.FromSeconds(5));
+                    var retry = Assert.IsType<InputPanelController>(controller.InputForChecks);
+                    Assert.NotSame(attempt, retry);
+                    Assert.Equal(name, retry.ViewForChecks!.Field.Text);
+                    Assert.Equal(name, retry.ViewForChecks.Field.SelectedText);
+                    Assert.Equal(hint, AutomationProperties.GetHelpText(retry.ViewForChecks.Field));
+                    Assert.Equal(before, File.ReadAllBytes(pipeline.Vault.ManagedUrl(second.NotePath)));
+                    Assert.True(File.Exists(pipeline.Vault.ManagedUrl(occupied.NotePath)));
+                    Assert.Null(pipeline.Sessions.Current());
+                    retry.Dismiss(animated: false);
+                }
             }
             finally { controller.InputForChecks?.Dismiss(animated: false); }
 

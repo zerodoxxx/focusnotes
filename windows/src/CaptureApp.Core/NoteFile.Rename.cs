@@ -116,9 +116,9 @@ public static partial class NoteFile
         var offset = bom ? 3 : 0;
         var hasHeading = contents.AsSpan(offset).StartsWith(new byte[] { (byte)'#', (byte)' ' });
         var ending = hasHeading
-            ? length > offset && contents[length - 1] == '\r' ? "\r\n" : "\n"
+            ? (length > offset && contents[length - 1] == '\r' ? "\r" : "") + (newline < 0 ? "" : "\n")
             : contents.AsSpan().IndexOf(new byte[] { (byte)'\r', (byte)'\n' }) >= 0 ? "\r\n" : "\n";
-        var header = Utf8.GetBytes("# " + title + (hasHeading ? newline < 0 ? "" : ending : ending + ending));
+        var header = Utf8.GetBytes("# " + title + (hasHeading ? ending : ending + ending));
         var tail = hasHeading ? (newline < 0 ? contents.Length : newline + 1) : offset;
         return [.. contents.AsSpan(0, offset), .. header, .. contents.AsSpan(tail)];
     }

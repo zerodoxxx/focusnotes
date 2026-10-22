@@ -45,6 +45,8 @@ public sealed class SessionRenameTests
     [InlineData("# Old\nbody\n", "# New\nbody\n")]
     [InlineData("\uFEFF# Old\r\nbody\r\n", "\uFEFF# New\r\nbody\r\n")]
     [InlineData("# Old", "# New")]
+    [InlineData("# Old\r", "# New\r")]
+    [InlineData("\uFEFF# Old\r", "\uFEFF# New\r")]
     [InlineData("\n# Body heading\n", "# New\n\n\n# Body heading\n")]
     [InlineData("```\n# Example\n```\n", "# New\n\n```\n# Example\n```\n")]
     public void RewritingPreservesBomLineEndingsAndEveryBodyByte(string source, string expected)
