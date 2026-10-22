@@ -88,7 +88,7 @@ def selection(event_name: str, event: dict, full_input: bool) -> dict[str, str]:
     full = policy["native"] and (full_input or event.get("label", {}).get("name") == "run-ci-full")
     if policy["skip"]:
         macos = windows = False
-        reason = "skip-ci is attached; all CI jobs are intentionally skipped."
+        reason = "skip-ci is attached; native CI builds/tests are intentionally skipped and required policy gates run."
     elif not policy["native"]:
         macos = windows = False
         reason = "No explicit CI request for this event; native checks are not selected."

@@ -58,12 +58,13 @@ jobs:
 
   build:
     needs: select
-    if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (!cancelled() && needs.select.outputs.macos == 'true') || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci' && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))) }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) }}
     # Only a request or intentional skip may publish the ruleset's required check name.
-    # A skipped job allocates no runner and is accepted by GitHub's required-check rules.
+    # Run lightweight Ubuntu gates when native work is omitted: GitHub does not
+    # evaluate dynamic check names for skipped jobs.
     name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'build' || 'build (CI not requested)' }}
     # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
-    runs-on: ${{ (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci' && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))) && 'ubuntu-latest' || 'xcode-27' }}
+    runs-on: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && 'xcode-27' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - name: Revoke the intentional skip after skip-ci is removed
@@ -72,21 +73,33 @@ jobs:
           echo 'skip-ci was removed. Add run-ci or run-ci-full to request verification before merging.' >&2
           exit 1
 
-      - name: Fail required check when platform selection failed or was cancelled
-        if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled') }}
+      - name: Fail required check when platform selection did not complete
+        if: ${{ always() && (cancelled() || needs.select.result == 'failure' || needs.select.result == 'cancelled' || (needs.select.result == 'skipped' && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))) }}
         run: exit 1
 
+      - name: Fail required check when platform selection outputs are incomplete
+        if: ${{ always() && needs.select.result == 'success' && ((needs.select.outputs.macos != 'true' && needs.select.outputs.macos != 'false') || (needs.select.outputs.windows != 'true' && needs.select.outputs.windows != 'false') || (needs.select.outputs.full != 'true' && needs.select.outputs.full != 'false')) }}
+        run: exit 1
+
+      - name: Complete required build check without a macOS workload
+        if: ${{ ((needs.select.result == 'success' && needs.select.outputs.macos == 'false') || (needs.select.result == 'skipped' && contains(github.event.pull_request.labels.*.name, 'skip-ci'))) }}
+        run: echo 'No macOS workload selected; required CI policy check completed.'
+
       - uses: actions/checkout@v7
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' }}
 
       - name: Select Xcode 27 (Swift 6.4)
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' }}
         run: sudo xcode-select -s /Applications/Xcode_27.app
 
       - name: Print toolchain
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' }}
         run: |
           swift --version
           sw_vers
 
       - name: Require Swift 6.4 or newer
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' }}
         run: |
           set -euo pipefail
           version="$(swift --version | sed -n 's/.*Apple Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
@@ -98,6 +111,7 @@ jobs:
           echo "Swift $version"
 
       - name: Cache SwiftPM build
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' }}
         uses: actions/cache@v6
         with:
           path: .build
@@ -108,7 +122,7 @@ jobs:
             swiftpm-v2-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}-
 
       - name: Quick build and core checks
-        if: needs.select.outputs.full != 'true'
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && needs.select.outputs.full == 'false' }}
         run: |
           swift build
           swift run --skip-build CoreChecks --skip-performance
@@ -117,34 +131,48 @@ jobs:
       # Known flaky: `swift run OverlayGallery --check` (run inside release.sh --adhoc) can fail
       # intermittently. If this step fails there, re-run the job; do not special-case it here.
       - name: Checks and ad-hoc DMG
-        if: needs.select.outputs.full == 'true'
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && needs.select.outputs.full == 'true' }}
         env:
           # Vision OCR does not work in GitHub's macOS VMs; CaptureChecks then skips only OCR.
           CAPTURE_CHECKS_ALLOW_OCR_SKIP: "1"
         run: scripts/release.sh --adhoc
 
       - name: Upload dist
-        if: needs.select.outputs.full == 'true'
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && needs.select.outputs.full == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: focusnotes-adhoc-dmg
           path: dist/
           retention-days: 3
 
+      - name: Fail required build check if the workflow was cancelled
+        if: always() && cancelled()
+        run: exit 1
+
   smoke-macos-15:
-    if: needs.select.outputs.full == 'true'
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) }}
     name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'smoke-macos-15' || 'smoke-macos-15 (CI not requested)' }}
     needs: [select, build]
-    runs-on: macos-15
+    runs-on: ${{ needs.select.result == 'success' && needs.build.result == 'success' && needs.select.outputs.full == 'true' && 'macos-15' || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      - name: Fail required smoke check when prerequisite checks did not complete
+        if: ${{ always() && (cancelled() || needs.select.result == 'failure' || needs.select.result == 'cancelled' || needs.build.result != 'success') }}
+        run: exit 1
+
+      - name: Complete required smoke check without a full macOS workload
+        if: ${{ needs.build.result == 'success' && ((needs.select.result == 'success' && needs.select.outputs.full == 'false') || (needs.select.result == 'skipped' && contains(github.event.pull_request.labels.*.name, 'skip-ci'))) }}
+        run: echo 'No full macOS workload selected; required CI policy check completed.'
+
       - name: Download ad-hoc DMG
+        if: ${{ needs.select.result == 'success' && needs.build.result == 'success' && needs.select.outputs.full == 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: focusnotes-adhoc-dmg
           path: dist
 
       - name: Mount, verify signature and self-test on macOS 15
+        if: ${{ needs.select.result == 'success' && needs.build.result == 'success' && needs.select.outputs.full == 'true' }}
         timeout-minutes: 2
         env:
           MNT: ${{ runner.temp }}/mnt
@@ -159,11 +187,15 @@ jobs:
           "$app/Contents/MacOS/focusnotes" --self-test "$STATE"
 
       - name: Detach DMG
-        if: always()
+        if: always() && needs.select.result == 'success' && needs.build.result == 'success' && needs.select.outputs.full == 'true'
         env:
           MNT: ${{ runner.temp }}/mnt
         run: |
           hdiutil detach "$MNT" -force || true
+
+      - name: Fail required smoke check if the workflow was cancelled
+        if: always() && cancelled()
+        run: exit 1
 
   windows:
     needs: select

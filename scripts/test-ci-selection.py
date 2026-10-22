@@ -29,6 +29,7 @@ def workflow_expression(source, values):
         "github.event.label.name": "label", "github.run_id": "run_id",
         "needs.select.result": "select_result", "needs.select.outputs.macos": "macos",
         "needs.select.outputs.windows": "windows", "needs.select.outputs.full": "full",
+        "needs.build.result": "build_result",
     }
     for original, replacement in replacements.items():
         source = source.replace(original, replacement)
@@ -64,6 +65,39 @@ def workflow_expression(source, values):
         raise AssertionError(f"Unsupported workflow expression: {ast.dump(node)}")
 
     return visit(ast.parse(source, mode="eval"))
+
+
+def workflow_job(workflow, name):
+    return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\s*$|\Z)", workflow).group(1)
+
+
+def workflow_scalar(block, key, indent=4):
+    return re.search(rf"(?m)^{' ' * indent}{re.escape(key)}: (.+)$", block).group(1)
+
+
+def workflow_steps(block):
+    return re.findall(r"(?ms)^      - .*?(?=^      - |\Z)", block)
+
+
+def actual_check_name(block, values):
+    """GitHub leaves dynamic job names unexpanded when the job is skipped."""
+    name = workflow_scalar(block, "name")
+    return workflow_expression(name, values) if workflow_expression(workflow_scalar(block, "if"), values) else name
+
+
+def gate_result(block, values):
+    """Model step guards/fail-fast behavior, assuming selected native work succeeds."""
+    if not workflow_expression(workflow_scalar(block, "if"), values):
+        return "skipped"
+    success = not values.get("cancelled", False)
+    for step in workflow_steps(block):
+        guard = workflow_scalar(step, "if", indent=8)
+        # GitHub adds success() unless the guard contains a status function.
+        if not any(function in guard for function in ("always()", "cancelled()")) and not success:
+            continue
+        if workflow_expression(guard, values) and re.search(r"(?m)^          exit 1$|^        run: exit 1$", step):
+            success = False
+    return "success" if success else "failure"
 
 
 class SelectionTests(unittest.TestCase):
@@ -193,21 +227,29 @@ class SelectionTests(unittest.TestCase):
                           "label": event.get("label", {}).get("name", ""),
                           "labels": [item["name"] for item in event.get("pull_request", {}).get("labels", [])],
                           "select_result": "success" if native else "skipped", "run_id": 123,
+                          "build_result": "failure" if revoke else "success",
                           **selected}
                 evaluate = lambda source: workflow_expression(source, values)
                 self.assertEqual(bool(evaluate(scalar("select", "if"))), native)
-                self.assertEqual(evaluate(scalar("build", "name")), "build" if required_names else "build (CI not requested)")
-                self.assertEqual(evaluate(scalar("smoke-macos-15", "name")), "smoke-macos-15" if required_names else "smoke-macos-15 (CI not requested)")
+                for job in ("build", "smoke-macos-15"):
+                    block = job_block(job)
+                    self.assertIn("always()", scalar(job, "if"))
+                    self.assertEqual(bool(evaluate(scalar(job, "if"))), required_names)
+                    if required_names:
+                        self.assertEqual(actual_check_name(block, values), job)
+                        self.assertEqual(gate_result(block, values), "failure" if revoke else "success")
+                    else:
+                        self.assertEqual(actual_check_name(block, values), scalar(job, "name"))
+                        self.assertNotIn(actual_check_name(block, values), {"build", "smoke-macos-15"})
                 self.assertEqual(evaluate(coordinated_expression), "requested" if required_names else 123)
-                self.assertEqual(bool(evaluate(scalar("build", "if"))), native or revoke)
-                self.assertEqual(evaluate(scalar("build", "runs-on")), "ubuntu-latest" if revoke else "xcode-27")
+                self.assertEqual(evaluate(scalar("build", "runs-on")), "xcode-27" if native else "ubuntu-latest")
                 revocation_guard = re.search(r"(?m)^        if: (.+)$", job_block("build")).group(1)
                 self.assertEqual(bool(evaluate(revocation_guard)), revoke)
                 self.assertEqual(bool(evaluate(scalar("windows", "if"))), native)
                 self.assertEqual(bool(evaluate(scalar("windows-release-gate", "if"))), native)
                 expected_full = native and (full_input or event.get("label", {}).get("name") == "run-ci-full")
-                for job in ("smoke-macos-15", "windows-package"):
-                    self.assertEqual(bool(evaluate(scalar(job, "if"))), expected_full)
+                self.assertEqual(bool(evaluate(scalar("windows-package", "if"))), expected_full)
+                self.assertEqual(evaluate(scalar("smoke-macos-15", "runs-on")), "macos-15" if expected_full else "ubuntu-latest")
                 if not native:
                     self.assertEqual((selected["macos"], selected["windows"], selected["full"]), ("false", "false", "false"))
         # Labels never start native work on ordinary source updates, and no push trigger was added.
@@ -239,9 +281,100 @@ class SelectionTests(unittest.TestCase):
                     self.assertEqual(workflow_expression(expression, values), expected)
                 self.assertTrue(workflow_expression(failed_selector, values))
         # Intentional skips have a skipped selector, which must never take this failure path.
-        values.update({"label": "skip-ci", "labels": ["skip-ci"], "select_result": "skipped"})
-        self.assertFalse(workflow_expression(re.search(r"(?m)^    if: (.+)$", build).group(1), values))
+        values.update({"label": "skip-ci", "labels": ["skip-ci"], "select_result": "skipped", "cancelled": False})
+        self.assertTrue(workflow_expression(re.search(r"(?m)^    if: (.+)$", build).group(1), values))
         self.assertFalse(workflow_expression(failed_selector, values))
+
+    def test_required_gates_run_for_lean_scopes_and_guard_every_native_step(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
+        build, smoke = (workflow_job(workflow, name) for name in ("build", "smoke-macos-15"))
+        for path, macos, windows in [("Sources/App/AppController.swift", True, False),
+                                     ("windows/src/App.cs", False, True), ("README.md", False, False),
+                                     ("Sources/EmbedKit/ModelManifest.swift", True, True)]:
+            with self.subTest(path=path), patch.object(ci, "changed_paths", return_value=[path]):
+                selected = ci.selection("pull_request", pr_event(), False)
+                values = {"event_name": "pull_request", "action": "labeled", "label": "run-ci", "labels": ["run-ci"],
+                          "select_result": "success", "build_result": "success", **selected}
+                for name, block in (("build", build), ("smoke-macos-15", smoke)):
+                    self.assertEqual(actual_check_name(block, values), name)
+                    self.assertEqual(gate_result(block, values), "success")
+                self.assertEqual(workflow_expression(workflow_scalar(build, "runs-on"), values), "xcode-27" if macos else "ubuntu-latest")
+                self.assertEqual(workflow_expression(workflow_scalar(smoke, "runs-on"), values), "ubuntu-latest")
+                for job in ("windows", "windows-release-gate"):
+                    self.assertEqual(bool(workflow_expression(workflow_scalar(workflow_job(workflow, job), "if"), values)), windows)
+
+        skip_values = {"event_name": "pull_request", "action": "synchronize", "label": "", "labels": ["skip-ci"],
+                       "select_result": "skipped", "build_result": "success", "macos": "", "windows": "", "full": ""}
+        for name, block, first_native in (("build", build, "uses: actions/checkout"),
+                                           ("smoke-macos-15", smoke, "name: Download ad-hoc DMG")):
+            with self.subTest(job=name):
+                self.assertEqual(actual_check_name(block, skip_values), name)
+                self.assertEqual(gate_result(block, skip_values), "success")
+                self.assertEqual(workflow_expression(workflow_scalar(block, "runs-on"), skip_values), "ubuntu-latest")
+                self.assertNotRegex(workflow_scalar(block, "runs-on"), r"(?:always|cancelled|success|failure)\(")
+                steps = workflow_steps(block)
+                start = next(index for index, step in enumerate(steps) if first_native in step)
+                # The final cancellation gate is intentionally not a native step.
+                for step in steps[start:-1]:
+                    guard = workflow_scalar(step, "if", indent=8)
+                    self.assertFalse(workflow_expression(guard, skip_values), step)
+                    self.assertIn("needs.select.result == 'success'", guard)
+                    self.assertIn("needs.select.outputs.macos == 'true'" if name == "build" else "needs.select.outputs.full == 'true'", guard)
+                    if "Detach DMG" in step:
+                        self.assertIn("always()", guard) # Cleanup still runs after native failure/cancellation.
+                    else:
+                        # Ordinary native steps retain GitHub's implicit success() guard.
+                        self.assertNotRegex(guard, r"(?:always|cancelled|success|failure)\(")
+                tail_guard = workflow_scalar(steps[-1], "if", indent=8)
+                self.assertEqual(tail_guard, "always() && cancelled()")
+                self.assertTrue(workflow_expression(tail_guard, {**skip_values, "cancelled": True}))
+
+    def test_required_gates_fail_closed_on_bad_selection_and_cancelled_bypass(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
+        build, smoke = (workflow_job(workflow, name) for name in ("build", "smoke-macos-15"))
+        normal = {"event_name": "pull_request", "action": "labeled", "label": "run-ci", "labels": ["run-ci"],
+                  "select_result": "success", "build_result": "success", "macos": "false", "windows": "true", "full": "false"}
+        cases = [{"select_result": result} for result in ("failure", "cancelled", "skipped")]
+        cases += [{key: invalid} for key in ("macos", "windows", "full") for invalid in ("", "invalid")]
+        cases += [{"cancelled": True}, {"cancelled": True, "label": "skip-ci", "labels": ["skip-ci"], "select_result": "skipped"}]
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                values = {**normal, **overrides}
+                self.assertEqual(actual_check_name(build, values), "build")
+                self.assertEqual(gate_result(build, values), "failure")
+                values["build_result"] = "failure"
+                self.assertEqual(actual_check_name(smoke, values), "smoke-macos-15")
+                self.assertEqual(gate_result(smoke, values), "failure")
+        for result in ("failure", "cancelled", "skipped"):
+            values = {**normal, "macos": "true", "full": "true", "build_result": result}
+            with self.subTest(full_build_result=result):
+                self.assertEqual(gate_result(smoke, values), "failure")
+                self.assertEqual(workflow_expression(workflow_scalar(smoke, "runs-on"), values), "ubuntu-latest")
+
+    def test_bypass_removal_is_not_renewed_by_unrelated_events_or_new_commits(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
+        checks = {}
+        events = [
+            ("head-a", pr_event(label="skip-ci"), False, "success"),
+            ("head-a", pr_event("unlabeled", "skip-ci", []), False, "failure"),
+            ("head-a", pr_event(label="enhancement", labels=["skip-ci", "enhancement"]), False, "failure"),
+            ("head-a", pr_event(label="skip-ci"), True, "failure"), # Cancelled old bypass cannot replace revocation.
+            ("head-b", pr_event("synchronize", None, ["run-ci"]), False, None),
+            ("head-c", pr_event("synchronize", None, ["skip-ci"]), False, "success"),
+        ]
+        for sha, event, cancelled, expected in events:
+            with self.subTest(sha=sha, event=event, cancelled=cancelled):
+                selected = ci.selection("pull_request", event, False)
+                values = {"event_name": "pull_request", "action": event["action"], "label": event["label"]["name"],
+                          "labels": [item["name"] for item in event["pull_request"]["labels"]],
+                          "select_result": "skipped", "build_result": "success", "cancelled": cancelled, **selected}
+                for name in ("build", "smoke-macos-15"):
+                    block = workflow_job(workflow, name)
+                    if actual_check_name(block, values) == name:
+                        checks[sha, name] = gate_result(block, values)
+                    if name == "build":
+                        values["build_result"] = checks.get((sha, name), "skipped")
+                    self.assertEqual(checks.get((sha, name)), expected)
 
 
 if __name__ == "__main__":
