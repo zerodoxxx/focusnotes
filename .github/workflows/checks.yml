@@ -16,6 +16,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-release-gate:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Exercise Windows release gate modes
+        run: bash scripts/test-windows-release-gate.sh
+
   build:
     if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
     name: ${{ github.event_name == 'pull_request' && github.event.label.name != 'run-ci' && 'build (run-ci label required)' || 'build' }}

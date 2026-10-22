@@ -6,8 +6,8 @@ focusnotes is a small native app for capturing what you're reading or thinking w
 The macOS edition runs from the menu bar; select text and press a shortcut, drag over part of the screen, or jot a
 quick note in a floating panel. Everything lands in plain Markdown files you own.
 
-> **Platforms.** FocusNotes supports macOS and Windows. The Windows edition is implemented in this branch, but
-> Windows installers are not part of the published releases yet; see [Windows support](#windows-support). The
+> **Platforms.** FocusNotes supports macOS and Windows. Windows installers are not part of the currently published
+> releases yet; see [Windows support](#windows-support). The
 > product details, shortcuts and install steps below describe the macOS edition and currently published macOS build.
 
 ## Features
@@ -159,9 +159,10 @@ Your notes stay in your notes folder.
 ## Windows support
 
 A native Windows edition (C# on .NET 10 with WPF) lives in [`windows/`](windows/). It implements the FocusNotes
-features on Windows 10 22H2 and Windows 11, for x64 and arm64. Windows installers are not included in the currently
-published [releases](https://github.com/zerodoxxx/focusnotes/releases); use the [Windows build instructions](CONTRIBUTING.md#windows)
-to build from source. Any Windows installers published in the future will be signed.
+features on Windows 10 22H2 and Windows 11, for x64 and arm64. The currently published
+[releases](https://github.com/zerodoxxx/focusnotes/releases) do not include Windows installers yet. The release
+workflow now builds x64 and arm64 installers without SignPath; unless Authenticode signing is configured, those
+installers are unsigned. Use the [Windows build instructions](CONTRIBUTING.md#windows) to build from source.
 
 - **Targets.** Windows 10 22H2 and Windows 11, on x64 and arm64. Each architecture gets its own installer and
   update channel.
@@ -210,9 +211,11 @@ removes only the installed app; your notes and app state stay.
 
 ### Windows install notes
 
-- **Smart App Control and SmartScreen.** Windows blocks unsigned programs, and Smart App Control cannot be bypassed
-  for a single app. For that reason Windows releases will be signed, and signed builds only. Do not turn off Smart
-  App Control or SmartScreen to run a focusnotes build, and do not run copies from unknown sources.
+- **Smart App Control and SmartScreen.** Unsigned installers may trigger a SmartScreen warning. Smart App Control may
+  block an unsigned app when it cannot confirm the app is safe, and it has no per-app bypass. Do not turn off these
+  protections to run focusnotes; use only installers from the official [GitHub releases](https://github.com/zerodoxxx/focusnotes/releases),
+  and do not run the app on a device that blocks it. See Microsoft's [Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
+  and [SmartScreen reputation guidance](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation).
 - **Administrator windows.** Windows does not let a normal app read another app that runs as administrator. Capture
   Selection shows "Can't capture from apps running as administrator"; use Capture Area instead.
 - **Updates** come from GitHub and are verified with an EdDSA signature on the update index before anything is

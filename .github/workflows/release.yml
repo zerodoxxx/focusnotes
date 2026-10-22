@@ -227,15 +227,15 @@ jobs:
             fi
           fi
 
-  # Windows assets ride the release only when BOTH SIGNPATH_API_TOKEN and WINDOWS_SIGN_TEMPLATE are set:
-  # unsigned builds must never reach a GitHub Release. Without them the Windows jobs are skipped and the
-  # Mac release is unchanged. The sign template must reference the token through the environment
-  # (SIGNPATH_API_TOKEN is exported to the Pack step); never put the token inline in the template.
+  # Windows assets are part of every release. Authenticode signing is optional, but if configured all
+  # three signing inputs must be present; partial configuration fails instead of silently downgrading.
+  # Ed25519 update-index signing remains required in both modes.
   windows-gate:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
+      signing_enabled: ${{ steps.gate.outputs.signing_enabled }}
     steps:
       - uses: actions/checkout@v7
 
@@ -243,24 +243,10 @@ jobs:
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
           WINDOWS_SIGN_TEMPLATE: ${{ secrets.WINDOWS_SIGN_TEMPLATE }}
+          WINDOWS_SIGNER_THUMBPRINTS: ${{ vars.WINDOWS_SIGNER_THUMBPRINTS }}
           WINDOWS_UPDATE_ED_KEY_1: ${{ secrets.WINDOWS_UPDATE_ED_KEY_1 }}
         run: |
-          set -euo pipefail
-          if [[ -z "$SIGNPATH_API_TOKEN" || -z "$WINDOWS_SIGN_TEMPLATE" ]]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "SIGNPATH_API_TOKEN and WINDOWS_SIGN_TEMPLATE are not both set: Windows assets are skipped."
-            exit 0
-          fi
-          keys="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' Config/app.env | head -n 1)"
-          [[ -n "$keys" ]] || {
-            echo "Windows signing is configured but WINDOWS_UPDATE_ED_KEYS is empty in Config/app.env; run scripts/make-windows-update-key.sh." >&2
-            exit 1
-          }
-          [[ -n "$WINDOWS_UPDATE_ED_KEY_1" ]] || {
-            echo "Windows signing is configured but WINDOWS_UPDATE_ED_KEY_1 is missing; run scripts/make-windows-update-key.sh 1." >&2
-            exit 1
-          }
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          bash scripts/windows-release-gate.sh Config/app.env
 
   windows:
     needs: windows-gate
@@ -295,7 +281,7 @@ jobs:
           $version = (Select-String -Path Config/app.env -Pattern '^VERSION=(.+)$').Matches[0].Groups[1].Value
           ./windows/scripts/pack.ps1 -Arch '${{ matrix.arch }}' -Version $version -OutDir "$env:RUNNER_TEMP/pack"
 
-      - name: Signing inventory (enforced)
+      - name: Signing inventory (enforced when Authenticode is configured)
         shell: pwsh
         env:
           WINDOWS_SIGNER_THUMBPRINTS: ${{ vars.WINDOWS_SIGNER_THUMBPRINTS }}
@@ -304,7 +290,9 @@ jobs:
           $packId = "$appName-win-${{ matrix.arch }}"
           $packages = "$env:RUNNER_TEMP/pack/win-${{ matrix.arch }}"
           Start-Process -FilePath (Join-Path $packages "$packId-Setup.exe") -ArgumentList '--silent' -Wait
-          ./windows/scripts/signing-inventory.ps1 -Layout (Join-Path $env:LOCALAPPDATA $packId) -Packages $packages -Out "$packages/signing-inventory-${{ matrix.arch }}.json" -Enforce
+          $inventoryArgs = @('-Layout', (Join-Path $env:LOCALAPPDATA $packId), '-Packages', $packages, '-Out', "$packages/signing-inventory-${{ matrix.arch }}.json")
+          if ('${{ needs.windows-gate.outputs.signing_enabled }}' -eq 'true') { $inventoryArgs += '-Enforce' }
+          ./windows/scripts/signing-inventory.ps1 @inventoryArgs
 
       - uses: actions/upload-artifact@v7
         with:
@@ -315,7 +303,7 @@ jobs:
 
   release:
     needs: [windows-gate, windows]
-    # Runs when Windows assets are off (windows skipped) or built successfully; never after a Windows failure.
+    # Runs after the Windows gate and both architecture builds succeed; never after a Windows failure.
     if: >-
       !cancelled() && github.event_name == 'push' &&
       needs.windows-gate.result == 'success' &&
