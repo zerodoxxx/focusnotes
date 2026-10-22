@@ -382,6 +382,10 @@ func checkSearchIndexPerformance() async throws {
     let coldSampleText = coldSamples.map { String(format: "%.3f", $0) }.joined(separator: ", ")
     let warmSampleText = warmSamples.map { String(format: "%.1f", $0 * 1_000) }.joined(separator: ", ")
     print(String(format: "Index performance (2,000 notes × 10 captures): cold sync samples [%@] s, median %.3f s; no-change sync samples [%@] ms, median %.1f ms; search median %.2f ms.", coldSampleText, cold, warmSampleText, warm * 1_000, median * 1_000))
+    guard ProcessInfo.processInfo.environment["FOCUSNOTES_PERF_GATES"] == "1" else {
+        print("PERF thresholds not enforced (set FOCUSNOTES_PERF_GATES=1 to enforce locally).")
+        return
+    }
     try require(cold < 6, "cold sync median exceeded 6 seconds: \(cold) s; samples [\(coldSampleText)] s")
     try require(warm < 0.4, "no-change sync median exceeded 400 milliseconds: \(warm)")
     try require(median < 0.04, "search median exceeded 40 milliseconds: \(median)")

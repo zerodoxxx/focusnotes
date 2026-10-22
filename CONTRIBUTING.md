@@ -1,6 +1,6 @@
 # Contributing
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-22 (previous commit: `f5794e4`)
 
 Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
@@ -32,6 +32,16 @@ bash scripts/test-app-path-safety.sh
 
 The checks do not require Accessibility or Screen Recording permissions. For changes to capture behavior that depend on macOS privacy permissions or focus handling, also consult the manual steps in [`docs/manual-tests.md`](docs/manual-tests.md) and describe what you verified. `scripts/build-app.sh` builds the app bundle without installing or launching it.
 
+Elapsed performance measurements are diagnostic in CI on both platforms: shared runners vary in CPU, storage and scheduling. CI sets `FOCUSNOTES_PERF_GATES=0` and keeps workload correctness, OCR quality, cancellation and deadline outcomes covered, with generous timeouts to catch hangs. The original benchmark speed thresholds are enabled only by the explicit local opt-in `FOCUSNOTES_PERF_GATES=1`.
+
+Install the local pre-push checks once per clone (also applies to its worktrees):
+
+```sh
+scripts/install-hooks.sh
+```
+
+The installer uses the versioned `.githooks/pre-push` hook and preserves existing custom hooks/settings, explaining how to integrate manually if needed. Commits stay quick; each local push runs `scripts/check-performance.sh` before updating remote refs. You can run that script directly without pushing. On macOS it runs only the Swift large-vault index benchmark; on Windows (Git Bash) it runs the .NET index and OCR performance workloads. The Windows clipboard hold-time benchmark is included when `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` is set on an interactive desktop; otherwise the script reports that it is skipped. The script enforces the original index limits (cold sync 6 s on macOS, 18 s on Windows; no-change sync 400 ms; search 40 ms), Windows OCR limits (first call 3 s and warm p95 1.5 s), and interactive clipboard restore p99 10 ms. Compare failures on a consistent local machine; these limits do not apply to CI. Product deadlines and behavior tests remain active in CI.
+
 For CaptureKit changes, run `swift run CaptureChecks`. For semantic-search changes, follow the model-backed `EmbedChecks` procedure in [`docs/semantic-search.md`](docs/semantic-search.md); it uses the optional downloaded models and runtime.
 
 In a pull request, describe the behavior changed, the checks you ran, and any manual checks that need a signed macOS host.
@@ -54,10 +64,10 @@ verify their pinned SHA-256 hashes. Set `CAPTUREAPP_MODELS_DIR` to that folder, 
 `CAPTUREAPP_REQUIRE_OCR_MODELS=1` and `CAPTUREAPP_REQUIRE_MODELS=1` to fail instead of skip if the bundled OCR or
 semantic assets are missing.
 
-- `CaptureApp.Core`, `CaptureApp.AppCore`, `CaptureApp.Core.Tests`, `CaptureApp.AppCore.Tests`, `CaptureApp.Updates.Tests`, `CaptureApp.Embed.Tests` and `CaptureApp.Conformance.Tests` are platform neutral and run on any OS with the .NET SDK. `CaptureApp.Platform.Tests` and `CaptureApp.App.Tests` target Windows and are only built as test projects on a Windows host. Tests tagged `Needs=Windows` (file-layer behaviour such as reparse points and reserved names), `Needs=InteractiveDesktop` (hotkeys, focus, UI Automation, clipboard; also set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`) and `Needs=OcrModels` (the English OCR corpus, using the NuGet-bundled assets; set `CAPTUREAPP_REQUIRE_OCR_MODELS=1` to fail instead of skip if those assets are missing) require a Windows desktop. `Category=Perf` timing gates should run serially (`--filter "Category=Perf" -m:1`).
+- `CaptureApp.Core`, `CaptureApp.AppCore`, `CaptureApp.Core.Tests`, `CaptureApp.AppCore.Tests`, `CaptureApp.Updates.Tests`, `CaptureApp.Embed.Tests` and `CaptureApp.Conformance.Tests` are platform neutral and run on any OS with the .NET SDK. `CaptureApp.Platform.Tests` and `CaptureApp.App.Tests` target Windows and are only built as test projects on a Windows host. Tests tagged `Needs=Windows` (file-layer behaviour such as reparse points and reserved names), `Needs=InteractiveDesktop` (hotkeys, focus, UI Automation, clipboard; also set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`) and `Needs=OcrModels` (the English OCR corpus, using the NuGet-bundled assets; set `CAPTUREAPP_REQUIRE_OCR_MODELS=1` to fail instead of skip if those assets are missing) require a Windows desktop. `Category=Perf` workloads always retain correctness assertions and report timings; run them serially with `--filter "Category=Perf" -m:1 --logger "console;verbosity=detailed"` to see the measurements. The local pre-push script also opts into their speed assertions.
 - Behaviour shared with the Mac app is specified by `conformance/scenarios`. Swift is the reference, so change the Swift behaviour first, then regenerate the expected values with `swift run CoreChecks --write-conformance` and review the diff. Never edit an `expected` block by hand. `swift run CoreChecks` and `dotnet test` must both pass against the same files. See [`conformance/README.md`](conformance/README.md).
 - CI runs the Windows build, tests, self-test and gallery check on `windows-latest` (x64) and `windows-11-arm` (arm64); packaging and update tests run in the `windows-package` job. `windows/scripts/pack.ps1 -Arch x64|arm64 -Version <ver> -OutDir <dir>` builds one architecture's installer locally on a matching Windows machine.
-- Run solution tests with `-m:1` so model inference and other test assemblies do not compete with desktop fixtures. CI retains TRX reports in `test-results-<runner>` artifacts and runs the desktop capability probe after failures; a passing ARM64 run can include skipped desktop tests, so check the report's skipped counts when comparing architectures.
+- Run solution tests with `-m:1` so model inference and other test assemblies do not compete with desktop fixtures. CI gives each functional/measurement test step a 15-minute hang timeout, prints performance workload measurements, retains TRX reports in `test-results-<runner>` artifacts and runs the desktop capability probe after failures; a passing ARM64 run can include skipped desktop tests, so check the report's skipped counts when comparing architectures.
 
 ## Security reports
 

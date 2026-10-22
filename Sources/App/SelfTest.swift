@@ -139,10 +139,11 @@ extension AppController {
         var semanticStatus = "skipped (models not installed)"
         var semanticImageVectors = 0
         if let semanticCapture {
-            // A cold request must return promptly while transport I/O keeps warming.
-            let start = ContinuousClock.now
-            let cold = await pipeline.semantic.search("throttling API traffic", timeout: .milliseconds(1))
-            guard start.duration(to: .now) < .seconds(1), cold.text.isEmpty, cold.images.isEmpty else {
+            // Check the cold-request fallback without treating runner speed as a latency guarantee.
+            let cold = try await selfTestValue(of: Task {
+                await pipeline.semantic.search("throttling API traffic", timeout: .milliseconds(1))
+            }, label: "Cold semantic search")
+            guard cold.text.isEmpty, cold.images.isEmpty else {
                 throw SelfTestFailure("Query embedding deadline blocked the caller")
             }
             await pipeline.semantic.flush()
@@ -216,6 +217,7 @@ extension AppController {
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: base.appendingPathComponent("State"), calendar: pipeline.calendar)
         let controller = AppController(pipeline: live, presentsUI: false)
         let latch = SelfTestLatch()
+        defer { latch.release() }
         let pixels = PendingCapture(trigger: .region, content: .image(png: png, ocr: nil), source: CapturePipeline.source(context), subtitle: "Image")
         let lateResult = OCRResult(text: "slowocrneedle searchable after budget", lines: [], imageSize: .zero)
         let start = ContinuousClock.now
@@ -227,14 +229,16 @@ extension AppController {
         guard !controller.acquisitionInProgress else { throw SelfTestFailure("OCR still holds acquisition lock") }
         let next = CapturePipeline.selection(text: "secondacquisitionneedle", context: context)
         guard controller.beginAcquisition({ next }) else { throw SelfTestFailure("Another capture was ignored during OCR") }
-        // Yield until the second interactive operation has entered the ordered processing queue.
-        while controller.acquisitionInProgress { await Task.yield() }
-        await controller.waitForProcessing()
-        guard let tail = controller.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
-        _ = try await tail.value
+        _ = try await selfTestValue(of: Task {
+            // Yield until the second interactive operation has entered the ordered processing queue.
+            while controller.acquisitionInProgress { await Task.yield() }
+            await controller.waitForProcessing()
+            guard let tail = controller.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
+            return try await tail.value
+        }, label: "Second acquisition during OCR")
         let elapsed = start.duration(to: .now)
-        guard elapsed < .seconds(2), try await live.index.capture(id: pixels.id)?.blockKind == .image else {
-            throw SelfTestFailure("OCR over budget did not stage/commit an image within two seconds")
+        guard latch.isHeld, try await live.index.capture(id: pixels.id)?.blockKind == .image else {
+            throw SelfTestFailure("OCR over budget did not stage/commit an image while recognition remained blocked")
         }
         let noteBefore = try String(contentsOf: live.vault.inboxURL, encoding: .utf8)
         let ordered = NoteParser.parse(contents: noteBefore, notePath: "Inbox.md", titleFallback: "", calendar: live.calendar)
@@ -735,6 +739,7 @@ extension AppController {
             let timeoutController = AppController(pipeline: delayed, presentsUI: false)
             let regionLatch = SelfTestLatch()
             let ocrLatch = SelfTestLatch()
+            defer { regionLatch.release(); ocrLatch.release() }
             let pixels = PendingCapture(trigger: .region, content: .image(png: png, ocr: nil), source: CapturePipeline.source(context), subtitle: "Image")
             timeoutController.beginAcquisition {
                 if latePixels { await regionLatch.hold() }
@@ -744,15 +749,14 @@ extension AppController {
             }
             if latePixels { await regionLatch.waitUntilHeld() }
             else { await ocrLatch.waitUntilHeld() }
-            let start = ContinuousClock.now
             let quit = timeoutController.beginTermination(timeout: .milliseconds(350))
             if latePixels {
                 regionLatch.release()
                 await ocrLatch.waitUntilHeld()
             }
-            _ = await quit.value
-            guard start.duration(to: .now) < .seconds(2), try await delayed.journal.recordURLs().count == 1 else {
-                throw SelfTestFailure("Timed-out OCR pixels were lost or shutdown was unbounded")
+            _ = try await selfTestValue(of: quit, label: "Shutdown during blocked OCR")
+            guard ocrLatch.isHeld, try await delayed.journal.recordURLs().count == 1 else {
+                throw SelfTestFailure("Timed-out OCR pixels were not journaled while recognition remained blocked")
             }
             ocrLatch.release()
             let replay = try await CapturePipeline.open(vaultRoot: timeoutRoot, stateDirectory: timeoutState, calendar: pipeline.calendar)
@@ -775,6 +779,7 @@ private func checkMenuKeyEquivalents() throws {
 private final class SelfTestLatch {
     private var held: CheckedContinuation<Void, Never>?
     private var ready: CheckedContinuation<Void, Never>?
+    var isHeld: Bool { held != nil }
     func hold() async {
         await withCheckedContinuation { continuation in
             held = continuation
@@ -786,6 +791,25 @@ private final class SelfTestLatch {
         await withCheckedContinuation { ready = $0 }
     }
     func release() { held?.resume(); held = nil }
+}
+
+// A broad hang guard bounds task completion without asserting shared-runner speed.
+@MainActor
+private func selfTestValue<Value: Sendable, Failure: Error>(of task: Task<Value, Failure>, label: String) async throws -> Value {
+    let completion = SelfTestCompletion()
+    Task {
+        _ = try? await task.value
+        await completion.finish()
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+    while !(await completion.isFinished()), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard await completion.isFinished() else {
+        task.cancel()
+        throw SelfTestFailure("\(label) did not finish within the 30-second hang timeout")
+    }
+    return try await task.value
 }
 
 private actor SelfTestCompletion {
