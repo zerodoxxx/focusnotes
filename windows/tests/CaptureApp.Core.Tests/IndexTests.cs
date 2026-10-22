@@ -348,10 +348,22 @@ public sealed class IndexTests
             File.WriteAllText(e.Vault.UrlForRelativePath($"Synthetic {note}.md"), markdown.ToString(), NoteFile.Utf8);
         }
 
-        using var index = new SearchIndex(e.Vault, Path.Combine(e.Base, "Cache", "search.sqlite"), CheckVault.Zone);
-        var start = Stopwatch.GetTimestamp();
-        var coldStats = index.Sync();
-        var cold = Stopwatch.GetElapsedTime(start).TotalSeconds;
+        // Match the Swift benchmark: each cold sample indexes the same notes into a separate empty database.
+        // Take the median so one host scheduling or storage stall does not decide the gate.
+        using var firstColdIndex = new SearchIndex(e.Vault, Path.Combine(e.Base, "Cache", "search-cold-0.sqlite"), CheckVault.Zone);
+        using var secondColdIndex = new SearchIndex(e.Vault, Path.Combine(e.Base, "Cache", "search-cold-1.sqlite"), CheckVault.Zone);
+        using var index = new SearchIndex(e.Vault, Path.Combine(e.Base, "Cache", "search-cold-2.sqlite"), CheckVault.Zone);
+        var coldSamples = new List<double>();
+        long start;
+        foreach (var coldIndex in new[] { firstColdIndex, secondColdIndex, index })
+        {
+            start = Stopwatch.GetTimestamp();
+            var coldStats = coldIndex.Sync();
+            coldSamples.Add(Stopwatch.GetElapsedTime(start).TotalSeconds);
+            Assert.Equal(new SyncStats(2_000, 0, 0, 0), coldStats);
+        }
+
+        var coldMedian = coldSamples.Order().ElementAt(coldSamples.Count / 2);
         var warmSamples = new List<double>();
         for (var i = 0; i < 5; i++)
         {
@@ -361,8 +373,7 @@ public sealed class IndexTests
             Assert.Equal(new SyncStats(0, 0, 0, 2_000), warmStats);
         }
 
-        warmSamples.Sort();
-        var warmMedian = warmSamples[warmSamples.Count / 2];
+        var warmMedian = warmSamples.Order().ElementAt(warmSamples.Count / 2);
         var searches = new List<double>();
         for (var i = 0; i < 20; i++)
         {
@@ -373,13 +384,22 @@ public sealed class IndexTests
             Assert.All(hits, hit => Assert.NotEmpty(hit.SnippetMatches));
         }
 
-        searches.Sort();
-        var searchMedian = (searches[9] + searches[10]) / 2;
-        Assert.Equal(2_000, coldStats.Added);
+        var sortedSearches = searches.Order().ToArray();
+        var searchMedian = (sortedSearches[9] + sortedSearches[10]) / 2;
+        static string Samples(IEnumerable<double> values, double scale = 1) => string.Join(", ",
+            values.Select(value => (value * scale).ToString("F3", CultureInfo.InvariantCulture)));
+        var output = TestContext.Current.TestOutputHelper;
+        output?.WriteLine(FormattableString.Invariant(
+            $"Index performance (2,000 notes × 10 captures): cold sync samples [{Samples(coldSamples)}] s, median {coldMedian:F3} s."));
+        output?.WriteLine(FormattableString.Invariant(
+            $"No-change sync samples [{Samples(warmSamples, 1_000)}] ms, median {warmMedian * 1_000:F3} ms."));
+        output?.WriteLine(FormattableString.Invariant(
+            $"Search samples [{Samples(searches, 1_000)}] ms, median {searchMedian * 1_000:F3} ms."));
         // First Windows CI run measured 20-23 s cold (2,000 notes, per-file handle checks plus Defender scanning
         // temp files) against the 6 s Swift threshold; allow 3x there. Other platforms keep the Swift threshold.
         var coldLimit = OperatingSystem.IsWindows() ? 18 : 6;
-        Assert.True(cold < coldLimit, $"Cold sync took {cold:F3} seconds; expected under {coldLimit} seconds.");
+        Assert.True(coldMedian < coldLimit,
+            $"Cold sync median took {coldMedian:F3} seconds; expected under {coldLimit} seconds. Samples: [{Samples(coldSamples)}] seconds.");
         Assert.True(warmMedian < 0.4, $"No-change sync median took {warmMedian * 1_000:F1} ms; expected under 400 ms.");
         Assert.True(searchMedian < 0.04, $"Search median took {searchMedian * 1_000:F2} ms; expected under 40 ms.");
     }
