@@ -395,8 +395,11 @@ target, build and result for each item.
    PDF viewer, and press Capture Selection with the clipboard fallback both off and on. Expect the sentence and the
    app name as the source (UI Automation first, the fallback only where the app does not share its selection). With
    the fallback off in an app that needs it, expect "No text selected" with the hint to turn it on. Seed the clipboard
-   with text, an image and rich text first: each must be intact afterwards. Hold Ctrl+Shift for over 200 ms during
-   capture: expect "Release the shortcut keys and try again" and no injected copy. Focus a password field: expect
+   with text, an image and rich text first: each must be intact afterwards. In an app that needs clipboard fallback,
+   hold the capture shortcut's modifiers for half a second, then release: capture must complete from that single
+   press, with no copy before release. Hold them for more than two seconds: expect "Release the shortcut keys and
+   try again" and no injected copy. Switch to another app during the wait: capture must cancel without copying
+   from either app. Focus a password field: expect
    "Can't capture from secure fields". Put an image over 64 MB on the clipboard in an app that needs the fallback:
    expect "Couldn't capture selection" and an untouched clipboard.
 3. **Administrator apps:** Run Notepad as administrator, select text, press Capture Selection: expect "Can't capture

@@ -124,7 +124,8 @@ public sealed class SelectionReader
                 return new(new(selection.Text, context, SelectionMethod.UiAutomation), null);
             if (!useClipboardFallback) return SelectionResult.Refuse(SelectionFailure.FallbackOff);
 
-            await WaitForModifiersAsync(cancellationToken).ConfigureAwait(false); // G6
+            var modifierWait = await WaitForModifiersAsync(context, cancellationToken).ConfigureAwait(false); // G6
+            if (modifierWait is not null) return modifierWait;
             cancellationToken.ThrowIfCancellationRequested(); // G12 after modifier wait
             if (services.ModifiersHeld) return SelectionResult.Refuse(SelectionFailure.ModifiersHeld, "G6");
             await services.CheckpointAsync(SelectionCheckpoint.AfterModifiers).ConfigureAwait(false);
@@ -211,11 +212,19 @@ public sealed class SelectionReader
         finally { Volatile.Write(ref captureInProgress, 0); }
     }
 
-    private async Task WaitForModifiersAsync(CancellationToken token)
+    private async Task<SelectionResult?> WaitForModifiersAsync(FrontmostContext context, CancellationToken token)
     {
         var release = Stopwatch.StartNew();
-        while (services.ModifiersHeld && release.Elapsed < TimeSpan.FromMilliseconds(200))
+        // RegisterHotKey fires on key-down. Normal users may still hold the chord for several
+        // hundred milliseconds; wait for its natural release without synthesizing key-up events.
+        while (services.ModifiersHeld && release.Elapsed < TimeSpan.FromSeconds(2))
+        {
+            token.ThrowIfCancellationRequested();
+            if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, "G6 modifier wait");
             await Task.Delay(10, token).ConfigureAwait(false);
+        }
+        token.ThrowIfCancellationRequested();
+        return !services.IsFrontmost(context) ? SelectionResult.Refuse(SelectionFailure.TargetChanged, "G6 modifier wait") : null;
     }
 
     private async Task<SelectionResult?> SafetyAsync(FrontmostContext context, string check, CancellationToken token)
@@ -232,7 +241,8 @@ public sealed class SelectionReader
             }
             // A focus switch or a held modifier can steal UIA focus and leave the read undetermined.
             if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
-            await WaitForModifiersAsync(token).ConfigureAwait(false);
+            var modifierWait = await WaitForModifiersAsync(context, token).ConfigureAwait(false);
+            if (modifierWait is not null) return modifierWait;
             if (services.ModifiersHeld) return SelectionResult.Refuse(SelectionFailure.ModifiersHeld, check + " (undetermined, modifiers held)");
             if (!services.IsFrontmost(context)) return SelectionResult.Refuse(SelectionFailure.TargetChanged, check + " (undetermined, foreground changed)");
             if (attempt < 2) await Task.Delay(50, token).ConfigureAwait(false);

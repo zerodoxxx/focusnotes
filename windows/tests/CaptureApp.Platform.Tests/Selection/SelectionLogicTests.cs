@@ -15,7 +15,7 @@ public sealed class SelectionLogicTests
     [Fact]
     public async Task UiAutomationWinsWithoutClipboardConsentOrMutation()
     {
-        var fake = new FakeServices { Text = "selected" };
+        var fake = new FakeServices { Text = "selected", ModifiersHeld = true };
         var result = await new SelectionReader(fake).ReadAsync(context: Target, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(SelectionMethod.UiAutomation, result.Capture?.Method);
         Assert.Equal("selected", result.Capture?.Text);
@@ -190,8 +190,85 @@ public sealed class SelectionLogicTests
             .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.Equal(SelectionFailure.ModifiersHeld, result.Failure);
         Assert.Equal("Release the shortcut keys and try again", result.Message);
-        Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(180), "Held modifiers must be allowed to settle before refusing capture.");
+        Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(1800), "Held modifiers must be allowed a natural key-release interval before refusing capture.");
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), "Held modifiers must not leave capture waiting indefinitely.");
         Assert.Equal(0, fake.Injections);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NaturalShortcutReleaseAfterHalfSecondCapturesWithoutAnotherHotkey(bool unknownWhileHeld)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var fake = new FakeServices { Safety = unknownWhileHeld ? FieldSafety.Unknown : FieldSafety.Safe };
+        fake.ModifierState = () =>
+        {
+            var held = clock.Elapsed < TimeSpan.FromMilliseconds(500);
+            if (!held) fake.Safety = FieldSafety.Safe;
+            return held;
+        };
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken);
+        Assert.Equal("copied", result.Capture?.Text);
+        Assert.Equal(SelectionMethod.Clipboard, result.Capture?.Method);
+        Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(500));
+        Assert.Equal(1, fake.Snapshots);
+        Assert.Equal(1, fake.Injections);
+        Assert.True(fake.Restored);
+    }
+
+    [Fact]
+    public async Task PasswordDiscoveredAfterNaturalReleaseStillPreventsClipboardAccess()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var fake = new FakeServices { Safety = FieldSafety.Unknown };
+        fake.ModifierState = () =>
+        {
+            var held = clock.Elapsed < TimeSpan.FromMilliseconds(400);
+            if (!held) fake.Safety = FieldSafety.Password;
+            return held;
+        };
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken);
+        Assert.Equal(SelectionFailure.SecureField, result.Failure);
+        Assert.Equal(0, fake.Snapshots);
+        Assert.Equal(0, fake.Injections);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FocusChangeDuringModifierWaitAbortsBeforeClipboardAccess(bool unknownWhileHeld)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var fake = new FakeServices { Safety = unknownWhileHeld ? FieldSafety.Unknown : FieldSafety.Safe };
+        fake.ModifierState = () =>
+        {
+            if (clock.Elapsed >= TimeSpan.FromMilliseconds(100)) fake.Frontmost = false;
+            return true;
+        };
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken);
+        Assert.Equal(SelectionFailure.TargetChanged, result.Failure);
+        Assert.Equal(0, fake.Snapshots);
+        Assert.Equal(0, fake.Injections);
+    }
+
+    [Fact]
+    public async Task CancellationDuringModifierWaitDoesNotTouchClipboardAndReleasesCaptureGate()
+    {
+        using var token = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var fake = new FakeServices();
+        fake.ModifierState = () =>
+        {
+            if (clock.Elapsed >= TimeSpan.FromMilliseconds(100)) token.Cancel();
+            return true;
+        };
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, token.Token);
+        Assert.Equal(SelectionFailure.Cancelled, result.Failure);
+        Assert.Equal(0, fake.Snapshots);
+        Assert.Equal(0, fake.Injections);
+        Assert.Equal(SelectionFailure.FallbackOff, (await new SelectionReader(new FakeServices())
+            .ReadAsync(context: Target, cancellationToken: TestContext.Current.CancellationToken)).Failure);
     }
 
     [Fact]
@@ -323,7 +400,9 @@ public sealed class SelectionLogicTests
         internal int FailRestores, RetriesScheduled;
         internal Action? OnSafetyRead;
         internal Func<SelectionCheckpoint, Task>? Hook;
-        public bool ModifiersHeld { get; set; }
+        internal Func<bool>? ModifierState;
+        private bool modifiersHeld;
+        public bool ModifiersHeld { get => ModifierState?.Invoke() ?? modifiersHeld; set => modifiersHeld = value; }
         public uint ClipboardSequence { get; set; } = 10;
         public long ClipboardSignal => 0;
         public bool IsFrontmost(FrontmostContext context) => Frontmost;
