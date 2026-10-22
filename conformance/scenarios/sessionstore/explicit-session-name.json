@@ -1,6 +1,6 @@
 {
   "area" : "sessionstore",
-  "description" : "A blank name uses the default session title.",
+  "description" : "An explicitly entered Session name creates a session that survives reload.",
   "expected" : {
     "files" : {
       "Inbox.md" : "# Inbox\n",
@@ -21,7 +21,7 @@
       }
     ]
   },
-  "id" : "blank-session",
+  "id" : "explicit-session-name",
   "input" : {
     "clock" : "2026-10-13T09:00:42Z",
     "files" : {
@@ -29,7 +29,7 @@
     },
     "ops" : [
       {
-        "name" : " \t ",
+        "name" : "Session",
         "op" : "start"
       },
       {

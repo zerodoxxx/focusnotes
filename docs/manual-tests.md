@@ -99,9 +99,14 @@ Use a disposable notes folder. On macOS choose **Folder Shortcuts…** from the 
    and restore the draft; its folder and pin intent must survive and save to the configured folder. Repeat after
    rapid typing and immediate dismissal. Save or discard the draft, open an ordinary quick note, and confirm it
    does not inherit the earlier folder context.
-6. **Session action:** Add a Start Session shortcut for `Meetings`. Invoke it twice and confirm each invocation
-   starts a newly named session under `Sessions/Meetings/`, with later normal captures routed to that session.
-   The action must not merely end the previously active session or reuse its note.
+6. **Session action:** Add a Start Session shortcut for `Meetings`. Invoke it while another session is active
+   and confirm a name prompt appears without changing that session. Escape and blank/whitespace submissions
+   must create no note and leave the active session unchanged. Enter `Standup` and confirm creation of
+   `Sessions/Meetings/Standup.md`, with later captures routed there. Invoke again and enter the same name;
+   confirm it resumes the existing note and preserves its content. Create a `Standup` in a different folder
+   and confirm it is neither suggested nor resumed by this shortcut. Try a path such as `../Standup` and
+   confirm rejection without changing the active session. Repeat blank/cancel checks through the ordinary
+   Start Session command with no active session; no default or timestamp-named session may be created.
 7. **Missing and renamed folders:** Remove an empty configured destination and invoke its shortcut; saving must
    recreate it. Rename a configured folder outside the app and invoke its shortcut again; it should use the saved
    path, recreating it, while the renamed folder and its notes remain intact. Try an unwritable destination and

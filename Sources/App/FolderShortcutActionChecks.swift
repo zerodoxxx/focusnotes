@@ -1,5 +1,8 @@
 import Core
 import Foundation
+import AppKit
+import CaptureKit
+@_spi(Checks) import OverlayKit
 
 @MainActor
 func checkFolderShortcutActions() async throws {
@@ -19,15 +22,83 @@ func checkFolderShortcutActions() async throws {
           try pipeline.drafts.load().isEmpty else {
         throw SelfTestFailure("Folder quick note failed to override routing without changing the session")
     }
-    let first = try await controller.startFolderSession(in: folder)
-    let second = try await controller.startFolderSession(in: folder)
-    guard first.notePath.hasPrefix("Sessions/Science/Research/"), first.notePath != second.notePath,
+    let first = try await controller.startFolderSession(name: "Experiment review", in: folder)
+    let second = try await controller.startFolderSession(name: "Experiment review", in: folder)
+    guard first.notePath == "Sessions/Science/Research/Experiment review.md", first.notePath == second.notePath,
+          second.resumed == true,
           await pipeline.sessions.current() == second else {
-        throw SelfTestFailure("Folder shortcut did not activate a fresh automatically named session")
+        throw SelfTestFailure("Folder shortcut did not create and resume the named session inside its folder")
+    }
+    do {
+        _ = try await controller.startFolderSession(name: " \n\t ", in: folder)
+        throw SelfTestFailure("Blank folder-session name created a session")
+    } catch NotePathNameError.emptyPath { }
+    guard await pipeline.sessions.current() == second else {
+        throw SelfTestFailure("Blank folder-session name changed the active session")
+    }
+    guard AppController.sessionPath(second.notePath, isIn: folder),
+          AppController.sessionPath("Sessions/science/research/Other.md", isIn: folder),
+          !AppController.sessionPath("Sessions/Science/Research/Nested/Other.md", isIn: folder),
+          !AppController.sessionPath("Sessions/Other/Experiment review.md", isIn: folder) else {
+        throw SelfTestFailure("Folder session suggestions included a different folder")
+    }
+
+    let binding = FolderShortcut(hotkey: Hotkey(keyCode: 11, modifiers: [.command, .option]),
+                                action: .startSession, folder: folder.rawValue)
+    for code in [UInt16(53), UInt16(36)] {
+        controller.runFolderShortcut(binding)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while controller.inputForChecks == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard let input = controller.inputForChecks,
+              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                  windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+            throw SelfTestFailure("Folder shortcut did not ask for a session name")
+        }
+        _ = input.handleKeyForChecks(event)
+        while controller.inputForChecks != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard controller.inputForChecks == nil, await pipeline.sessions.current() == second else {
+            throw SelfTestFailure("Cancel or blank session prompt changed the active session")
+        }
     }
     let ordinary = try await controller.addNote("Ordinary capture")
     guard ordinary?.destination.url == pipeline.vault.root.appendingPathComponent(second.notePath) else {
         throw SelfTestFailure("Ordinary notes did not follow the newly activated folder session")
+    }
+
+    // Display titles can differ from filenames (including dated legacy sessions).
+    // Choosing the suggestion must retain the exact path, rather than create a title-derived sibling.
+    let selectedURL = pipeline.vault.root.appendingPathComponent(second.notePath)
+    let selectedMarkdown = try String(contentsOf: selectedURL, encoding: .utf8)
+    try selectedMarkdown.replacingOccurrences(of: "# Experiment review\n", with: "# Visible review\n")
+        .write(to: selectedURL, atomically: true, encoding: .utf8)
+    try await pipeline.index.reindex(note: selectedURL)
+    controller.runFolderShortcut(binding)
+    let selectionDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while controller.inputForChecks == nil, ContinuousClock.now < selectionDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    for code in [UInt16(125), UInt16(36)] {
+        guard let input = controller.inputForChecks,
+              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                  windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+            throw SelfTestFailure("Folder session suggestion was not presented")
+        }
+        _ = input.handleKeyForChecks(event)
+        if code == 125, input.selectedValueForChecks != "/" + second.notePath {
+            throw SelfTestFailure("Folder session suggestion lost its exact path identity")
+        }
+    }
+    while await pipeline.sessions.current()?.name != "Visible review", ContinuousClock.now < selectionDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    guard await pipeline.sessions.current()?.notePath == second.notePath,
+          await pipeline.sessions.current()?.name == "Visible review",
+          !FileManager.default.fileExists(atPath: selectedURL.deletingLastPathComponent().appendingPathComponent("Visible review.md").path) else {
+        throw SelfTestFailure("Choosing a folder session by its display title created a sibling instead of resuming its exact path")
     }
 
     // Replay retains its exact folder while a same-text newer draft has another destination.

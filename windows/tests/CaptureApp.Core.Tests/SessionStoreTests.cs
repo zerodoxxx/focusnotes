@@ -71,9 +71,13 @@ public sealed class SessionStoreTests
         Assert.Equal("Sessions/archive/Standup.md", nested.NotePath);
         Assert.True(nested.Resumed);
         Assert.False(File.Exists(e.Vault.UrlForRelativePath("Sessions/Standup.md")));
-        var blank = e.Sessions.Start("   ");
-        Assert.Equal("Session", blank.Name);
-        Assert.Equal("Sessions/Session.md", blank.NotePath);
+        var beforeBlank = e.Sessions.Current();
+        var stateBeforeBlank = File.ReadAllBytes(e.Sessions.StateFileUrl);
+        foreach (var blank in new[] { "", "   ", "\n\t" })
+            Assert.Equal(NotePathNameError.EmptyPath, Assert.Throws<NotePathNameException>(() => e.Sessions.Start(blank)).Kind);
+        Assert.Equal(beforeBlank, e.Sessions.Current());
+        Assert.Equal(stateBeforeBlank, File.ReadAllBytes(e.Sessions.StateFileUrl));
+        Assert.False(File.Exists(e.Vault.UrlForRelativePath("Sessions/Session.md")));
         e.Sessions.End();
         Assert.Null(e.Sessions.Current());
         Assert.False(File.Exists(e.Sessions.StateFileUrl));

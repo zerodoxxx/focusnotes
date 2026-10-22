@@ -65,17 +65,60 @@ func checkFolderRoutes() async throws {
     try FileManager.default.removeItem(at: prepared.destination.url.deletingLastPathComponent())
     _ = try await service.save(nested)
     try require(FileManager.default.fileExists(atPath: nested.destination.url.path), "Save recreates removed nested folder")
-    let first = try await sessions.start(in: folder)
-    let second = try await sessions.start(in: folder)
-    try require(first.notePath.hasPrefix("Sessions/Work/Project/") && second.notePath != first.notePath,
-                "Folder sessions always create unique timestamp notes")
-    try require(first.resumed == false && second.resumed == false, "Folder sessions never resume")
+    let first = try await sessions.start(name: "  Planning  ", in: folder)
+    let second = try await sessions.start(name: "planning", in: NoteFolder(rawValue: "work/project"))
+    try require(first.notePath == "Sessions/Work/Project/Planning.md" && second.notePath == first.notePath,
+                "Named folder sessions create then resume the exact folder's matching note")
+    try require(first.resumed == false && second.resumed == true, "Folder session resume status")
     let firstURL = vault.root.appendingPathComponent(first.notePath)
     let firstContents = try checkRead(firstURL)
-    try require(firstContents.hasPrefix("# " + first.name), "Folder sessions create readable headers")
+    try require(firstContents.hasPrefix("# Planning"), "Folder session uses the entered title")
     let restored = SessionStore(stateDirectory: state, vault: vault, calendar: calendar, now: { date })
     let current = await restored.current()
     try require(current == second, "Folder session identity persists")
+    let elsewhere = try await sessions.start(name: "Planning", in: NoteFolder(rawValue: "Other"))
+    try require(elsewhere.notePath == "Sessions/Other/Planning.md" && elsewhere.resumed == false,
+                "A folder session never resumes an identically named note in another folder")
+    try checkWrite("# Dated notes\n", to: vault.root.appendingPathComponent("Sessions/Work/Project/2026-10-21 Review.md"))
+    let dated = try await sessions.start(name: "review", in: folder)
+    try require(dated.notePath == "Sessions/Work/Project/2026-10-21 Review.md" && dated.resumed == true,
+                "Folder session matching includes dated names in its own folder")
+    try checkWrite("# Nested review\n", to: vault.root.appendingPathComponent("Sessions/Work/Project/Child/Review.md"))
+    let stillDated = try await sessions.start(name: "review", in: folder)
+    try require(stillDated.notePath == dated.notePath, "Descendant folders do not introduce matching ambiguity")
+    let stateBeforeInvalid = try Data(contentsOf: state.appendingPathComponent("session.json"))
+    for name in ["", " \n\t", "../escape", "/outside", "Child/escape", "Child\\escape", ".hidden", "~home", "bad\0name"] {
+        do {
+            _ = try await sessions.start(name: name, in: folder)
+            throw CheckFailure.failed("Invalid folder session name was accepted: \(name.debugDescription)")
+        } catch is NotePathNameError { }
+    }
+    let unchanged = await sessions.current()
+    let stateAfterInvalid = try Data(contentsOf: state.appendingPathComponent("session.json"))
+    try require(unchanged == stillDated && stateBeforeInvalid == stateAfterInvalid,
+                "Invalid folder names preserve active and durable state")
+    try checkWrite("# Second dated review\n", to: vault.root.appendingPathComponent("Sessions/Work/Project/2026-10-20 Review.md"))
+    do {
+        _ = try await sessions.start(name: "review", in: folder)
+        throw CheckFailure.failed("Ambiguous same-folder session silently selected a note")
+    } catch SessionStoreError.ambiguous(let candidates) {
+        try require(candidates.count == 2 && candidates.allSatisfy {
+            ($0.notePath as NSString).deletingLastPathComponent == "Sessions/Work/Project"
+        }, "Only direct folder matches are offered as candidates")
+    }
+    let unusedRoot = base.appendingPathComponent("UntouchedVault")
+    let unusedStore = SessionStore(stateDirectory: base.appendingPathComponent("UntouchedState"),
+        vault: Vault(root: unusedRoot), calendar: calendar, now: { date })
+    for folderScoped in [false, true] {
+        do {
+            if folderScoped { _ = try await unusedStore.start(name: "  ", in: folder) }
+            else { _ = try await unusedStore.start(name: "  ") }
+            throw CheckFailure.failed("Blank name created a session in a fresh vault")
+        } catch is NotePathNameError { }
+    }
+    try require(!FileManager.default.fileExists(atPath: unusedRoot.path) &&
+                !FileManager.default.fileExists(atPath: base.appendingPathComponent("UntouchedState").path),
+                "Blank input must not create vault or state directories")
     let outside = base.appendingPathComponent("Outside")
     try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(at: vault.root.appendingPathComponent("Link"), withDestinationURL: outside)
@@ -87,9 +130,11 @@ func checkFolderRoutes() async throws {
     }
     try FileManager.default.createSymbolicLink(at: vault.root.appendingPathComponent("Sessions/Link"), withDestinationURL: outside)
     do {
-        _ = try await sessions.start(in: NoteFolder(rawValue: "Link"))
+        _ = try await sessions.start(name: "Named", in: NoteFolder(rawValue: "Link"))
         throw CheckFailure.failed("Folder session followed symlink")
-    } catch is POSIXError { }
+    } catch let error as CocoaError {
+        try require(error.code == .fileWriteInvalidFileName, "Named folder session rejects symlink destination")
+    }
     let outsideFiles = try FileManager.default.contentsOfDirectory(atPath: outside.path)
     try require(outsideFiles.isEmpty, "Symlink targets remain untouched")
     print("PASS folder routes and sessions")

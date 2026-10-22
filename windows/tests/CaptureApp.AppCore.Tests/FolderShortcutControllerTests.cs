@@ -28,16 +28,30 @@ public sealed class FolderShortcutControllerTests
     }
 
     [Fact]
-    public async Task FolderSessionsAlwaysCreateAndEditorNewRetainsFolder()
+    public async Task NamedFolderSessionsCreateResumeAndEditorNewRetainsFolder()
     {
         using var temp = new TempDirectory();
         using var pipeline = CapturePipeline.Open(Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
-        var first = await coordinator.StartFolderSessionAsync("Work/Calls");
-        var second = await coordinator.StartFolderSessionAsync("Work/Calls");
+        var first = await coordinator.StartFolderSessionAsync("Work/Calls", "Planning");
+        var second = await coordinator.StartFolderSessionAsync("Work/Calls", "Review");
         Assert.StartsWith("Sessions/Work/Calls/", first.NotePath);
         Assert.NotEqual(first.NotePath, second.NotePath);
         Assert.Equal(second, pipeline.Sessions.Current());
+        var resumed = await coordinator.StartFolderSessionAsync("Work/Calls", "Planning");
+        Assert.Equal(first.NotePath, resumed.NotePath);
+        Assert.True(resumed.Resumed);
+        var before = File.ReadAllBytes(pipeline.Vault.ManagedUrl(resumed.NotePath));
+        foreach (var invalid in new[] { "", "   ", "../Elsewhere", "nested/name", "nested\\name" })
+            await Assert.ThrowsAsync<NotePathNameException>(() => coordinator.StartFolderSessionAsync("Work/Calls", invalid));
+        Assert.Equal(resumed, pipeline.Sessions.Current());
+        Assert.Equal(resumed, coordinator.ActiveSession);
+        Assert.Equal(before, File.ReadAllBytes(pipeline.Vault.ManagedUrl(resumed.NotePath)));
+        await coordinator.StartFolderSessionAsync("Other", "Outside");
+        await coordinator.StartFolderSessionAsync("Work/Calls/Nested", "Nested");
+        var suggestions = await coordinator.FolderSessionSuggestionsAsync("work/calls");
+        Assert.Equal(new[] { "Planning", "Review" }, suggestions.Select(s => s.Title).Order().ToArray());
+        Assert.All(suggestions, suggestion => Assert.StartsWith("Sessions/Work/Calls/", suggestion.Path));
         var folder = new NoteFolder("Work/Research");
         var state = new QuickNoteState(null, folder: folder);
         state.Destination = new Destination(pipeline.Vault.InboxUrl, "Inbox", NoteKind.Inbox);

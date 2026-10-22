@@ -89,9 +89,37 @@ internal sealed partial class AppController
             if (!await ClosePanelsAsync()) return;
             await c.WaitForCommitsAsync();
             if (c.IsTerminating) return;
-            try { await c.StartFolderSessionAsync(binding.Folder); }
-            catch (Exception error) { c.Report(error, Strings.CouldNotStartSession); }
+            await PresentFolderSessionInputAsync(binding.Folder);
         });
+    }
+
+    internal async Task PresentFolderSessionInputAsync(string folder)
+    {
+        var suggestions = await Coordinator.FolderSessionSuggestionsAsync(folder);
+        if (quitting || Coordinator.IsTerminating) return;
+        // Opaque values distinguish selected rows from typed names, even when a header differs from its filename.
+        var selectedValues = suggestions.ToDictionary(s => s.Path, _ => "folder-session:" + Guid.NewGuid().ToString("N"));
+        var candidates = suggestions.ToDictionary(s => selectedValues[s.Path], s =>
+            new CaptureApp.Core.SessionCandidate(s.Title, s.Path, s.Modified));
+        PresentInput(Strings.SessionNamePlaceholder, title: "Start Session", secondary: "In Sessions/" + folder,
+            suggestions: suggestions, suggestionValue: suggestion => selectedValues[suggestion.Path],
+            onSubmit: name => Coordinator.Enqueue(async c =>
+            {
+                if (string.IsNullOrWhiteSpace(name) || c.IsTerminating) return;
+                _ = c.CommitPending();
+                await c.WaitForCommitsAsync();
+                if (c.IsTerminating) return;
+                try
+                {
+                    if (candidates.TryGetValue(name, out var selected)) await c.ResumeSessionAsync(selected);
+                    else await c.StartFolderSessionAsync(folder, name);
+                }
+                catch (CaptureApp.Core.SessionStoreException ambiguous) when (ambiguous.Kind == CaptureApp.Core.SessionStoreError.Ambiguous)
+                {
+                    PresentSessionCandidates(ambiguous.Candidates);
+                }
+                catch (Exception error) { c.Report(error, Strings.CouldNotStartSession); }
+            }));
     }
 
     private TrayMenuItem FolderShortcutsMenu()

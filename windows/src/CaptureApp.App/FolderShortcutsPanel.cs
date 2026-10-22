@@ -28,7 +28,7 @@ internal sealed class FolderShortcutsPanel : StackPanel
     {
         this.controller = controller;
         Children.Add(UiKit.Text("Folder Shortcuts", 16, true));
-        Children.Add(UiKit.Secondary("Quick notes use a folder inside your notes folder. Sessions use Sessions/<folder> and get an automatic name. Enter a relative path such as Work/Research. Choosing an existing note in Browse overrides the folder."));
+        Children.Add(UiKit.Secondary("Quick notes use a folder inside your notes folder. Start Session asks for a name, then creates or resumes a session inside Sessions/<folder>. Enter a relative path such as Work/Research. Choosing an existing note in Browse overrides the folder."));
         Children.Add(list);
         add = UiKit.Button("Add Shortcut", () => { if (rows.Count < FolderShortcutStore.MaximumBindings) { AddRow(); UpdateCount(); } });
         Children.Add(UiKit.Row(add, UiKit.Button("Save Folder Shortcuts", Save), UiKit.Button("Revert Changes", Reload)));

@@ -74,22 +74,56 @@ public sealed class FolderRouteTests
     }
 
     [Fact]
-    public void FolderSessionsAreAlwaysNewAndSurviveReloadAndConcurrentCollision()
+    public void NamedFolderSessionsResumeOnlyInsideTheirDirectFolder()
     {
         using var e = new CheckVault(windowsRules: true);
         var folder = new NoteFolder("Work/Project");
-        var first = e.Sessions.StartInFolder(folder);
-        var second = e.Sessions.StartInFolder(folder);
-        Assert.StartsWith("Sessions/Work/Project/Session 2026-10-13 14.30.00", first.NotePath, StringComparison.Ordinal);
-        Assert.EndsWith(" 2.md", second.NotePath, StringComparison.Ordinal);
+        var first = e.Sessions.StartInFolder(folder, "  Planning  ");
+        var second = e.Sessions.StartInFolder(new("work/project"), "planning");
+        Assert.Equal("Sessions/Work/Project/Planning.md", first.NotePath);
+        Assert.Equal(first.NotePath, second.NotePath);
         Assert.False(first.Resumed);
-        Assert.False(second.Resumed);
+        Assert.True(second.Resumed);
+        Assert.Equal("Planning", first.Name);
         Assert.Equal(second, new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock).Current());
-        Assert.StartsWith("# " + first.Name, File.ReadAllText(e.Vault.ManagedUrl(first.NotePath)), StringComparison.Ordinal);
-        var colliding = new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock,
-            path => { if (!path.EndsWith(" 2.md", StringComparison.Ordinal)) e.Write(path, "# Concurrent writer\n"); });
-        var raced = colliding.StartInFolder(new("Race"));
-        Assert.EndsWith(" 2.md", raced.NotePath, StringComparison.Ordinal);
-        Assert.Contains("Concurrent writer", File.ReadAllText(e.Vault.ManagedUrl(raced.NotePath.Replace(" 2.md", ".md", StringComparison.Ordinal))), StringComparison.Ordinal);
+        Assert.StartsWith("# Planning", File.ReadAllText(e.Vault.ManagedUrl(first.NotePath)), StringComparison.Ordinal);
+        var elsewhere = e.Sessions.StartInFolder(new("Other"), "Planning");
+        Assert.Equal("Sessions/Other/Planning.md", elsewhere.NotePath);
+        Assert.False(elsewhere.Resumed);
+        var datedPath = "Sessions/Work/Project/2026-10-21 Review.md";
+        e.Write(datedPath, "# Existing review\n");
+        var dated = e.Sessions.StartInFolder(folder, "review");
+        Assert.Equal(datedPath, dated.NotePath);
+        Assert.True(dated.Resumed);
+        e.Write("Sessions/Work/Project/Child/Review.md", "# Nested review\n");
+        Assert.Equal(datedPath, e.Sessions.StartInFolder(folder, "review").NotePath);
+        var current = e.Sessions.Current();
+        var bytes = File.ReadAllBytes(e.Sessions.StateFileUrl);
+        foreach (var invalid in new[] { "", " \n\t", "../escape", "/outside", "Child/escape", "Child\\escape", ".hidden", "~home", "bad\0name", "CON" })
+            Assert.Throws<NotePathNameException>(() => e.Sessions.StartInFolder(folder, invalid));
+        Assert.Equal(current, e.Sessions.Current());
+        Assert.Equal(bytes, File.ReadAllBytes(e.Sessions.StateFileUrl));
+        e.Write("Sessions/Work/Project/2026-10-20 Review.md", "# Second review\n");
+        var ambiguity = Assert.Throws<SessionStoreException>(() => e.Sessions.StartInFolder(folder, "Review"));
+        Assert.Equal(SessionStoreError.Ambiguous, ambiguity.Kind);
+        Assert.Equal(2, ambiguity.Candidates.Count);
+        Assert.All(ambiguity.Candidates, candidate => Assert.Equal("Sessions/Work/Project", string.Join('/', candidate.NotePath.Split('/').SkipLast(1))));
+        Assert.Equal(current, e.Sessions.Current());
+        Assert.Equal(bytes, File.ReadAllBytes(e.Sessions.StateFileUrl));
+    }
+
+    [Fact]
+    public void BlankSessionNamesDoNotCreateVaultOrState()
+    {
+        using var e = new CheckVault(windowsRules: true);
+        var folder = new NoteFolder("Work/Project");
+        foreach (var blank in new[] { "", "   ", "\n\t" })
+        {
+            Assert.Equal(NotePathNameError.EmptyPath, Assert.Throws<NotePathNameException>(() => e.Sessions.Start(blank)).Kind);
+            Assert.Equal(NotePathNameError.EmptyPath, Assert.Throws<NotePathNameException>(() => e.Sessions.StartInFolder(folder, blank)).Kind);
+        }
+        Assert.Null(e.Sessions.Current());
+        Assert.False(Directory.Exists(e.Vault.Root));
+        Assert.False(Directory.Exists(e.State));
     }
 }

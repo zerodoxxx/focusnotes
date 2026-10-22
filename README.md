@@ -57,7 +57,9 @@ On Windows, use **Settings… → Folder Shortcuts**, the **Shortcuts** step in 
 Record a combination and choose **Quick Note** or **Start Session**. Built-in and duplicate combinations
 are rejected; combinations already registered by another app show a conflict. Quick Note folders are
 relative to the selected notes folder. Start Session folders are relative to `Sessions/`; each invocation
-starts a new session with an automatic name in that folder.
+asks for a session name, then creates or resumes that session in the configured folder. Suggestions only
+include sessions in that folder. A name is required; cancelling or submitting a blank name leaves the
+current session unchanged.
 
 A folder quick note saves in its configured folder even while another session is active. An explicit
 Browse destination takes precedence over the folder, and the folder takes precedence over the active

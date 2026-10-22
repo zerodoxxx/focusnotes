@@ -326,18 +326,47 @@ final class AppController: NSObject, NSMenuDelegate {
                     guard await controller.closePanels() else { return }
                     await controller.waitForCommits()
                     guard !controller.isTerminating else { return }
-                    do { _ = try await controller.startFolderSession(in: folder) }
-                    catch { controller.report(error, title: "Couldn't start folder session") }
+                    let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
+                        .filter { Self.sessionPath($0.path, isIn: folder) }
+                    controller.presentInput(placeholder: "Session name", title: "Start Session",
+                        secondary: "In Sessions/\(folder.rawValue)", suggestions: suggestions,
+                        suggestionValue: { "/" + $0.path },
+                        onSubmit: { [weak controller] name in
+                            guard !NoteTitle.cleanTitle(name).isEmpty else { return }
+                            controller?.enqueue { controller in
+                                _ = controller.commitPending()
+                                await controller.waitForCommits()
+                                guard !controller.isTerminating else { return }
+                                do {
+                                    if let selected = suggestions.first(where: { "/" + $0.path == name }),
+                                       Self.sessionPath(selected.path, isIn: folder) {
+                                        _ = try await controller.resumeSession(SessionCandidate(name: selected.title,
+                                            notePath: selected.path, modifiedAt: selected.modified))
+                                    } else {
+                                        _ = try await controller.startFolderSession(name: name, in: folder)
+                                    }
+                                }
+                                catch SessionStoreError.ambiguous(let candidates) {
+                                    controller.presentSessionCandidates(candidates.filter { Self.sessionPath($0.notePath, isIn: folder) })
+                                } catch { controller.report(error, title: "Couldn't start folder session") }
+                            }
+                        }, onCancel: {})
                 }
             }
         } catch { report(error, title: "Couldn't use folder shortcut") }
     }
 
     @discardableResult
-    func startFolderSession(in folder: NoteFolder) async throws -> Session {
+    func startFolderSession(name: String, in folder: NoteFolder) async throws -> Session {
+        guard !NoteTitle.cleanTitle(name).isEmpty else { throw NotePathNameError.emptyPath }
         try await pipeline.recoverSessionIdentity()
-        let session = try await pipeline.sessions.start(in: folder)
+        let session = try await pipeline.sessions.start(name: name, in: folder)
         return try await activateSession(session)
+    }
+
+    static func sessionPath(_ path: String, isIn folder: NoteFolder) -> Bool {
+        let parent = (path as NSString).deletingLastPathComponent
+        return parent.caseInsensitiveCompare("Sessions/\(folder.rawValue)") == .orderedSame
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
@@ -672,6 +701,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func presentInput(placeholder: String, title: String? = nil, secondary: String? = nil,
                               suggestions: [NoteSuggestion],
+                              suggestionValue: ((NoteSuggestion) -> String?)? = nil,
                               onAccept: ((String) -> Void)? = nil,
                               onSubmit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         guard !isTerminating else { return }
@@ -687,7 +717,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 let pathDetail = session ? "\(detail) · \($0.path)" : detail
                 return Suggestion(title: $0.title,
                                   secondary: pathDetail,
-                                  symbolName: session ? "record.circle" : "doc.text")
+                                  symbolName: session ? "record.circle" : "doc.text",
+                                  value: suggestionValue?($0))
             }
         }, onAccept: onAccept, onSubmit: { [weak self] text in
             self?.inputClosed()

@@ -73,7 +73,7 @@ final class FolderShortcutsPanel: NSObject, NSWindowDelegate {
         root.spacing = 12
         root.translatesAutoresizingMaskIntoConstraints = false
         let explanation = NSTextField(wrappingLabelWithString:
-            "Quick notes use folders inside your notes folder. Sessions use Sessions/<folder> and get an automatic name. Enter a relative folder such as Work/Projects. Explicitly choosing a note overrides the shortcut folder.")
+            "Quick notes use folders inside your notes folder. Start Session asks for a name, then creates or resumes it in Sessions/<folder>. Enter a relative folder such as Work/Projects. Explicitly choosing a note overrides the shortcut folder.")
         root.addArrangedSubview(explanation)
         let hint = NSTextField(wrappingLabelWithString:
             "Record a shortcut with ⌘, ⌃, or ⌥ (optionally ⇧). Press Escape to stop recording. Built-in shortcuts are reserved.")

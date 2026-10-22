@@ -570,7 +570,14 @@ public sealed class CaptureCoordinator
     // Sessions.
     public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.Start(name)));
 
-    public Task<Session> StartFolderSessionAsync(string folder) => Task.Run(() => ActivateSession(Pipeline.Sessions.StartInFolder(new NoteFolder(folder))));
+    public Task<Session> StartFolderSessionAsync(string folder, string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.StartInFolder(new NoteFolder(folder), name)));
+
+    public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
+    {
+        var parent = "Sessions/" + new NoteFolder(folder).RawValue;
+        return (await SuggestionSnapshotAsync(true).ConfigureAwait(false)).Where(s =>
+            string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
 
     public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.Sessions.Resume(candidate)));
 
