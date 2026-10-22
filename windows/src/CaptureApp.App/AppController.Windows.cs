@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows;
 using CaptureApp.AppCore;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
@@ -179,9 +180,70 @@ internal sealed partial class AppController
 
     internal bool ApplyClipboardFallback(bool enabled) => TrySave(() => Settings.ClipboardFallback = enabled);
 
-    internal bool SaveNotesFolder(string folder) => TrySave(() => Settings.NotesFolder = folder);
+    internal bool SaveNotesFolder(string folder, out string? error)
+    {
+        string path;
+        try { path = NotesFolderChoice.Probe(folder); }
+        catch (Exception failure) when (NotesFolderPicker.IsFolderError(failure))
+        {
+            error = $"Can't write to that folder: {failure.Message}";
+            return false;
+        }
+
+        if (!TrySave(() => Settings.NotesFolder = path))
+        {
+            error = Strings.CouldNotSaveSettings;
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private bool choosingNotesFolder;
+
+    internal string? PickNotesFolder(Window? owner, string initialFolder, out string? error, bool appliesOnRestart = true)
+    {
+        error = null;
+        if (choosingNotesFolder) { return null; }
+        choosingNotesFolder = true;
+        try
+        {
+            return NotesFolderPicker.Choose(owner, initialFolder, appliesOnRestart);
+        }
+        catch (Exception failure) when (NotesFolderPicker.IsFolderError(failure))
+        {
+            error = $"Couldn't open the folder picker: {failure.Message}";
+            return null;
+        }
+        finally { choosingNotesFolder = false; }
+    }
+
+    private void ChooseNotesFolder()
+    {
+        var folder = PickNotesFolder(null, CurrentNotesFolder, out var error);
+        if (folder is null)
+        {
+            if (error is not null) { Coordinator.ShowToast(new(AppToastStyle.Warning, "Couldn't choose notes folder", error)); }
+            return;
+        }
+
+        if (!SaveNotesFolder(folder, out error))
+        {
+            Coordinator.ShowToast(new(AppToastStyle.Warning, "Couldn't change notes folder", error));
+            return;
+        }
+
+        Coordinator.ShowToast(new(AppToastStyle.Success, "Notes folder saved", NotesFolderChangeMessage, Duration: 8));
+    }
 
     internal string CurrentNotesFolder => Settings.NotesFolder ?? Path.Combine(Platform.Shell.KnownFolders.Documents, AppInfo.Name);
+
+    internal bool NotesFolderNeedsRestart => pipeline is not null && !NotesFolderChoice.SameFolder(CurrentNotesFolder, pipeline.Vault.Root);
+
+    internal string NotesFolderChangeMessage => NotesFolderNeedsRestart
+        ? "Restart the app to use this folder. Existing notes stay in their current folder."
+        : "This folder is already in use. Existing notes stay in place.";
 
     internal IReadOnlyList<CapabilityStatus> CapabilityTable() => Capabilities.Evaluate(new CapabilityInputs(
         Setup.ConsentAnswered,

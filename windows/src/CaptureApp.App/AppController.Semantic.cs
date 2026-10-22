@@ -37,7 +37,7 @@ internal sealed partial class AppController
             .Select(file => Path.Combine(models, file.Replace('/', Path.DirectorySeparatorChar))).ToArray();
         semantic = new SemanticIndexer(new VaultSemanticSource(pipeline.Index, pipeline.Vault),
             () => new EmbedClient(HelperPath(), models),
-            () => new VectorStore(Path.Combine(stateDirectory, "vectors.sqlite"), modelFiles: modelFiles),
+            () => new VectorStore(Path.Combine(pipeline.StateDirectory, "vectors.sqlite"), modelFiles: modelFiles),
             ModelsInstalled(models), () => power?.IsImageEmbeddingAllowed ?? true, log: new AppLog(stateDirectory, "semantic"));
         Coordinator.Semantic = semantic;
         EnsurePowerMonitor();

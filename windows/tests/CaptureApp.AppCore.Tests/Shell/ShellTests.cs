@@ -213,7 +213,7 @@ public sealed class TrayMenuTests
     public void DefaultOrderMatchesTheMacMenu()
     {
         Assert.Equal(["capture-selection", "capture-area", "capture-selection-outside-session", "capture-area-outside-session",
-            "search", "session", "write-note", "add-subheading", "-", "open-folder",
+            "search", "session", "write-note", "add-subheading", "-", "open-folder", "choose-folder",
             "semantic", "setup", "settings", "check-updates", "-", "quit"], Ids(TrayMenuBuilder.Build(State())));
     }
 
@@ -259,6 +259,8 @@ public sealed class TrayMenuTests
         Assert.Equal("Alt+Shift+F", items.Single(i => i.Id == MenuIds.Search).Shortcut);
         Assert.Equal("Enable Semantic Search…", items.Single(i => i.Id == MenuIds.Semantic).Title);
         Assert.Equal("Start Session…", TrayMenuBuilder.Build(State()).Single(i => i.Id == MenuIds.Session).Title);
+        Assert.Equal("Choose Notes Folder…", items.Single(i => i.Id == MenuIds.ChooseFolder).Title);
+        Assert.True(items.Single(i => i.Id == MenuIds.ChooseFolder).Enabled);
     }
 
     [Fact]

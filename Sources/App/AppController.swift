@@ -22,11 +22,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 let home = FileManager.default.homeDirectoryForCurrentUser
-                let root = UserDefaults.standard.string(forKey: "vaultPath").map {
-                    URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
-                } ?? home.appendingPathComponent("Documents").appendingPathComponent(AppInfo.name, isDirectory: true)
-                let state = home.appendingPathComponent("Library/Application Support").appendingPathComponent(AppInfo.bundleIdentifier, isDirectory: true)
-                let pipeline = try await CapturePipeline.open(vaultRoot: root, stateDirectory: state, calendar: .current)
+                let base = home.appendingPathComponent("Library/Application Support").appendingPathComponent(AppInfo.bundleIdentifier, isDirectory: true)
+                // Claim existing state before setup or recovery can select a different folder.
+                _ = try NotesFolder.stateDirectory(for: NotesFolder.configuredRoot(), base: base)
+                guard let root = NotesFolder.startupRoot() else { NSApp.terminate(nil); return }
+                let state = try NotesFolder.stateDirectory(for: root, base: base)
+                let pipeline = try await CapturePipeline.open(vaultRoot: root, stateDirectory: state, calendar: .current,
+                                                            modelsDirectory: base.appendingPathComponent("models", isDirectory: true))
                 let controller = AppController(pipeline: pipeline)
                 connectRelaunchHandler(to: controller)
                 self.controller = controller
@@ -1298,6 +1300,7 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.addItem(retry)
         menu.addItem(.separator())
         menu.addItem(menuItem("Open Notes Folder", hotkey: .openLibrary, action: #selector(menuOpenFolder)))
+        menu.addItem(menuItem("Choose Notes Folder…", action: #selector(menuChooseFolder)))
         let models = SemanticModelsMenu(
             semantic: pipeline.semantic, target: self,
             download: #selector(menuSemanticModels), remove: #selector(menuRemoveSemanticModels),
@@ -1443,6 +1446,7 @@ final class AppController: NSObject, NSMenuDelegate {
     @objc private func menuRetryShortcuts() { afterMenu { [weak self] in self?.registerHotkeys() } }
     @objc private func menuSession() { afterMenu { [weak self] in self?.toggleSession() } }
     @objc private func menuOpenFolder() { afterMenu { [weak self] in self?.openNotesFolder() } }
+    @objc private func menuChooseFolder() { afterMenu { [weak self] in self?.chooseNotesFolder() } }
     @objc private func menuSemanticModels() { afterMenu { [weak self] in self?.semanticModels?.activate() } }
     @objc private func menuRemoveSemanticModels() { afterMenu { [weak self] in self?.semanticModels?.confirmRemove() } }
     @objc private func menuAccessibility() {
@@ -1464,4 +1468,18 @@ final class AppController: NSObject, NSMenuDelegate {
     /// A run-loop perform, not a main-queue block: terminate's terminate-later wait must leave the main queue free for the shutdown tasks.
     @objc private func menuQuit() { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0) }
     private func openNotesFolder() { NSWorkspace.shared.open(pipeline.vault.root) }
+
+    private func chooseNotesFolder() {
+        guard !isTerminating, let selected = NotesFolder.choose(current: NotesFolder.configuredRoot()) else { return }
+        guard selected != pipeline.vault.root.standardizedFileURL.resolvingSymlinksInPath() else {
+            showToast(Toast(style: .success, title: "Notes folder saved", subtitle: selected.path))
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Restart to use the new notes folder"
+        alert.informativeText = "\(selected.path) will be used after restart. Until then, captures continue in the current folder. Existing notes stay in place."
+        alert.addButton(withTitle: "Restart Now")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { onRelaunchRequested?() }
+    }
 }

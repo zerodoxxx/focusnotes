@@ -21,6 +21,7 @@ public static class MenuIds
     public const string ShortcutStatus = "shortcut-status";
     public const string RetryShortcuts = "retry-shortcuts";
     public const string OpenFolder = "open-folder";
+    public const string ChooseFolder = "choose-folder";
     public const string Semantic = "semantic";
     public const string RemoveModels = "remove-models";
     public const string Setup = "setup";
@@ -87,6 +88,7 @@ public static class TrayMenuBuilder
 
         items.Add(MenuEntry.Separator);
         items.Add(Command(state, MenuIds.OpenFolder, Strings.MenuOpenFolder));
+        items.Add(new(MenuIds.ChooseFolder, Strings.MenuChooseFolder));
         items.Add(Semantic(state.Semantic));
         items.Add(new(MenuIds.Setup, Strings.MenuSetup));
         items.Add(new(MenuIds.Settings, Strings.MenuSettings));

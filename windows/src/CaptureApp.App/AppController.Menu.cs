@@ -147,6 +147,7 @@ internal sealed partial class AppController
             case MenuIds.AddSubheading: OpenSubheading(); break;
             case MenuIds.RetryShortcuts: RegisterHotkeys(); break;
             case MenuIds.OpenFolder: OpenNotesFolder(); break;
+            case MenuIds.ChooseFolder: ChooseNotesFolder(); break;
             case MenuIds.Semantic: ActivateSemanticMenu(); break;
             case MenuIds.RemoveModels: ConfirmRemoveModels(); break;
             case MenuIds.Setup: OpenSetup(manual: true); break;

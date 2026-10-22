@@ -133,14 +133,17 @@ Timestamps and source details are stored in HTML comments, so the visible text s
 Replication lag is the delay between a write on the leader and its visibility on followers.
 ```
 
-To use another folder, such as an Obsidian vault, set it and restart the app:
-
-```bash
-defaults write com.zerodoxxx.focusnotes vaultPath "~/Obsidian/Notes"
-```
+To use another folder, such as an Obsidian vault, choose **Choose Notes Folder…** from the
+menu-bar icon and select it in the system folder picker. The folder must be writable.
+Restart the app to use a change made from the menu. First launch offers the default notes
+folder or **Choose Notes Folder…**; a folder selected there is used immediately. Existing
+notes stay in their original folder and are not moved.
 
 App state (drafts, search index, pending saves, models) lives in
 `~/Library/Application Support/com.zerodoxxx.focusnotes`.
+Each notes folder keeps its own sessions, drafts, pending saves, pins and search index;
+returning to a previous folder restores that folder's state. Settings and downloaded models
+are shared across folders.
 
 ## Semantic search on macOS
 
@@ -185,7 +188,8 @@ installers are unsigned. Use the [Windows build instructions](CONTRIBUTING.md#wi
   Windows 11 a new tray icon may start in the overflow flyout; drag it out (Settings → Personalization → Taskbar →
   Other system tray icons).
 - **Setup on first launch.** A Setup window runs once: it explains what the app uses, asks two questions (the
-  clipboard fallback and automatic update checks), then checks the notes folder, registers and tests the shortcuts,
+  clipboard fallback and automatic update checks), then offers a folder picker and checks the notes folder,
+  registers and tests the shortcuts,
   and offers a selection and an area capture test, the tray icon, start at login and the semantic search pointer.
   Nothing is registered or captured until the first page is answered. Reopen it from the tray icon → **Setup…**.
   Windows has no permission prompts for these features, so Setup is where a problem shows up early.
@@ -219,9 +223,14 @@ After an upgrade, existing custom shortcuts take priority over new defaults. Set
 
 | What | Location |
 | --- | --- |
-| Notes | `Documents\focusnotes` (override in **Settings… → General → Notes folder**; applies after a restart) |
+| Notes | `Documents\focusnotes` (change from **Choose Notes Folder…** in the tray menu, **Setup…**, or **Settings… → General → Notes folder**; applies after a restart) |
 | App state (settings, drafts, search index, pending saves, models, logs) | `%LocalAppData%\com.zerodoxxx.focusnotes` |
 | The installed app | `%LocalAppData%\focusnotes-win-<arch>` (per user, no administrator rights needed) |
+
+The folder picker uses the native Windows dialog and checks that the selected folder is writable before saving.
+Changing folders leaves existing notes in their original location. Sessions, drafts, pending saves, pins and
+search indexes belong to each notes folder and are retained when you switch back. Settings and downloaded
+models are shared across folders.
 
 The notes are the same plain Markdown files as on the Mac, so a vault can be shared between the two. Uninstalling
 removes only the installed app; your notes and app state stay.

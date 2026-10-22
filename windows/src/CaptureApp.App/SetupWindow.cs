@@ -1,6 +1,5 @@
 using CaptureApp.AppCore;
 using System.ComponentModel;
-using System.IO;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Automation;
@@ -326,31 +325,31 @@ internal sealed class SetupWindow : Window
     // Step 1.
     private void NotesFolder(StackPanel body)
     {
-        body.Children.Add(UiKit.Text("Captures are saved as Markdown in this folder. The default is inside Documents.", 13, false, "TextPrimary", 8));
+        body.Children.Add(UiKit.Text("Captures are saved as Markdown in this folder. The default is inside Documents. Changes take effect after restarting; existing notes stay in their current folder.", 13, false, "TextPrimary", 8));
         var path = new TextBox { Text = controller.CurrentNotesFolder, Margin = new Thickness(0, 4, 8, 4), MinWidth = 380 };
-        var result = UiKit.Text("", 12, false, "Secondary");
+        var result = UiKit.Text(controller.NotesFolderNeedsRestart ? controller.NotesFolderChangeMessage : "", 12, false, "Secondary");
         void Check()
         {
             var folder = path.Text.Trim();
-            var probe = AppController.ProbeNotesFolder(folder);
             var notes = new List<string>();
             if (IsOneDrive(folder)) { notes.Add("This folder is backed up by OneDrive. If files are online-only, indexing may be slow until they are downloaded; consider \"Always keep on this device\"."); }
-            if (!probe.Ok)
+            if (!controller.SaveNotesFolder(folder, out var error))
             {
-                var detail = $"Can't write to this folder: {probe.Cause}";
+                var detail = error ?? Strings.CouldNotSaveSettings;
                 if (IsProtectedFolder(folder)) { detail += " Controlled folder access in Windows Security may be blocking this app. Allow it under Windows Security → Virus & threat protection → Ransomware protection → Allow an app. Until then captures are kept safely in the app's recovery folder."; }
                 Mark(SetupStepId.NotesFolder, SetupStatus.Failed, detail);
                 result.SetResourceReference(TextBlock.ForegroundProperty, "Warning");
                 result.Text = string.Join("\n", notes.Prepend(detail));
-                Go(current);
+                RenderList();
+                status.Text = StatusText(SetupStepId.NotesFolder);
                 return;
             }
 
-            var changed = !string.Equals(Path.GetFullPath(folder), Path.GetFullPath(controller.CurrentNotesFolder), StringComparison.OrdinalIgnoreCase);
-            if (!controller.SaveNotesFolder(folder)) { result.Text = Strings.CouldNotSaveSettings; return; }
+            path.Text = controller.CurrentNotesFolder;
+            var changed = controller.NotesFolderNeedsRestart;
             Mark(SetupStepId.NotesFolder, SetupStatus.Passed, changed ? "Applied on restart" : null);
             result.SetResourceReference(TextBlock.ForegroundProperty, "Secondary");
-            result.Text = string.Join("\n", notes.Prepend(changed ? "The folder is writable. It takes effect after you restart the app." : "The folder is writable."));
+            result.Text = string.Join("\n", notes.Prepend(changed ? controller.NotesFolderChangeMessage : "The folder is writable."));
             RenderList();
             status.Text = StatusText(SetupStepId.NotesFolder);
         }
@@ -359,8 +358,9 @@ internal sealed class SetupWindow : Window
         body.Children.Add(UiKit.Row(
             UiKit.Button("Choose another folder…", () =>
             {
-                var dialog = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Directory.Exists(path.Text) ? path.Text : null };
-                if (dialog.ShowDialog(this) == true) { path.Text = dialog.FolderName; Check(); }
+                var selected = controller.PickNotesFolder(this, path.Text, out var error);
+                if (selected is not null) { path.Text = selected; Check(); }
+                else if (error is not null) { result.Text = error; }
             }),
             UiKit.Button("Check again", Check, true)));
         body.Children.Add(result);
