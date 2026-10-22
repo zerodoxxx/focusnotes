@@ -84,13 +84,40 @@ internal sealed partial class AppController : IDisposable
         try
         {
             var root = Settings.NotesFolder ?? Path.Combine(KnownFolders.Documents, AppInfo.Name);
+            // Reserve legacy recovery/session state for the original folder before a recovery choice is saved.
+            _ = await Task.Run(() => StatePaths.ForNotesFolder(stateDirectory, root)).ConfigureAwait(true);
+            while (true)
+            {
+                var folder = await Task.Run(() => ProbeNotesFolder(root)).ConfigureAwait(true);
+                if (folder.Ok) { break; }
+                var choice = MessageBox.Show($"{AppInfo.Name} can't write to this notes folder:\n\n{root}\n\n{folder.Cause}\n\nChoose another folder to continue. Existing notes stay in their current folder.",
+                    Strings.NotesFolderUnavailableTitle, MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                if (choice != MessageBoxResult.OK) { app.Shutdown(); return; }
+                var selected = PickNotesFolder(null, root, out var error, appliesOnRestart: false);
+                if (selected is null)
+                {
+                    if (error is not null) { MessageBox.Show(error, AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning); }
+                    app.Shutdown();
+                    return;
+                }
+
+                if (!SaveNotesFolder(selected, out error))
+                {
+                    MessageBox.Show(error, AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+                    continue;
+                }
+
+                root = CurrentNotesFolder;
+            }
+
             var models = Path.Combine(stateDirectory, "models");
-            pipeline = await Task.Run(() => CapturePipeline.Open(root, stateDirectory, TimeZoneInfo.Local, models)).ConfigureAwait(true);
+            pipeline = await Task.Run(() => CapturePipeline.Open(root,
+                StatePaths.ForNotesFolder(stateDirectory, root), TimeZoneInfo.Local, models)).ConfigureAwait(true);
         }
         catch (Exception error)
         {
             log.Error($"Startup failed ({error.GetType().Name}): {error}");
-            MessageBox.Show($"{AppInfo.Name} couldn't open its notes folder.\n\n{error.Message}\n\nChoose another folder in Settings after the next launch, or fix the folder's permissions.",
+            MessageBox.Show($"{AppInfo.Name} couldn't start.\n\n{error.Message}\n\nYour notes and app state were left in place. Check the folder and app-state permissions before trying again.",
                 AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
             app.Shutdown();
             return;
@@ -174,13 +201,10 @@ internal sealed partial class AppController : IDisposable
     {
         try
         {
-            Directory.CreateDirectory(folder);
-            var probe = Path.Combine(folder, ".probe-" + Guid.NewGuid().ToString("N") + ".tmp");
-            File.WriteAllText(probe, "ok");
-            File.Delete(probe);
+            _ = NotesFolderChoice.Probe(folder);
             return (true, null);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception error) when (NotesFolderPicker.IsFolderError(error))
         {
             return (false, error.Message);
         }

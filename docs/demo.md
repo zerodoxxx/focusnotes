@@ -99,11 +99,17 @@ card, and return keyboard input to the clicked app. Explicitly closing a panel r
 previous window. Opening
 notes, Finder, or System Settings intentionally switches to those apps.
 
-Notes default to `~/Documents/<app display name>/`. A `vaultPath` string in the
-app's UserDefaults overrides this. Session state and the disposable search cache
-live at `~/Library/Application Support/<bundle identifier>/`. Read the display
+Notes default to `~/Documents/<app display name>/`. Choose **Choose Notes Folder…**
+from the menu-bar icon to select another writable folder, such as an existing Obsidian vault,
+then restart the app. First launch offers the default folder or **Choose Notes Folder…**,
+and uses a folder selected there immediately. Existing notes stay where they are; the app
+does not move them. The choice is saved as `vaultPath` in UserDefaults.
+Session state and the disposable search cache live at
+`~/Library/Application Support/<bundle identifier>/`. Read the display
 name and bundle identifier from the built app's `Contents/Info.plist` (the source
-configuration is `Config/app.env`). To reset, quit the app, delete its notes folder
+configuration is `Config/app.env`). Each notes folder retains its own sessions, drafts,
+pending saves, pins and search index when switching folders; settings and downloaded
+models remain shared. To reset, quit the app, delete its notes folder
 and state directory, then run `scripts/run-app.sh` again; this deletes your notes
 and assets. System Settings permission grants remain in place.
 

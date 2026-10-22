@@ -8,6 +8,7 @@ import CaptureKit
 func checkAppReliability() async throws {
     try checkUnavailableShortcutMenu()
     try checkRelaunchLifecycle()
+    try await checkNotesFolder()
     try await checkChangesDuringInitialScan()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()

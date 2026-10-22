@@ -48,6 +48,32 @@ activating the host. Use the same signing identity across rebuilds.
 Permission and focus behavior require this signed host; `CaptureChecks` needs no
 privacy grants and uses a private named pasteboard, never the general pasteboard.
 
+# Choosing the notes folder
+
+Use disposable folders with distinguishable Markdown notes; keep a copy of the current folder setting.
+Run these checks on macOS and Windows, using the menu-bar icon or tray icon respectively.
+
+1. **Native picker:** Choose **Choose Notes Folder…**, select a writable folder with an existing note, and confirm
+   the app explains that the choice applies after restarting. Before restarting, captures still use the current
+   folder. After restarting, Open Notes Folder opens the selected folder, its existing note appears in search,
+   and a new capture is written there. Notes in the previous folder remain intact.
+2. **Cancellation:** Reopen the picker and cancel it. Restart and confirm the previously saved folder is still used.
+3. **Unwritable folder:** Select a folder the app cannot write to. Confirm an error appears and the saved choice
+   remains unchanged. Repeat with a folder that becomes unavailable between selection and saving.
+4. **Unavailable at startup:** Save a disposable notes folder, quit the app, then make that folder inaccessible before
+   relaunching. Confirm the app offers a native folder picker to select a replacement before starting captures.
+   Cancel or quit once, then relaunch and choose another writable folder. Confirm the original notes and
+   app state remain intact; restoring access and selecting the original folder restores its state.
+5. **First launch:** With a disposable fresh app profile, confirm onboarding offers the same native folder picker.
+   On macOS, keep the default once, then repeat with **Choose Notes Folder…** and confirm the custom folder is
+   used immediately. On Windows, choose a custom folder from **Setup…**, restart when indicated and confirm it is
+   used. Also repeat the selection through **Settings… → General → Notes folder**.
+6. **State isolation:** Leave an active session, a draft and a pinned note in the original folder, then choose another
+   folder and restart. Confirm the session, draft and pin do not appear in the other folder. Switch back and restart:
+   the original state is restored. Repeat with a journaled pending save; it is retried only in its original folder.
+   Confirm settings and installed semantic models remain available across both folders.
+7. Restore the original folder setting and restart. Confirm the test did not move or delete notes from either folder.
+
 # Folder paths and external notes
 
 Use a temporary vault and a disposable test folder under your home directory.

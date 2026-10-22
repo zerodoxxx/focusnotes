@@ -142,6 +142,7 @@ public static class Strings
     public const string MenuAddSubheading = "Add Subheading…";
     public const string MenuRetryShortcuts = "Retry Shortcuts";
     public const string MenuOpenFolder = "Open Notes Folder";
+    public const string MenuChooseFolder = "Choose Notes Folder…";
     public const string MenuSetup = "Setup…";
     public const string MenuSettings = "Settings…";
     public const string MenuCheckUpdates = "Check for Updates…";

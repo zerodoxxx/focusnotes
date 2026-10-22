@@ -1,4 +1,3 @@
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -73,22 +72,24 @@ internal sealed class SettingsWindow : Window
 
         panel.Children.Add(UiKit.Text("Notes folder", 13, true));
         var folder = new TextBox { Text = controller.CurrentNotesFolder, MinWidth = 380, Margin = new Thickness(0, 4, 8, 4) };
-        var folderMessage = UiKit.Secondary("Changes are applied on restart.");
+        var folderMessage = UiKit.Secondary(controller.NotesFolderNeedsRestart
+            ? controller.NotesFolderChangeMessage
+            : "Changes are applied on restart. Existing notes stay in their current folder.");
         void Apply()
         {
             var value = folder.Text.Trim();
-            var probe = AppController.ProbeNotesFolder(value);
-            if (!probe.Ok) { folderMessage.Text = $"Can't write to that folder: {probe.Cause}"; return; }
-            if (!controller.SaveNotesFolder(value)) { folderMessage.Text = Strings.CouldNotSaveSettings; return; }
-            folderMessage.Text = "Saved. The new folder is used after you restart the app.";
+            if (!controller.SaveNotesFolder(value, out var error)) { folderMessage.Text = error; return; }
+            folder.Text = controller.CurrentNotesFolder;
+            folderMessage.Text = controller.NotesFolderChangeMessage;
         }
 
         panel.Children.Add(folder);
         panel.Children.Add(UiKit.Row(
             UiKit.Button("Choose…", () =>
             {
-                var dialog = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Directory.Exists(folder.Text) ? folder.Text : null };
-                if (dialog.ShowDialog(this) == true) { folder.Text = dialog.FolderName; Apply(); }
+                var selected = controller.PickNotesFolder(this, folder.Text, out var error);
+                if (selected is not null) { folder.Text = selected; Apply(); }
+                else if (error is not null) { folderMessage.Text = error; }
             }),
             UiKit.Button("Save", Apply)));
         panel.Children.Add(folderMessage);
