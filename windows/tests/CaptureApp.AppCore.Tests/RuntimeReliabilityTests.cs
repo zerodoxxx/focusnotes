@@ -13,16 +13,17 @@ public sealed class RuntimeReliabilityTests
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         using var temp = new TempDirectory();
+        var pipeName = "captureapp-test-" + Guid.NewGuid().ToString("N");
         var showReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using (var first = await SingleInstance.StartAsync(temp.Path, () => showReceived.TrySetResult(), cancellationToken))
+        await using (var first = await SingleInstance.StartAsync(temp.Path, pipeName, () => showReceived.TrySetResult(), cancellationToken))
         {
             Assert.NotNull(first);
-            var second = await SingleInstance.StartAsync(temp.Path, cancellationToken: cancellationToken);
+            var second = await SingleInstance.StartAsync(temp.Path, pipeName, cancellationToken: cancellationToken);
             Assert.Null(second);
             await showReceived.Task.WaitAsync(TimeSpan.FromSeconds(4), cancellationToken);
         }
 
-        await using var replacement = await SingleInstance.StartAsync(temp.Path, cancellationToken: cancellationToken);
+        await using var replacement = await SingleInstance.StartAsync(temp.Path, pipeName, cancellationToken: cancellationToken);
         Assert.NotNull(replacement);
     }
 
