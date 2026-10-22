@@ -248,6 +248,8 @@ public sealed class OutsideSessionTests
         var saved = Assert.IsType<SavedCapture>(await coordinator.AddNoteAsync(draft, picked, outsideSession: browseRetry || !firstOutside));
         Assert.Equal(picked?.Url ?? (firstOutside ? pipeline.Vault.ManagedUrl(session.NotePath) : biologyUrl), saved.Destination.Url);
         Assert.NotEqual(failed.Prepared.Capture.Id, saved.CaptureId);
+        // Shutdown must not retain and later commit the superseded prepared job.
+        Assert.True(await coordinator.BeginTermination());
         Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
         Assert.Empty(pipeline.Journal.RecordPaths());
         using var reopened = Open(temp);

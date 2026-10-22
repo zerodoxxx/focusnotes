@@ -2,6 +2,12 @@
 # Exercise Git range selection and hook installation without building or downloading dependencies.
 set -euo pipefail
 
+# Git exports repository-local variables to hooks. Clear them in this child
+# process before creating disposable repositories, or fixture Git commands can
+# change the caller's worktree, index, refs and shared configuration.
+git_local_env="$(git rev-parse --local-env-vars)"
+while IFS= read -r name; do unset "$name"; done <<< "$git_local_env"
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/focusnotes-hooks.XXXXXX")"
 trap 'rm -rf "$temp_root"' EXIT
@@ -16,7 +22,7 @@ unset CI GITHUB_ACTIONS
 mkdir -p "$fixture/scripts" "$fixture/.githooks" "$fixture/windows/src" "$fixture/Sources/Core" "$fake_bin"
 cp "$script_dir/check-local.sh" "$script_dir/check-performance.sh" "$script_dir/install-hooks.sh" "$fixture/scripts/"
 cp "$script_dir/../.githooks/pre-commit" "$script_dir/../.githooks/pre-push" "$fixture/.githooks/"
-for helper in test-local-hooks.sh test-app-path-safety.sh; do
+for helper in test-local-hooks.sh test-local-hooks-isolation.sh test-app-path-safety.sh; do
   printf '#!/usr/bin/env bash\nprintf "shell-check %%s\\n" "${0##*/}" >> "$HOOK_TEST_LOG"\n' > "$fixture/scripts/$helper"
 done
 printf '# CI selector fixture: executed through a fake Python command.\n' > "$fixture/scripts/test-ci-selection.py"
@@ -94,6 +100,7 @@ tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$tip" "$base"
 expect_line 'swift build'
+expect_line 'shell-check test-local-hooks-isolation.sh'
 expect_line 'python3 scripts/test-ci-selection.py'
 expect_line 'swift run --skip-build CoreChecks --skip-performance'
 expect_line 'swift run --skip-build CaptureChecks'
@@ -276,6 +283,7 @@ git config --local core.hooksPath custom-hooks
 if bash scripts/install-hooks.sh > "$temp_root/output" 2>&1; then echo 'Overwrote custom hooksPath.' >&2; exit 1; fi
 [[ "$(git config --local core.hooksPath)" == custom-hooks ]]
 git config --unset core.hooksPath
+mkdir -p .git/hooks
 printf '#!/usr/bin/env bash\nexit 0\n' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 if bash scripts/install-hooks.sh > "$temp_root/output" 2>&1; then echo 'Replaced an existing loose hook.' >&2; exit 1; fi

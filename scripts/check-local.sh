@@ -108,7 +108,7 @@ case "${1:---all}" in
   *) echo "Usage: bash scripts/check-local.sh [--all | --pre-push REMOTE URL]" >&2; exit 2 ;;
 esac
 
-bash scripts/test-local-hooks.sh
+bash scripts/test-local-hooks-isolation.sh
 python_command=''
 for candidate in python3 python; do
   if command -v "$candidate" >/dev/null 2>&1 &&
