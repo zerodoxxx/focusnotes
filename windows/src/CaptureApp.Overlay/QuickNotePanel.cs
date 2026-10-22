@@ -54,6 +54,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     private readonly TextBlock pin = Ui.Icon("pin.fill", "TextPrimary", Tokens.QuickTitlePinSize);
     private readonly KeycapView actionsHint = new("Ctrl+K", "Actions"), closeHint = new("Esc", "Close");
     private KeycapView saveHint = new("Ctrl+↩", "Create note");
+    private string saveCaption = "Create note";
     private readonly bool restoredDraft;
     private readonly DispatcherTimer measureTimer = new() { Interval = TimeSpan.FromMilliseconds(Tokens.MeasureQuietMilliseconds) };
     private readonly ThemeManager quickNoteTheme;
@@ -66,13 +67,22 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     public MarkdownEditor Editor { get; } = new();
     public string? Destination => destination;
     public bool IsPinned => isPinned;
+    /// <summary>True when a default save appends by typed name, with no session or Browse destination.</summary>
+    public bool AppendsToExisting { get; private set; }
     public Func<IReadOnlyList<BrowseItem>> BrowseItems { get; set; } = () => [];
     private Func<string, string> titleForText = QuickNoteHandlers.DefaultTitle;
     private bool constructed;
     public Func<string, string> TitleForText
     {
         get => titleForText;
-        set { titleForText = value; if (constructed) { UpdateTitle(); LayoutTitle(Width); } }
+        set { titleForText = value; if (constructed) { UpdateTitle(); Remeasure(); } }
+    }
+    private Func<string, string?> existingTitleForText = _ => null;
+    /// <summary>The existing note title named by the draft, using the host's save resolver.</summary>
+    public Func<string, string?> ExistingTitleForText
+    {
+        get => existingTitleForText;
+        set { existingTitleForText = value; if (constructed) { UpdateTitle(); Remeasure(); } }
     }
     /// <summary>Height available to a card below the top of the note; the host recomputes it from the screen.</summary>
     public Func<double>? CardHeightProvider { get; set; }
@@ -137,25 +147,39 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     {
         destination = value; isPinned = pinned;
         pin.Visibility = pinned ? Visibility.Visible : Visibility.Collapsed;
-        RebuildSaveHint(); UpdateTitle();
+        UpdateTitle();
         Remeasure(); // The caption can raise the minimum width.
     }
-    private void RebuildSaveHint()
+    private void RebuildSaveHint(string caption)
     {
+        if (saveCaption == caption) return;
+        saveCaption = caption;
         footer.Children.Remove(saveHint);
-        saveHint = new KeycapView("Ctrl+↩", destination is null ? "Create note" : "Add to note");
+        saveHint = new KeycapView("Ctrl+↩", caption);
         footer.Children.Add(saveHint);
     }
     /// <summary>Destination title, else the title the text will be saved under, else a placeholder name.</summary>
     private void UpdateTitle()
     {
         var text = Editor.Head(4_000); var value = destination ?? Tokens.QuickEmptyTitle;
+        var appends = destination is not null;
         if (destination is null && text.TakeWhile(char.IsWhiteSpace).Count() is var first && first < text.Length)
         {
             // Only the head of the note can name it, so keep this cheap for long drafts.
-            var named = titleForText(text.Substring(first, Math.Min(2_000, text.Length - first)));
-            if (named.Length > 0) value = named;
+            var head = text.Substring(first, Math.Min(2_000, text.Length - first));
+            if (existingTitleForText(head) is { Length: > 0 } existing)
+            {
+                value = existing;
+                appends = true;
+            }
+            else
+            {
+                var named = titleForText(head);
+                if (named.Length > 0) value = named;
+            }
         }
+        AppendsToExisting = destination is null && appends;
+        RebuildSaveHint(appends ? "Add to note" : "Create note");
         title.Text = value;
         AutomationProperties.SetName(title, value);
     }
@@ -299,6 +323,10 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 if (Editor.TextLength > 0) Editor.Replace(0, Editor.TextLength, ""); // Undoable; raises TextChanged.
                 break;
             case NoteActionId.Browse: ToggleBrowse(); break;
+            case NoteActionId.SaveAsNewNote:
+                if (AppendsToExisting) ActionRequested?.Invoke(id);
+                else SaveRequested?.Invoke(); // Nothing to escape: use the default save.
+                break;
             default: ActionRequested?.Invoke(id); break;
         }
     }
@@ -307,7 +335,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     {
         if (card is NoteActionMenuView) return;
         DetachCard();
-        var menu = new NoteActionMenuView(ActionItem.Standard(isPinned, Editor.TextLength > 0), query, selectedIndex);
+        var menu = new NoteActionMenuView(ActionItem.Standard(isPinned, Editor.TextLength > 0, AppendsToExisting), query, selectedIndex);
         menu.Run += id => { HideActions(); Perform(id); };
         menu.CloseRequested += HideActions;
         Attach(menu);
@@ -403,7 +431,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
 
     // MARK: Keys
 
-    private static NoteActionId? ShortcutAction(Key key, ModifierKeys modifiers)
+    internal static NoteActionId? ShortcutAction(Key key, ModifierKeys modifiers)
     {
         var ctrl = modifiers == ModifierKeys.Control; var shift = modifiers == (ModifierKeys.Control | ModifierKeys.Shift);
         return key switch
@@ -414,10 +442,11 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
             Key.N when ctrl => NoteActionId.NewNote,
             Key.O when ctrl => NoteActionId.OpenAsNote,
             Key.Back when shift => NoteActionId.DiscardDraft,
+            Key.Enter when modifiers == (ModifierKeys.Control | ModifierKeys.Alt) => NoteActionId.SaveAsNewNote,
             _ => null
         };
     }
-    /// <summary>Panel-level keys (window preview): Ctrl+Enter, Ctrl+K/P/N/O, Ctrl+Shift+P/C/Backspace and the open card's keys.</summary>
+    /// <summary>Panel-level keys (window preview): Ctrl+Enter, Ctrl+Alt+Enter, Ctrl+K/P/N/O, Ctrl+Shift+P/C/Backspace and the open card's keys.</summary>
     public bool HandleKey(KeyEventArgs e)
     {
         if (e.Key == Key.ImeProcessed) return false;
@@ -438,8 +467,8 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
             }
             if (key == Key.Escape || key == Key.K && modifiers == ModifierKeys.Control) { HideCard(); return true; }
         }
-        if (!modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt)) return false;
         if (ShortcutAction(key, modifiers) is { } action) { Perform(action); return true; }
+        if (!modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt)) return false;
         switch (key)
         {
             case Key.K when modifiers == ModifierKeys.Control: ToggleActions(); return true;
@@ -470,7 +499,9 @@ public sealed class QuickNoteController
         var monitor = MonitorGeometry.UnderPointer();
         var content = new QuickNoteView(destination, isPinned, draft, draft.Length > 0)
         {
-            TitleForText = handlers.TitleForText ?? QuickNoteHandlers.DefaultTitle, BrowseItems = handlers.BrowseItems, WorkAreaHeight = monitor.WorkArea.Height
+            TitleForText = handlers.TitleForText ?? QuickNoteHandlers.DefaultTitle,
+            ExistingTitleForText = handlers.ExistingTitleForText ?? (_ => null),
+            BrowseItems = handlers.BrowseItems, WorkAreaHeight = monitor.WorkArea.Height
         };
         var window = new OverlayWindow(content) { IsSticky = true, IsMovable = true, PositionStore = PositionStore };
         panel = window; view = content;
@@ -504,6 +535,9 @@ public sealed class QuickNoteController
                     break;
                 case NoteActionId.OpenAsNote:
                     if (window.Dismiss()) handlers.OnOpenAsNote(text);
+                    break;
+                case NoteActionId.SaveAsNewNote:
+                    if (window.Dismiss()) (handlers.OnSaveAsNew ?? handlers.OnSubmit)(text);
                     break;
                 case NoteActionId.Pin: content.SetDestination(content.Destination, handlers.OnTogglePin()); break;
             }

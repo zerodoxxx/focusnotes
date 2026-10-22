@@ -59,6 +59,11 @@ func runChecks() throws {
 }
 
 do {
+    if CommandLine.arguments.contains("--performance-only") {
+        try await checkSearchIndexPerformance()
+        print("Core index performance checks passed.")
+        exit(EXIT_SUCCESS)
+    }
     if CommandLine.arguments.contains("--write-conformance") {
         try await checkConformance(writeExpected: true)
         exit(EXIT_SUCCESS)

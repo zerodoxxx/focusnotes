@@ -29,7 +29,7 @@ public static class Icons
         ["record.circle"] = "\uE7C8", ["doc.on.doc.fill"] = "\uE8C8", ["xmark"] = "\uE711",
         ["arrow.up.left.and.arrow.down.right"] = "\uE740", ["rectangle.on.rectangle.angled"] = "\uE8FD",
         ["square.on.square"] = "\uE8FD", ["plus"] = "\uE710", ["ellipsis"] = "\uE712",
-        ["pin.fill"] = "\uE718", ["pin"] = "\uE718", ["doc.on.doc"] = "\uE8C8", ["pin.slash"] = "\uE77A", ["trash"] = "\uE74D",
+        ["pin.fill"] = "\uE718", ["pin"] = "\uE718", ["doc.on.doc"] = "\uE8C8", ["pin.slash"] = "\uE77A", ["trash"] = "\uE74D", ["doc.badge.plus"] = "\uE8A5",
         ["folder"] = "\uE8B7", ["arrow.up.right.square"] = "\uE8A7", ["photo"] = "\uEB9F",
         ["arrow.triangle.2.circlepath"] = "\uE72C"
     };

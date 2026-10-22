@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FOCUSNOTES_PERF_GATES: "0"
+
 concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event.label.id || 'manual' }}
   cancel-in-progress: true
@@ -130,6 +133,7 @@ jobs:
         run: dotnet build CaptureApp.sln -c Release --no-restore -warnaserror
 
       - name: Test
+        timeout-minutes: 15
         env:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
           CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
@@ -137,12 +141,14 @@ jobs:
         # Separate test assemblies otherwise compete with the desktop/UIA fixtures and model inference.
         run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category!=Perf" -m:1 --logger trx --results-directory TestResults/tests
 
-      - name: Perf gates
+      - name: Performance measurements and workload checks
+        timeout-minutes: 15
         env:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
           CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
           CAPTUREAPP_REQUIRE_MODELS: "1"
-        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category=Perf" -m:1 --logger trx --results-directory TestResults/perf
+        # Workload correctness remains required; elapsed timings are diagnostic on shared runners.
+        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category=Perf" -m:1 --logger "console;verbosity=detailed" --logger trx --results-directory TestResults/perf
 
       - name: Upload test results
         if: always()

@@ -170,7 +170,7 @@ public sealed class NoteTests
         e.Vault.Prepare();
         var pending = CheckVault.Capture("Reserved title", CaptureContentKind.Note);
         var first = e.Service.PrepareNote(pending, CheckVault.Zone);
-        var next = e.Service.PrepareNote(pending with { Id = Guid.NewGuid() }, CheckVault.Zone);
+        var next = e.Service.PrepareNote(pending with { Id = Guid.NewGuid() }, CheckVault.Zone, newNote: true);
         Assert.Equal("Reserved title.md", Path.GetFileName(first.Destination.Url));
         Assert.Equal("Reserved title 2.md", Path.GetFileName(next.Destination.Url));
         var original = CheckVault.Capture("# rootnoteneedle\n\nBody **untouched**", CaptureContentKind.Note);

@@ -51,6 +51,7 @@ internal static class Program
         Directory.CreateDirectory(directory);
         CheckGeometry();
         CheckTaskEditing();
+        CheckQuickNoteSaveActions();
         var files = new List<string>();
         foreach (var dark in new[] { false, true })
         {
@@ -99,7 +100,7 @@ internal static class Program
         theme.Apply(false, false);
         await File.WriteAllLinesAsync(Path.Combine(directory, "states.txt"), files);
         CheckQuickNoteHighContrast();
-        await File.WriteAllTextAsync(Path.Combine(directory, "checks.txt"), $"PASS: {files.Count} PNGs; token geometry, 100%/150%/200% raster size, dark Quick Note palette, active-task typing/toggle/selection/undo/list keys, caret/checkbox alignment, text DesiredSize/bounds, high contrast, and position round trips. No windows created.\nFocus integration gates require the Windows UI harness (§3b-2).\n");
+        await File.WriteAllTextAsync(Path.Combine(directory, "checks.txt"), $"PASS: {files.Count} PNGs; token geometry, 100%/150%/200% raster size, dark Quick Note palette, typed-note append hints/save escape/destination precedence, active-task typing/toggle/selection/undo/list keys, caret/checkbox alignment, text DesiredSize/bounds, high contrast, and position round trips. No windows created.\nFocus integration gates require the Windows UI harness (§3b-2).\n");
         Console.WriteLine($"Gallery passed: {files.Count} PNGs in {directory}");
     }
     private static void CheckQuickNotePalette(QuickNoteView view)
@@ -160,6 +161,57 @@ internal static class Program
         Press(Key.Back);
         Require(editor.Text.EndsWith("\n  - ", StringComparison.Ordinal) && editor.RenderedCheckboxes == 2,
             "active task: Backspace at the body start removes the task marker and keeps the bullet");
+    }
+    private static void CheckQuickNoteSaveActions()
+    {
+        using var view = new QuickNoteView(null, false, "Trip planning\nBook the train", false)
+        {
+            ExistingTitleForText = text => text.StartsWith("Trip planning", StringComparison.Ordinal) ? "Trip planning" : null
+        };
+        var actions = new List<NoteActionId>();
+        var saves = 0;
+        view.ActionRequested += actions.Add;
+        view.SaveRequested += () => saves++;
+        string[] Texts() => LogicalDescendants(view).OfType<TextBlock>().Select(text => text.Text).ToArray();
+        void CheckEscapeEnabled(bool enabled)
+        {
+            view.ShowActions();
+            var button = LogicalDescendants(view).OfType<Button>()
+                .Single(item => System.Windows.Automation.AutomationProperties.GetName(item) == "Save as New Note");
+            Require(button.IsEnabled == enabled, "typed note: Save as New Note enabled state");
+            view.HideActions();
+        }
+
+        Require(view.AppendsToExisting && Texts().Contains("Trip planning") && Texts().Contains("Add to note"),
+            "typed note: a matching title shows its append destination and hint");
+        CheckEscapeEnabled(true);
+        view.Perform(NoteActionId.SaveAsNewNote);
+        Require(actions.SequenceEqual([NoteActionId.SaveAsNewNote]) && saves == 0,
+            "typed note: Save as New Note requests the escape instead of a default save");
+
+        foreach (var destination in new[] { "Session destination", "Browse destination" })
+        {
+            view.SetDestination(destination, false);
+            Require(!view.AppendsToExisting && Texts().Contains(destination) && Texts().Contains("Add to note"),
+                "typed note: an explicit destination overrides the typed match");
+            CheckEscapeEnabled(false);
+            view.Perform(NoteActionId.SaveAsNewNote);
+        }
+        Require(saves == 2 && actions.Count == 1, "typed note: explicit destinations keep the default save");
+
+        view.SetDestination(null, false);
+        Require(view.AppendsToExisting, "typed note: clearing a Browse destination restores typed matching");
+        view.Editor.SetText("An independent note\nBody");
+        Require(!view.AppendsToExisting && Texts().Contains("Create note"), "typed note: an unmatched title shows the create hint");
+        CheckEscapeEnabled(false);
+        view.Perform(NoteActionId.SaveAsNewNote);
+        Require(saves == 3 && actions.Count == 1, "typed note: an unmatched escape uses the default save");
+    }
+    private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)
+    {
+        yield return root;
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+            foreach (var descendant in LogicalDescendants(child)) yield return descendant;
     }
     // Routed keyboard events exercise the editor's real input handler without creating a native window.
     private sealed class GalleryInputSource : PresentationSource
@@ -292,7 +344,7 @@ internal static class Program
             case "toast": case "success": case "warning": case "session": case "copied":
                 var toast = new ToastController { OnExpire = Finish }; liveController = toast;
                 var style = Enum.TryParse<ToastStyle>(component, true, out var parsed) ? parsed : ToastStyle.Success;
-                toast.Show(new Toast(style, "Capture saved", "Added to System Design", new ToastHint("Ctrl+Alt+Shift+Q", "name"))); break;
+                toast.Show(new Toast(style, "Capture saved", "Added to System Design", new ToastHint("Alt+Shift+Q", "name"))); break;
             case "search":
                 var search = new SearchPanelController(); liveController = search;
                 search.Present((text, _) => Task.FromResult<IReadOnlyList<SearchSection>>(text.Length == 0 ? Fixtures.Recent : Fixtures.Matches.Where(s => s.Rows.Any(r => r.Title.Contains(text, StringComparison.OrdinalIgnoreCase))).ToArray()),

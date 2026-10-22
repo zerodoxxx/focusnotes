@@ -87,7 +87,7 @@ internal sealed partial class AppController
     {
         var zone = pipeline.TimeZone;
         void RefreshDestination() => quickNote.SetDestination(state.Destination?.Title, IsPinned(state.Destination, false));
-        Task<SavedCapture?> Save(string text) => c.AddNoteAsync(text, state.Destination, state.PinOnSave);
+        Task<SavedCapture?> Save(string text, bool newNote = false) => c.AddNoteAsync(text, state.Destination, state.PinOnSave, newNote);
 
         return new QuickNoteHandlers(
             OnDraft: text =>
@@ -193,7 +193,23 @@ internal sealed partial class AppController
                 pipeline.Drafts.ScheduleStore(text, blank ? false : state.PinOnSave,
                     error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)));
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
-            });
+            },
+            ExistingTitleForText: text =>
+            {
+                // Session and Browse destinations take precedence over typed-name matching, as in PrepareNote.
+                if (sessionDestination is not null || state.Destination is not null) return null;
+                try
+                {
+                    var note = new TypedNote(text, DateTimeOffset.Now, zone, pipeline.Vault.NamingRules);
+                    return CaptureService.AppendTarget(note, pipeline.Service.ReservedNoteUrls, pipeline.Vault)?.Title;
+                }
+                catch (Exception) { return null; } // Invalid or unavailable paths are reported when saving.
+            },
+            OnSaveAsNew: text => c.Enqueue(async inner =>
+            {
+                try { await Save(text, newNote: true); }
+                catch (Exception error) { inner.ReportUserSaveFailure(error, Strings.CouldNotAddNote); }
+            }));
     }
 
     private void OpenNote(string url)

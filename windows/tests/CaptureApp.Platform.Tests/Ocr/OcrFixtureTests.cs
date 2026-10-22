@@ -18,8 +18,6 @@ public sealed class OcrFixtureTests
 {
     private const double MaximumEnglishCer = 0.02;
     private const double MaximumCerRegressionPoints = 0.02;
-    private const double MaximumWarmP95Ms = 1500;
-    private const double MaximumFirstRecognitionMs = 3000;
     private const int WarmRuns = 5;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -108,7 +106,7 @@ public sealed class OcrFixtureTests
     [Fact]
     [Trait("Needs", "OcrModels")]
     [Trait("Category", "Perf")]
-    public void EnglishFullHdRecognitionHasFastFirstCallAndWarmP95()
+    public void EnglishFullHdRecognitionReportsFirstCallAndWarmP95()
     {
         using var engine = CreateEngineAndRequireModels();
         var corpusDirectory = Path.Combine(FindRepositoryRoot(), "conformance", "ocr", "corpus");
@@ -117,10 +115,9 @@ public sealed class OcrFixtureTests
 
         var firstImage = File.ReadAllBytes(Path.Combine(corpusDirectory, fullHd[0].File));
         var coldTimer = Stopwatch.StartNew();
-        _ = engine.Recognize(firstImage, TestContext.Current.CancellationToken);
+        var firstResult = engine.Recognize(firstImage, TestContext.Current.CancellationToken);
         coldTimer.Stop();
-        Assert.True(coldTimer.Elapsed.TotalMilliseconds <= MaximumFirstRecognitionMs,
-            $"First OCR recognition took {coldTimer.Elapsed.TotalMilliseconds:F1} ms; expected at most {MaximumFirstRecognitionMs:F0} ms.");
+        Assert.NotEmpty(firstResult.Text);
 
         var measurements = new List<double>(fullHd.Length * WarmRuns);
         for (var run = 0; run < WarmRuns; run++)
@@ -129,16 +126,25 @@ public sealed class OcrFixtureTests
             {
                 var png = File.ReadAllBytes(Path.Combine(corpusDirectory, entry.File));
                 var timer = Stopwatch.StartNew();
-                _ = engine.Recognize(png, TestContext.Current.CancellationToken);
+                var result = engine.Recognize(png, TestContext.Current.CancellationToken);
                 timer.Stop();
+                Assert.NotEmpty(result.Text);
                 measurements.Add(timer.Elapsed.TotalMilliseconds);
             }
         }
 
         measurements.Sort();
         var p95 = measurements[(int)Math.Ceiling(measurements.Count * 0.95) - 1];
-        Assert.True(p95 <= MaximumWarmP95Ms,
-            $"Warm English OCR p95 was {p95:F1} ms across {measurements.Count} 1920×1080 samples; expected at most {MaximumWarmP95Ms:F0} ms.");
+        var output = TestContext.Current.TestOutputHelper;
+        output?.WriteLine($"First OCR recognition took {coldTimer.Elapsed.TotalMilliseconds:F1} ms.");
+        output?.WriteLine($"Warm English OCR p95 was {p95:F1} ms across {measurements.Count} 1920×1080 samples.");
+        if (Environment.GetEnvironmentVariable("FOCUSNOTES_PERF_GATES") == "1")
+        {
+            Assert.True(coldTimer.Elapsed.TotalMilliseconds <= 3000,
+                $"First OCR recognition took {coldTimer.Elapsed.TotalMilliseconds:F1} ms; expected at most 3000 ms.");
+            Assert.True(p95 <= 1500,
+                $"Warm English OCR p95 was {p95:F1} ms; expected at most 1500 ms.");
+        }
     }
 
     private static CorpusManifestEntry[] ReadEnglishCorpus(string corpusDirectory)

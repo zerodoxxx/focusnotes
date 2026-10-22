@@ -152,6 +152,7 @@ func noteShortcutAction(for event: NSEvent) -> NoteActionID? {
     case 45: return .newNote
     case 31: return .openAsNote
     case 51 where shift: return .discardDraft
+    case 36 where flags.contains(.option), 76 where flags.contains(.option): return .saveAsNewNote // Return, keypad Enter
     default: return nil
     }
 }

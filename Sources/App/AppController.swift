@@ -745,8 +745,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 func noteID(_ destination: Destination?) -> String? {
                     destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
                 }
-                @MainActor func save(_ text: String, controller: AppController) async throws -> SavedCapture? {
-                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave)
+                @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
+                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote)
                 }
                 let initiallyPinned = noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 editor.present(destination: sessionDestination?.title, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
@@ -842,6 +842,18 @@ final class AppController: NSObject, NSMenuDelegate {
                             state.pinOnSave = false
                             editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
+                    },
+                    existingTitleForText: { text in
+                        // A session or Browse destination takes precedence over typed-name matching, as in prepareNote.
+                        guard sessionDestination == nil, state.destination == nil else { return nil }
+                        let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
+                        return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
+                    },
+                    onSaveAsNew: { [weak controller] text in
+                        controller?.enqueue { controller in
+                            do { _ = try await save(text, controller: controller, newNote: true) }
+                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                        }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
                     guard let controller else { return }
@@ -859,8 +871,9 @@ final class AppController: NSObject, NSMenuDelegate {
 
     /// Used by both ⌥⇧N and the permission-free self-test. Persist text before any
     /// suspension; failed saves retain the draft and the exact journaled identity.
+    /// `newNote` forces a new note (Save as New Note) even when the title names an existing one.
     @discardableResult
-    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false) async throws -> SavedCapture? {
+    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false) async throws -> SavedCapture? {
         guard !isTerminating else { return nil }
         try pipeline.drafts.store(rawText, pinOnSave: pinOnSave)
         let text = CaptureFormat.noteBody(rawText)
@@ -872,15 +885,28 @@ final class AppController: NSObject, NSMenuDelegate {
         _ = try await processedCommit?.value
         let pipeline = pipeline
         var retry: Task<CaptureJob, Error>?
-        for candidate in Array(preparedJobs.values) {
+        var superseded: [UUID: UUID] = [:]
+        for (key, candidate) in Array(preparedJobs) {
             guard let job = try? await candidate.value else { continue }
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
-                if destination == nil || job.prepared.destination == destination { retry = candidate; break }
+                if destination == nil || job.prepared.destination == destination {
+                    if newNote && job.prepared.createsNote != true {
+                        superseded[key] = job.prepared.capture.id
+                        continue
+                    }
+                    retry = candidate; break
+                }
             }
+        }
+        // Save as New Note replaces an earlier unsaved append of the same draft; drop it so a retry or replay can't also append.
+        // Remove from the journal first; on failure the draft is kept and the old job stays retryable.
+        for (key, id) in superseded {
+            try await pipeline.journal.remove(id: id)
+            preparedJobs.removeValue(forKey: key)
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = try await pipeline.service.prepareNote(capture, destination: destination, calendar: pipeline.calendar)
+            let prepared = try await pipeline.service.prepareNote(capture, destination: destination, newNote: newNote, calendar: pipeline.calendar)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText)
         }
         let preparedNote = try await preparation.value.prepared

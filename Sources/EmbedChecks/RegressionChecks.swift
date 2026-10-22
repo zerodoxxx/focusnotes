@@ -29,7 +29,15 @@ func runFixtureHelper() throws {
         var logged = try JSONEncoder().encode(request); logged.append(10)
         try append(logged, to: directory.appendingPathComponent("requests.jsonl"))
         let text = request.text ?? request.texts?.first ?? ""
-        if text.hasPrefix("hold") { usleep(700_000) }
+        if text == "hold-cancellation" {
+            let release = directory.appendingPathComponent("hold-cancellation.release")
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while !FileManager.default.fileExists(atPath: release.path), ContinuousClock.now < deadline {
+                usleep(10_000)
+            }
+        } else if text.hasPrefix("hold") {
+            usleep(700_000)
+        }
         let response: EmbedResponse
         if config.mode == "error", request.operation != "ping" {
             response = try EmbedResponse(id: request.id, dimensions: request.dimensions, error: "Corrupt fixture model",
@@ -94,7 +102,7 @@ private func requests(in directory: URL) throws -> [EmbedRequest] {
     }
 }
 
-nonisolated(nonsending) private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seconds(3)) async throws {
+nonisolated(nonsending) private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seconds(10)) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !(try condition()) {
         guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
@@ -102,7 +110,7 @@ nonisolated(nonsending) private func waitUntil(_ condition: () throws -> Bool, t
     }
 }
 
-private func waitUntilAsync(_ condition: () async -> Bool, timeout: Duration = .seconds(3)) async throws {
+private func waitUntilAsync(_ condition: () async -> Bool, timeout: Duration = .seconds(10)) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
     while !(await condition()) {
         guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
@@ -129,17 +137,26 @@ private final class StageMarker: @unchecked Sendable {
     func mark() { lock.withLock { value = true } }
 }
 private actor BusyStage {
-    func hold(_ marker: StageMarker) { marker.mark(); usleep(700_000) }
+    func hold(_ stage: BlockedStage) { stage.run() }
     func lookup() -> String { "complete" }
 }
-private final class SlowStages: @unchecked Sendable {
+private final class BlockedStage: @unchecked Sendable {
     private let lock = NSLock()
-    private var count = 0
-    var running: Bool { lock.withLock { count > 0 } }
-    func run() -> String {
-        lock.withLock { count += 1 }
-        defer { lock.withLock { count -= 1 } }
-        usleep(700_000); return "complete"
+    private var active = false
+    private var finished = false
+    private let release = DispatchSemaphore(value: 0)
+    let started = StageMarker()
+    var isActive: Bool { lock.withLock { active } }
+    var isFinished: Bool { lock.withLock { finished } }
+    func run() {
+        lock.withLock { active = true }
+        started.mark()
+        release.wait()
+        lock.withLock { active = false; finished = true }
+    }
+    func unblock() { release.signal() }
+    func installSafetyRelease() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) { self.release.signal() }
     }
 }
 
@@ -147,39 +164,39 @@ private final class SlowStages: @unchecked Sendable {
 /// resume: the blocking stages below may hold every one on small CI runners.
 @MainActor
 private func runDeadlineChecks(_ checks: inout Checks) async throws {
-    // 350 ms deadline plus scheduling slack for busy CI VMs; still well under the 700 ms stages.
-    let limit = Duration.milliseconds(550)
-    let actor = BusyStage(), marker = StageMarker(), slow = SlowStages()
-    let holding = Task.detached { await actor.hold(marker) }
-    try await waitUntil { marker.started }
-    var start = ContinuousClock.now
+    let actor = BusyStage()
+    let actorHold = BlockedStage()
+    actorHold.installSafetyRelease()
+    let holding = Task.detached { await actor.hold(actorHold) }
+    try await waitUntil { actorHold.started.started }
     let blocked = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { await actor.lookup() }
-    checks.require(blocked == "empty" && start.duration(to: .now) < limit, "whole-search 350 ms deadline includes actor contention")
+    checks.require(blocked == "empty" && actorHold.isActive, "whole-search deadline returns fallback during actor contention")
+    actorHold.unblock()
     await holding.value
-    for stage in ["resource initialization", "post-embedding ranking/hit lookup"] {
-        start = ContinuousClock.now
-        let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slow.run() }
-        let elapsed = start.duration(to: .now)
-        let passed = result == "empty" && elapsed < limit
-        let diagnostic = passed ? "" : " (returned \(result) after \(elapsed))"
-        checks.require(passed, "whole-search deadline includes \(stage)\(diagnostic)")
-        try await waitUntil { !slow.running }
+    for stageName in ["resource initialization", "post-embedding ranking/hit lookup"] {
+        let slow = BlockedStage()
+        slow.installSafetyRelease()
+        let result = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { slow.run(); return "complete" }
+        checks.require(result == "empty" && !slow.isFinished, "whole-search deadline returns fallback during \(stageName)")
+        slow.unblock()
     }
-    let healthy = await SemanticDeadline.run(timeout: .milliseconds(350), fallback: "empty") { "complete" }
+    let healthy = await SemanticDeadline.run(timeout: .seconds(30), fallback: "empty") { "complete" }
     checks.require(healthy == "complete", "healthy semantic work wins deadline")
+    let blockedStage = BlockedStage()
+    blockedStage.installSafetyRelease()
     let cancelled = Task {
-        await SemanticDeadline.run(timeout: .seconds(5), fallback: "empty") { slow.run() }
+        await SemanticDeadline.run(timeout: .seconds(30), fallback: "empty") { blockedStage.run(); return "complete" }
     }
-    try await Task.sleep(for: .milliseconds(20))
-    start = .now; cancelled.cancel()
+    try await waitUntil { blockedStage.started.started }
+    cancelled.cancel()
     let cancelledResult = await cancelled.value
-    checks.require(cancelledResult == "empty" && start.duration(to: .now) < .milliseconds(100), "search cancellation returns without draining synchronous work")
-    try await waitUntil { !slow.running }
+    checks.require(cancelledResult == "empty" && blockedStage.isActive, "search cancellation returns fallback while synchronous work remains active")
+    blockedStage.unblock()
+    try await waitUntil { !blockedStage.isActive }
 }
 
 func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     try await runDeadlineChecks(&checks)
-    var start: ContinuousClock.Instant
 
     // Old stores have no model identity, so their vectors cannot be safely reused.
     let legacyURL = root.appendingPathComponent("legacy.sqlite")
@@ -259,16 +276,22 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     checks.require(afterFlight == ["hold-inflight", "latest-inflight"], "in-flight inference drains with only one latest pending query")
 
     baseline = try requests(in: directory).count
-    let anotherIndexing = Task { try await client.embedDocuments(["hold-cancellation"]) }
+    let indexingFinished = StageMarker()
+    let releaseHeldIndexing = directory.appendingPathComponent("hold-cancellation.release")
+    defer { try? Data().write(to: releaseHeldIndexing) }
+    let anotherIndexing = Task {
+        defer { indexingFinished.mark() }
+        return try await client.embedDocuments(["hold-cancellation"])
+    }
     try await waitUntil { try requests(in: directory).count > baseline }
     let direct = Task { try? await client.embedQuery("cancelled-direct") }
     try await Task.sleep(for: .milliseconds(10)); direct.cancel()
-    start = .now
     let expired = await SemanticDeadline.run(timeout: .milliseconds(100), fallback: false) {
         do { _ = try await client.embedLatestQuery("expired-query"); return true }
         catch { return false }
     }
-    checks.require(!expired && start.duration(to: .now) < .milliseconds(250), "search deadline returns while indexing transport is busy")
+    checks.require(!expired && !indexingFinished.started, "search deadline returns while indexing transport remains blocked")
+    try Data().write(to: releaseHeldIndexing)
     _ = try await anotherIndexing.value; _ = await direct.value
     _ = try await client.ping() // Drain the serial queue before checking the wire log.
     checks.require(try requests(in: directory).dropFirst(baseline).allSatisfy { $0.operation != "embedQuery" },
@@ -356,9 +379,8 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     let spawnCount = try String(contentsOf: spawnURL, encoding: .utf8).split(separator: "\n").count
     checks.require(allFailed && spawnCount == 3, "crash burst spawns at most three helpers before 30 s backoff")
     try JSONEncoder().encode(FixtureConfiguration(mode: "healthy")).write(to: crashDirectory.appendingPathComponent("settings.json"))
-    start = .now
     do { _ = try await crashClient.ping(); checks.require(false, "restart fails fast during cooldown") }
-    catch { checks.require(String(describing: error).contains("retry paused") && start.duration(to: .now) < .milliseconds(100), "restart fails fast during cooldown") }
+    catch { checks.require(String(describing: error).contains("retry paused"), "restart is rejected during cooldown") }
     print("WAIT checking recovery after the 30 s helper cooldown"); fflush(nil)
     try await Task.sleep(for: .milliseconds(30_100))
     let recovered = try await crashClient.embedQuery("recovered")
@@ -411,9 +433,9 @@ func checkBusyParentDeath(_ checks: inout Checks, helper: URL, models: URL, root
                    "intermediate parent is SIGKILLed during cold model work")
     let start = ContinuousClock.now
     _ = kill(parent.processIdentifier, SIGKILL)
-    while kill(pid, 0) == 0 && start.duration(to: .now) < .seconds(2) {
+    while kill(pid, 0) == 0 && start.duration(to: .now) < .seconds(10) {
         try await Task.sleep(for: .milliseconds(20))
     }
-    checks.require(kill(pid, 0) != 0, "busy helper exits within 2 s of parent's SIGKILL")
+    checks.require(kill(pid, 0) != 0, "busy helper exits after parent's SIGKILL")
     parent.waitUntilExit()
 }

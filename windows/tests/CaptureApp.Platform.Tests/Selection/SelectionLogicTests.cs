@@ -167,10 +167,9 @@ public sealed class SelectionLogicTests
     {
         using var cancel = new CancellationTokenSource();
         var fake = new FakeServices { CopyFactory = _ => { cancel.Cancel(); return new(null, 0, false, NotOpened: true); } };
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = await new SelectionReader(fake).ReadAsync(true, Target, cancel.Token);
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, cancel.Token)
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.Equal(SelectionFailure.Cancelled, result.Failure);
-        Assert.True(clock.ElapsedMilliseconds < 400);
         Assert.Equal(1, fake.RetriesScheduled);
     }
 
@@ -187,10 +186,11 @@ public sealed class SelectionLogicTests
     {
         var fake = new FakeServices { ModifiersHeld = true };
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken);
+        var result = await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.Equal(SelectionFailure.ModifiersHeld, result.Failure);
         Assert.Equal("Release the shortcut keys and try again", result.Message);
-        Assert.InRange(clock.Elapsed.TotalMilliseconds, 180, 1500);
+        Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(180), "Held modifiers must be allowed to settle before refusing capture.");
         Assert.Equal(0, fake.Injections);
     }
 

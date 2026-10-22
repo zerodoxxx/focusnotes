@@ -31,13 +31,15 @@ public sealed class RuntimeReliabilityTests
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         var completes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var drain = Task.Run(async () => await completes.Task, cancellationToken);
         completes.SetResult();
-        Assert.True(await ShutdownWait.WaitAsync(drain, DateTimeOffset.UtcNow.AddSeconds(1), cancellationToken: cancellationToken));
+        Assert.True(await ShutdownWait.WaitAsync(completes.Task, DateTimeOffset.UtcNow.AddSeconds(1), cancellationToken: cancellationToken));
 
-        var slow = Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
-        Assert.False(await ShutdownWait.WaitAsync(slow, TimeSpan.FromMilliseconds(20), cancellationToken));
-        await slow;
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Assert.False(await ShutdownWait.WaitAsync(pending.Task, TimeSpan.FromMilliseconds(20), cancellationToken));
+        }
+        finally { pending.SetResult(); }
     }
 
     [Fact]

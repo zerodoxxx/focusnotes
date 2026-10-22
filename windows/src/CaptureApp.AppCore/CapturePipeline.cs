@@ -92,11 +92,11 @@ public sealed class CapturePipeline : IDisposable
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,
-        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null)
+        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Note(markdown), source);
-        return new(Service.PrepareNote(capture, TimeZone, destination), NoteDraft: noteDraft ?? markdown);
+        return new(Service.PrepareNote(capture, TimeZone, destination, newNote), NoteDraft: noteDraft ?? markdown);
     }
 
     public void Stage(CaptureJob job)

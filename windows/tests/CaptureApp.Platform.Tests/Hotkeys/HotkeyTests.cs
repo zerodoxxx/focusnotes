@@ -9,16 +9,19 @@ namespace CaptureApp.Platform.Tests.Hotkeys;
 public sealed class HotkeyDefaultsTests
 {
     [Theory]
-    [InlineData(HotkeyAction.CaptureSelection, "Ctrl+Alt+Shift+Q")]
-    [InlineData(HotkeyAction.CaptureArea, "Ctrl+Alt+Shift+G")]
-    [InlineData(HotkeyAction.SearchNotes, "Ctrl+Alt+Shift+F")]
-    [InlineData(HotkeyAction.ToggleSession, "Ctrl+Alt+Shift+A")]
-    [InlineData(HotkeyAction.WriteNote, "Ctrl+Alt+Shift+W")]
-    [InlineData(HotkeyAction.AddSubheading, "Ctrl+Alt+Shift+H")]
-    [InlineData(HotkeyAction.OpenNotesFolder, "Ctrl+Alt+Shift+E")]
-    public void DefaultsMatchTheWindowsPlan(HotkeyAction action, string expected)
+    [InlineData(HotkeyAction.CaptureSelection, "Alt+Shift+Q")]
+    [InlineData(HotkeyAction.CaptureArea, "Alt+Shift+G")]
+    [InlineData(HotkeyAction.SearchNotes, "Alt+Shift+F")]
+    [InlineData(HotkeyAction.ToggleSession, "Alt+Shift+A")]
+    [InlineData(HotkeyAction.WriteNote, "Alt+Shift+W")]
+    [InlineData(HotkeyAction.AddSubheading, "Alt+Shift+H")]
+    [InlineData(HotkeyAction.OpenNotesFolder, "Alt+Shift+E")]
+    public void DefaultsUseAltShiftAndPassRebindingGuards(HotkeyAction action, string expected)
     {
-        Assert.Equal(expected, HotkeyDefaults.For(action).DisplayString);
+        var chord = HotkeyDefaults.For(action);
+        Assert.Equal(expected, chord.DisplayString);
+        Assert.True(HotkeyValidator.Validate(chord).IsValid);
+        Assert.Empty(AltGrGuard.GetConflictingLayouts(chord));
     }
 }
 
@@ -27,6 +30,7 @@ public sealed class KeyChordTests
     [Theory]
     [InlineData("Ctrl+Alt+Shift+Q", "Ctrl+Alt+Shift+Q")]
     [InlineData("shift + ctrl + alt + q", "Ctrl+Alt+Shift+Q")]
+    [InlineData("shift + alt + q", "Alt+Shift+Q")]
     [InlineData("Win+F12", "Win+F12")]
     [InlineData("Ctrl+Shift+Backspace", "Ctrl+Shift+Backspace")]
     public void ParsesAndDisplaysChordsCanonically(string source, string expected)
@@ -42,6 +46,7 @@ public sealed class KeyChordTests
     [InlineData("Escape", false)]
     [InlineData("Shift+Enter", false)]
     [InlineData("Ctrl+Alt+Shift+Q", true)]
+    [InlineData("Alt+Shift+Q", true)]
     [InlineData("Alt+Shift+F12", true)]
     public void AppliesRebindingGuards(string display, bool expectedValid)
     {
@@ -72,7 +77,7 @@ public sealed class HotkeyBindingStoreTests
         var loaded = store.Load();
         Assert.Equal("Ctrl+Alt+Shift+J", loaded[HotkeyAction.SearchNotes].DisplayString);
         Assert.Equal("Ctrl+Alt+Shift+G", loaded[HotkeyAction.CaptureArea].DisplayString);
-        Assert.Equal("Ctrl+Alt+Shift+Q", loaded[HotkeyAction.CaptureSelection].DisplayString);
+        Assert.Equal("Alt+Shift+Q", loaded[HotkeyAction.CaptureSelection].DisplayString);
         Assert.Contains("\"theme\": \"dark\"", File.ReadAllText(settingsPath));
     }
 
@@ -117,6 +122,7 @@ public sealed class AltGrGuardTests
 
             var alternative = AltGrGuard.FindNextFreeLetter();
             Assert.NotNull(alternative);
+            Assert.Equal(HotkeyModifiers.Alt | HotkeyModifiers.Shift, alternative!.Value.Modifiers);
             Assert.DoesNotContain(layout, AltGrGuard.GetConflictingLayouts(alternative!.Value));
         }
         finally
@@ -131,7 +137,7 @@ public sealed class HotkeyRegistrarTests
     [Fact]
     public void ASecondRegistrationReportsAlreadyRegisteredError()
     {
-        var chord = KeyChord.Parse("Ctrl+Alt+Shift+F12");
+        var chord = KeyChord.Parse("Alt+Shift+F12");
         using var first = new HotkeyRegistrar();
         using var second = new HotkeyRegistrar();
 

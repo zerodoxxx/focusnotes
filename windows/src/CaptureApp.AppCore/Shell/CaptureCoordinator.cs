@@ -427,7 +427,8 @@ public sealed class CaptureCoordinator
     public Task WaitForCommitsAsync() { Task? tail; lock (gate) { tail = commitTail; } return TryWait(tail); }
 
     // Notes and subheadings.
-    public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false)
+    public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false,
+        bool newNote = false)
     {
         if (IsTerminating) { return null; }
         Pipeline.Drafts.Store(rawText, pinOnSave);
@@ -440,18 +441,36 @@ public sealed class CaptureCoordinator
         if (processedCommit is not null) { await processedCommit.ConfigureAwait(false); }
 
         Task<CaptureJob>? retry = null;
-        Task<CaptureJob>[] candidates;
-        lock (gate) { candidates = preparedJobs.Values.ToArray(); }
-        foreach (var candidate in candidates)
+        KeyValuePair<Guid, Task<CaptureJob>>[] candidates;
+        var superseded = new Dictionary<Guid, Guid>();
+        lock (gate) { candidates = preparedJobs.ToArray(); }
+        foreach (var (key, candidate) in candidates)
         {
             if (await TryResult(candidate).ConfigureAwait(false) is not { } job) { continue; }
             var sameText = job.NoteDraft is { } draft
                 ? CaptureFormat.NoteBody(draft) == text
                 : job.Prepared.Capture.Content == CaptureContent.Note(text);
-            if (sameText && (destination is null || job.Prepared.Destination == destination)) { retry = candidate; break; }
+            if (sameText && (destination is null || job.Prepared.Destination == destination))
+            {
+                if (newNote && job.Prepared.CreatesNote != true)
+                {
+                    superseded[key] = job.Prepared.Capture.Id;
+                    continue;
+                }
+
+                retry = candidate;
+                break;
+            }
         }
 
-        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText));
+        // Remove the durable append first. If removal fails, keep the old job retryable and the draft intact.
+        foreach (var (key, id) in superseded)
+        {
+            Pipeline.Journal.Remove(id);
+            lock (gate) { preparedJobs.Remove(key); }
+        }
+
+        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote));
         var prepared = (await preparation.ConfigureAwait(false)).Prepared;
         var noteId = prepared.Capture.Id;
         Task<SavedCapture> task;

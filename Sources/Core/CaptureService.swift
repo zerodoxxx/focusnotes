@@ -27,6 +27,23 @@ public struct SavedCapture: Sendable, Equatable {
     }
 }
 
+/// Note URLs reserved by unsaved typed notes. Locked so the editor can read it without awaiting.
+final class ReservedNoteURLs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls = Set<URL>()
+
+    var snapshot: Set<URL> { lock.lock(); defer { lock.unlock() }; return urls }
+    func contains(_ url: URL) -> Bool { Self.match(url, in: snapshot) != nil }
+    /// The reserved URL naming the same file as `url`; APFS is case-insensitive, so compare folded paths.
+    static func match(_ url: URL, in urls: Set<URL>) -> URL? {
+        func key(_ u: URL) -> String { u.standardizedFileURL.path.lowercased() }
+        let wanted = key(url)
+        return urls.sorted { $0.path < $1.path }.first { key($0) == wanted }
+    }
+    func insert(_ url: URL) { lock.lock(); urls.insert(url); lock.unlock() }
+    func remove(_ url: URL) { lock.lock(); urls.remove(url); lock.unlock() }
+}
+
 /// Single entry point for saving captures: routes, writes the asset if any, then appends the block.
 public actor CaptureService {
     private let vault: Vault
@@ -34,7 +51,10 @@ public actor CaptureService {
     private let writer: NoteWriter
     private let now: @Sendable () -> Date
     private let makeID: @Sendable () -> UUID
-    private var preparedNoteURLs = Set<URL>()
+    private let preparedNoteURLs = ReservedNoteURLs()
+
+    /// URLs reserved by typed notes that are prepared but not yet saved.
+    public nonisolated var reservedNoteURLs: Set<URL> { preparedNoteURLs.snapshot }
 
     public init(
         vault: Vault,
@@ -87,9 +107,12 @@ public actor CaptureService {
         ))
     }
 
-    /// Resolve once. Replay saves this preparation without routing again, even
-    /// if a file with the same name or a different session now exists.
-    public func prepareNote(_ capture: Capture, destination: Destination? = nil, calendar: Calendar) async throws -> PreparedCapture {
+    /// Chooses the note for a typed capture, once. Unless `newNote` is set or the title is a
+    /// generated timestamp, a name whose exact path exists, or was reserved earlier in
+    /// this process, appends to it. Otherwise a new path is reserved. Replay saves this
+    /// preparation without routing again, even if a file with the same name or a different
+    /// session now exists.
+    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, calendar: Calendar) async throws -> PreparedCapture {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
         if let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: try Router.destination(
@@ -101,9 +124,21 @@ public actor CaptureService {
             throw note.pathNameError ?? NotePathNameError.invalidComponent
         }
 
+        let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
+        // A title-only note has no body, so its text (the title line) is appended instead.
+        let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let appendCapture = hasBody ? noteCapture : capture
+        let appendsToMatch = !newNote && !note.isGeneratedTitle
+        if appendsToMatch {
+            if let target = try Self.appendTarget(for: note, reserved: preparedNoteURLs.snapshot, vault: vault) {
+                return PreparedCapture(capture: appendCapture, destination: target, noteMarkerIsIdentity: true)
+            }
+        }
+
         var selectedName = pathName
         var location = try vault.resolveNoteName(selectedName)
-        if !FileManager.default.fileExists(atPath: location.url.path), preparedNoteURLs.contains(location.url) {
+        let locationExists = FileManager.default.fileExists(atPath: location.url.path)
+        if !appendsToMatch, locationExists || preparedNoteURLs.contains(location.url) {
             var suffix = 2
             while true {
                 var components = pathName.components
@@ -119,12 +154,29 @@ public actor CaptureService {
             }
         }
 
-        let createsNote = !FileManager.default.fileExists(atPath: location.url.path)
         let destinationTitle = selectedName == pathName ? note.title : selectedName.displayTitle
         let destination = Destination(url: location.url, title: destinationTitle, kind: .note)
         preparedNoteURLs.insert(destination.url)
-        let body = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
-        return PreparedCapture(capture: body, destination: destination, createsNote: createsNote, noteMarkerIsIdentity: true)
+        return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
+    }
+
+    /// The destination a default (not Save as New) typed save would append to, if any: Inbox for a bare
+    /// "Inbox", else the exact resolved path when it exists on disk or was reserved. Generated titles never match.
+    public static func appendTarget(for note: TypedNote, reserved: Set<URL>, vault: Vault) throws -> Destination? {
+        guard !note.isGeneratedTitle else { return nil }
+        guard let pathName = note.pathName else {
+            throw note.pathNameError ?? NotePathNameError.invalidComponent
+        }
+        if pathName.scope == .vault, pathName.components.count == 1,
+           NoteTitle.matchKey(note.title) == NoteTitle.matchKey(Vault.inboxTitle) {
+            return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+        }
+        let location = try vault.resolveNoteName(pathName)
+        if FileManager.default.fileExists(atPath: location.url.path) {
+            return Destination(url: location.url, title: note.title, kind: .note)
+        }
+        guard let held = ReservedNoteURLs.match(location.url, in: reserved) else { return nil }
+        return Destination(url: held, title: note.title, kind: .note)
     }
 
     /// Saves an existing identity to its fixed destination without re-routing. Replaying

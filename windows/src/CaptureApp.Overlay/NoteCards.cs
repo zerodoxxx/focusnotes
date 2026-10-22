@@ -51,9 +51,10 @@ internal abstract class CardRow : Button
 
 internal sealed record ActionItem(NoteActionId Id, string Title, string Symbol, IReadOnlyList<string> Keys, bool IsEnabled, int Group)
 {
-    internal static IReadOnlyList<ActionItem> Standard(bool isPinned, bool hasText) =>
+    internal static IReadOnlyList<ActionItem> Standard(bool isPinned, bool hasText, bool appendsToExisting = false) =>
     [
         new(NoteActionId.NewNote, "New Note", "plus", ["Ctrl", "N"], true, 0),
+        new(NoteActionId.SaveAsNewNote, "Save as New Note", "doc.badge.plus", ["Ctrl", "Alt", "↩"], appendsToExisting, 0),
         new(NoteActionId.Pin, isPinned ? "Remove from Pinned" : "Add to Pinned", isPinned ? "pin.slash" : "pin", ["Ctrl", "Shift", "P"], true, 0),
         new(NoteActionId.OpenAsNote, "Open as Note", "arrow.up.left.and.arrow.down.right", ["Ctrl", "O"], true, 1),
         new(NoteActionId.CopyMarkdown, "Copy as Markdown", "doc.on.doc", ["Ctrl", "Shift", "C"], hasText, 1),

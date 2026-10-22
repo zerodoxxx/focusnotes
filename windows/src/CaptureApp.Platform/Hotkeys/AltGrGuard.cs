@@ -64,13 +64,13 @@ public static class AltGrGuard
 
     public static bool IsSafe(KeyChord chord) => GetConflictingLayouts(chord).Count == 0;
 
-    /// <summary>Returns the first unused Ctrl+Alt+Shift letter in <see cref="FallbackOrder"/> that is safe in every layout.</summary>
+    /// <summary>Returns the first unused letter with the default modifiers in <see cref="FallbackOrder"/> that is safe in every layout.</summary>
     public static KeyChord? FindNextFreeLetter(IEnumerable<KeyChord>? occupied = null)
     {
         var unavailable = occupied is null ? new HashSet<KeyChord>() : new HashSet<KeyChord>(occupied);
         foreach (var letter in FallbackOrder)
         {
-            var candidate = new KeyChord(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, letter);
+            var candidate = new KeyChord(HotkeyDefaults.Modifiers, letter);
             if (!unavailable.Contains(candidate) && IsSafe(candidate))
             {
                 return candidate;

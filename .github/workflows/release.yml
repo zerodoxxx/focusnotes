@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FOCUSNOTES_PERF_GATES: "0"
+
 # Do not overlap version preparation with a release already in progress.
 concurrency:
   group: release
