@@ -121,7 +121,25 @@ internal sealed class HelperTarget : IAsyncDisposable
         var owner = NativeMethods.GetForegroundWindow();
         _ = Win32.GetWindowThreadProcessId(owner, out var ownerPid);
         Assert.True(foreground, $"SetForegroundWindow probe succeeded, but the helper could not become foreground (foreground window 0x{owner:X} owned by pid {ownerPid}, helper pid {process.Id}).");
-        await Task.Delay(30, TestContext.Current.CancellationToken);
+        // Foreground activation can precede UIA provider readiness. Warm the real bounded worker before
+        // starting a race; a persistent provider stall still fails here with its last observed state.
+        var expectedSafety = field == "password" ? FieldSafety.Password : FieldSafety.Safe;
+        var readinessDeadline = Stopwatch.StartNew();
+        FieldSafety? lastSafety = null;
+        while (readinessDeadline.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            foreground = Context.IsStillFrontmost();
+            if (foreground)
+            {
+                lastSafety = (await UiaSelection.ReadAsync(Context.ProcessIdentifier, includeSelection: false,
+                    TestContext.Current.CancellationToken)).Safety;
+                foreground = Context.IsStillFrontmost();
+                if (lastSafety == expectedSafety && foreground) return;
+            }
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+        Assert.Fail($"Target UIA readiness for {field} did not settle within {readinessDeadline.Elapsed.TotalMilliseconds:F0} ms " +
+            $"(expected safety={expectedSafety}, last safety={lastSafety?.ToString() ?? "not read"}, foreground={foreground}, helper pid={process.Id}).");
     }
 
     public async ValueTask DisposeAsync()

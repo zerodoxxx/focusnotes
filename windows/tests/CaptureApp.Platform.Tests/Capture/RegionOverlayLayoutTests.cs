@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using CaptureApp.Platform.Capture;
 using WpfImage = System.Windows.Controls.Image;
 using WpfRect = System.Windows.Rect;
@@ -11,6 +12,7 @@ using Xunit;
 
 namespace CaptureApp.Platform.Tests.Capture;
 
+[Collection("CaptureOverlay")]
 public sealed class RegionOverlayLayoutTests
 {
     [Theory]
@@ -129,6 +131,10 @@ public sealed class RegionOverlayLayoutTests
             catch (Exception exception)
             {
                 failure = exception;
+            }
+            finally
+            {
+                if (!Dispatcher.CurrentDispatcher.HasShutdownFinished) { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
             }
         })
         {

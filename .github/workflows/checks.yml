@@ -134,14 +134,23 @@ jobs:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
           CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
           CAPTUREAPP_REQUIRE_MODELS: "1"
-        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category!=Perf"
+        # Separate test assemblies otherwise compete with the desktop/UIA fixtures and model inference.
+        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category!=Perf" -m:1 --logger trx --results-directory TestResults/tests
 
       - name: Perf gates
         env:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
           CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
           CAPTUREAPP_REQUIRE_MODELS: "1"
-        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category=Perf" -m:1
+        run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category=Perf" -m:1 --logger trx --results-directory TestResults/perf
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.runner }}
+          path: windows/TestResults/
+          if-no-files-found: warn
 
       - name: Publish and self-test
         shell: pwsh
@@ -175,13 +184,14 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/selftest.log" -Pattern "architecture .* \(runtime $rid\)" -Quiet)) { throw "Self-test did not report architecture $rid" }
 
       - name: Gallery
+        id: gallery
         shell: pwsh
         run: |
           dotnet run --project src/CaptureApp.Gallery/CaptureApp.Gallery.csproj -c Release --no-build -- --check "$env:RUNNER_TEMP/gallery"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload gallery
-        if: always()
+        if: ${{ !cancelled() && steps.gallery.outcome != 'skipped' }}
         uses: actions/upload-artifact@v7
         with:
           name: gallery-${{ matrix.runner }}
@@ -189,6 +199,7 @@ jobs:
           if-no-files-found: error
 
       - name: Probe runner desktop capabilities
+        if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 2
         shell: pwsh
