@@ -30,6 +30,13 @@ private func checkOutsideCaptureInboxCollisions() async throws {
                 let session = try await pipeline.sessions.start(name: "Inbox")
                 let sessionURL = vaultRoot.appendingPathComponent(session.notePath)
                 let sessionBefore = try Data(contentsOf: sessionURL)
+                let sessionStateURL = state.appendingPathComponent("session.json")
+                let sessionStateBefore = try Data(contentsOf: sessionStateURL)
+                let persistedSessions = SessionStore(stateDirectory: state, vault: pipeline.vault,
+                                                     calendar: pipeline.calendar, now: Date.init)
+                guard let persistedSessionBefore = await persistedSessions.current() else {
+                    throw SelfTestFailure("Outside capture check could not reload its initial session")
+                }
                 let nestedURL = vaultRoot.appendingPathComponent("science/Inbox.md")
                 let nestedBefore = Data("# Inbox\n\nKeep this nested note unchanged.\n".utf8)
                 if nestedInbox {
@@ -74,11 +81,29 @@ private func checkOutsideCaptureInboxCollisions() async throws {
                 }
                 let reopened = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
                 let restored = await reopened.replayUnsaved()
-                guard restored == (completion == "replay" ? 1 : 0),
-                      try await reopened.index.capture(id: capture.id)?.notePath == "Inbox.md",
-                      try Data(contentsOf: sessionURL) == sessionBefore,
-                      await reopened.sessions.current() == session else {
-                    throw SelfTestFailure("Outside capture \(completion) rerouted its journaled Inbox destination")
+                let scenario = "\(completion), image=\(image), nestedInbox=\(nestedInbox)"
+                let expectedRestored = completion == "replay" ? 1 : 0
+                guard restored == expectedRestored else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) replayed \(restored) records; expected \(expectedRestored)")
+                }
+                let savedPath = try await reopened.index.capture(id: capture.id)?.notePath
+                guard savedPath == "Inbox.md" else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) resolved to \(savedPath ?? "no indexed capture"); expected Inbox.md")
+                }
+                guard try Data(contentsOf: sessionURL) == sessionBefore else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) modified the active session note")
+                }
+                let reopenedSession = await reopened.sessions.current()
+                guard await pipeline.sessions.current() == session else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) changed the live active session")
+                }
+                guard try Data(contentsOf: sessionStateURL) == sessionStateBefore else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) changed the persisted session bytes")
+                }
+                // Session persistence uses whole-second ISO 8601 dates. Compare
+                // two loaded values, rather than Date()'s original fractions.
+                guard reopenedSession == persistedSessionBefore else {
+                    throw SelfTestFailure("Outside capture (\(scenario)) changed the reloaded session; expected \(persistedSessionBefore.notePath), got \(reopenedSession?.notePath ?? "none")")
                 }
                 if nestedInbox, try Data(contentsOf: nestedURL) != nestedBefore {
                     throw SelfTestFailure("Outside capture modified a nested note named Inbox")
