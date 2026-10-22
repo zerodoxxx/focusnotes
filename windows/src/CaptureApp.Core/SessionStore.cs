@@ -1,15 +1,18 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace CaptureApp.Core;
 
 public sealed record Session(string Name, string NotePath, DateTimeOffset StartedAt, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Resumed = null);
 public sealed record SessionCandidate(string Name, string NotePath, DateTimeOffset ModifiedAt);
+public sealed record SessionRenamePlan(string OldPath, Session Target, ulong SourceDevice, ulong SourceInode, string OriginalSha256, string RenamedSha256);
 public enum SessionStoreError
 {
     Ambiguous,
-    CandidateNoLongerExists
+    CandidateNoLongerExists,
+    NameAlreadyExists
 }
 
 public sealed class SessionStoreException(SessionStoreError kind, IReadOnlyList<SessionCandidate>? candidates = null, string? path = null) : IOException(kind.ToString())
@@ -152,6 +155,94 @@ public sealed class SessionStore
         }
     }
 
+    public Session RenameAndResume(SessionCandidate candidate, string newName, Action<SessionRenamePlan>? beforeRename = null)
+    {
+        lock (gate)
+        {
+            vault.Prepare();
+            _ = Existing().FirstOrDefault(n => vault.NoteId(n.Url) == candidate.NotePath)
+                ?? throw new SessionStoreException(SessionStoreError.CandidateNoLongerExists, path: candidate.NotePath);
+            var title = RenameTitle(newName);
+            var parts = NoteFile.PathComponents(candidate.NotePath);
+            if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName)
+            {
+                throw new NotePathNameException(NotePathNameError.InvalidComponent);
+            }
+            var components = parts.SkipLast(1).Append(NoteTitle.FileStem(title)).ToArray();
+            var name = NotePathName.Validated(NotePathScope.Vault, components, vault.NamingRules);
+            var newPath = name.RelativePath + ".md";
+            var target = new Session(title, newPath, clock.GetUtcNow(), true);
+            NoteFile.RenameSession(vault.Root, candidate.NotePath, newPath, title, (snapshot, rewritten) =>
+            {
+                beforeRename?.Invoke(new(candidate.NotePath, target, snapshot.Device, snapshot.Inode,
+                    Hash(snapshot.Contents!), Hash(rewritten)));
+            });
+            session = target;
+            return Persist(target);
+        }
+    }
+
+    // A pending intent survives a crash between the exclusive move, heading rewrite and
+    // state migration. Only the original inode or the exact prepared replacement may finish it.
+    public Session CompleteRename(SessionRenamePlan plan)
+    {
+        lock (gate)
+        {
+            vault.Prepare();
+            var parts = NoteFile.PathComponents(plan.Target.NotePath);
+            var old = NoteFile.PathComponents(plan.OldPath);
+            if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName ||
+                !parts.SkipLast(1).SequenceEqual(old.SkipLast(1)) || RenameTitle(plan.Target.Name) != plan.Target.Name ||
+                parts[^1] != NoteTitle.FileStem(plan.Target.Name) + ".md")
+            {
+                throw new VaultFileException(VaultFileError.InvalidFileName);
+            }
+            _ = NotePathName.Validated(NotePathScope.Vault, parts.SkipLast(1).Append(NoteTitle.FileStem(plan.Target.Name)), vault.NamingRules);
+            if (plan.OldPath != plan.Target.NotePath && vault.FileSnapshot(plan.OldPath, false) is not null)
+            {
+                throw new VaultFileException(VaultFileError.Changed);
+            }
+            var snapshot = vault.FileSnapshot(plan.Target.NotePath) ?? throw new FileNotFoundException(plan.Target.NotePath);
+            var hash = Hash(snapshot.Contents!);
+            if (hash != plan.RenamedSha256)
+            {
+                if (snapshot.Device != plan.SourceDevice || snapshot.Inode != plan.SourceInode || hash != plan.OriginalSha256)
+                {
+                    throw new VaultFileException(VaultFileError.Changed);
+                }
+                NoteFile.RenameSession(vault.Root, plan.Target.NotePath, plan.Target.NotePath, plan.Target.Name,
+                    (current, rewritten) =>
+                    {
+                        if (current.Device != plan.SourceDevice || current.Inode != plan.SourceInode ||
+                            Hash(current.Contents!) != plan.OriginalSha256 || Hash(rewritten) != plan.RenamedSha256)
+                        {
+                            throw new VaultFileException(VaultFileError.Changed);
+                        }
+                    });
+            }
+            session = plan.Target;
+            return Persist(plan.Target);
+        }
+    }
+
+    private string RenameTitle(string raw)
+    {
+        if (raw.IndexOfAny(['/', '\\', '\0']) >= 0)
+        {
+            throw new NotePathNameException(NotePathNameError.InvalidComponent);
+        }
+        if (vault.NamingRules.WindowsRules) { vault.NamingRules.ValidateComponent(raw); }
+        var title = NoteTitle.CleanTitle(raw);
+        if (title is "" or "." or ".." || NoteTitle.FileStem(title).StartsWith("~$", StringComparison.Ordinal))
+        {
+            throw new NotePathNameException(NotePathNameError.InvalidComponent);
+        }
+        vault.NamingRules.ValidateComponent(title);
+        return title;
+    }
+
+    private static string Hash(byte[] contents) => Convert.ToHexString(SHA256.HashData(contents));
+
     private Session StartAt(string title, string notePath, NoteRef? existing)
     {
         var now = clock.GetUtcNow();
@@ -173,13 +264,18 @@ public sealed class SessionStore
         beforeNoteWrite?.Invoke(notePath);
         NoteFile.Create(NoteFile.Utf8.GetBytes(CaptureFormat.NoteHeader(title)), vault.Root, notePath);
         var started = new Session(display, notePath, now, existing is not null);
+        return Persist(started);
+    }
+
+    private Session Persist(Session started)
+    {
         // Swift's persisted ISO-8601 representation has whole seconds and UTC Z.
         var persisted = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
             ["name"] = started.Name,
             ["notePath"] = started.NotePath,
             ["resumed"] = started.Resumed,
-            ["startedAt"] = now.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            ["startedAt"] = started.StartedAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
         };
         NoteFile.AtomicWrite(JsonSerializer.SerializeToUtf8Bytes(persisted, Options), stateDirectory, "session.json");
         session = started;

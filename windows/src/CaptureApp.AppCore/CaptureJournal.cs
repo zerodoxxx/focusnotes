@@ -16,16 +16,34 @@ public sealed class CaptureJournal
     };
 
     private readonly AppLog logger;
+    private readonly object gate = new();
+    private readonly string redirectsPath;
+    private readonly Dictionary<Guid, Destination> redirects;
     public string DirectoryPath { get; }
 
     public CaptureJournal(string stateDirectory)
     {
         var state = Path.GetFullPath(stateDirectory);
         DirectoryPath = Path.Combine(state, "unsaved");
+        redirectsPath = Path.Combine(state, "capture-destinations.json");
+        redirects = File.Exists(redirectsPath)
+            ? JsonSerializer.Deserialize<Dictionary<Guid, Destination>>(File.ReadAllBytes(redirectsPath), JsonOptions)
+                ?? throw new IOException("The capture destination state is empty.")
+            : [];
         logger = new(state, "capture-journal");
+        var durableIds = RecordPaths().Select(path => Guid.TryParse(Path.GetFileNameWithoutExtension(path), out var id) ? id : Guid.Empty).ToHashSet();
+        var completed = redirects.Keys.Where(id => !durableIds.Contains(id)).ToArray();
+        foreach (var id in completed) redirects.Remove(id);
+        if (completed.Length != 0)
+            AtomicJsonFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(redirects, JsonOptions));
     }
 
     public void Store(CaptureJob job)
+    {
+        lock (gate) { StoreLocked(ResolveLocked(job)); }
+    }
+
+    private void StoreLocked(CaptureJob job)
     {
         Directory.CreateDirectory(DirectoryPath);
         var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
@@ -52,6 +70,11 @@ public sealed class CaptureJournal
 
     public CaptureJob Load(string recordPath)
     {
+        lock (gate) { return ResolveLocked(LoadLocked(recordPath)); }
+    }
+
+    private CaptureJob LoadLocked(string recordPath)
+    {
         var bytes = File.ReadAllBytes(recordPath);
         JournalRecord record;
         try
@@ -65,6 +88,8 @@ public sealed class CaptureJournal
             throw new RecordException("The journal record could not be decoded.", error);
         }
 
+        if (record.Prepared is null || record.Prepared.Capture is null || record.Prepared.Destination is null)
+            throw new RecordException("The journal record is missing capture or destination data.");
         var stem = Path.GetFileNameWithoutExtension(recordPath);
         if (!string.Equals(stem, record.Prepared.Capture.Id.ToString("D").ToLowerInvariant(), StringComparison.Ordinal))
         {
@@ -104,7 +129,61 @@ public sealed class CaptureJournal
         return new(record.Prepared, png, record.Ocr, record.NoteDraft);
     }
 
+    public CaptureJob Resolve(CaptureJob job)
+    {
+        lock (gate) { return ResolveLocked(job); }
+    }
+
+    private CaptureJob ResolveLocked(CaptureJob job) => redirects.TryGetValue(job.Prepared.Capture.Id, out var destination)
+        ? job with { Prepared = job.Prepared with { Destination = destination } } : job;
+
+    public IReadOnlyList<Guid> CaptureIdsTargeting(string noteUrl)
+    {
+        lock (gate)
+        {
+            var ids = redirects.Where(pair => SameUrl(pair.Value.Url, noteUrl)).Select(pair => pair.Key).ToHashSet();
+            foreach (var path in RecordPaths())
+            {
+                try
+                {
+                    var job = ResolveLocked(LoadLocked(path));
+                    if (SameUrl(job.Prepared.Destination.Url, noteUrl)) ids.Add(job.Prepared.Capture.Id);
+                }
+                catch (RecordException) { /* Startup replay quarantines malformed captures independently. */ }
+            }
+            return ids.ToArray();
+        }
+    }
+
+    // Persist the identity follow-up before rewriting individual records. Stale in-memory retries
+    // are resolved by capture ID, so a later, independent note may safely reuse the old filename.
+    public void Relocate(IReadOnlyList<Guid> ids, Destination destination)
+    {
+        lock (gate)
+        {
+            var updated = new Dictionary<Guid, Destination>(redirects);
+            foreach (var id in ids) updated[id] = destination;
+            AtomicJsonFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions));
+            foreach (var id in ids) redirects[id] = destination;
+            foreach (var id in ids)
+            {
+                var path = Path.Combine(DirectoryPath, id.ToString("D").ToLowerInvariant() + ".json");
+                if (!File.Exists(path)) continue;
+                try { StoreLocked(ResolveLocked(LoadLocked(path))); }
+                catch (RecordException) { /* Preserve it for the normal replay quarantine path. */ }
+            }
+        }
+    }
+
+    private static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
+        Path.GetFullPath(right).Normalize(), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
     public void Quarantine(string recordPath)
+    {
+        lock (gate) { QuarantineLocked(recordPath); }
+    }
+
+    private void QuarantineLocked(string recordPath)
     {
         var corrupt = Path.Combine(DirectoryPath, "corrupt");
         System.IO.Directory.CreateDirectory(corrupt);
@@ -126,9 +205,14 @@ public sealed class CaptureJournal
 
     public void Remove(Guid id)
     {
-        var stem = id.ToString("D").ToLowerInvariant();
-        File.Delete(Path.Combine(DirectoryPath, stem + ".json"));
-        File.Delete(Path.Combine(DirectoryPath, stem + ".png"));
+        lock (gate)
+        {
+            var stem = id.ToString("D").ToLowerInvariant();
+            File.Delete(Path.Combine(DirectoryPath, stem + ".json"));
+            File.Delete(Path.Combine(DirectoryPath, stem + ".png"));
+            // Keep redirects for this instance: an older commit can still retry its prepared object
+            // after a newer commit removed the journal record. Fresh startup prunes completed IDs.
+        }
     }
 
     private static DateTimeOffset RecordDate(string path)

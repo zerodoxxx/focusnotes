@@ -651,13 +651,35 @@ final class AppController: NSObject, NSMenuDelegate {
 
     @discardableResult
     func startSession(name: String) async throws -> Session {
+        try await pipeline.recoverSessionIdentity()
         let session = try await pipeline.sessions.start(name: name)
         return try await activateSession(session)
     }
 
     private func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
+        try await pipeline.recoverSessionIdentity()
         let session = try await pipeline.sessions.resume(candidate)
         return try await activateSession(session)
+    }
+
+    @discardableResult
+    func renameSession(_ candidate: SessionCandidate, to name: String) async throws -> Session {
+        var knownJobs: [CaptureJob] = []
+        var tasks = Array(preparedJobs.values) + Array(recoveryJobs.values)
+        if let stagedJob { tasks.append(stagedJob.preparation) }
+        for task in tasks {
+            if let job = try? await task.value { knownJobs.append(job) }
+        }
+        let outcome = try await pipeline.renameSession(candidate, to: name, preparedJobs: knownJobs)
+        activeSession = outcome.session
+        refreshStatus()
+        if outcome.identityUpdatePending {
+            showToast(Toast(style: .warning, title: "Session renamed · \(outcome.session.name)",
+                            subtitle: "State updates will be retried before the next save."))
+        } else {
+            showToast(Toast(style: .session, title: "Session resumed · \(outcome.session.name)", subtitle: "Captures go here until ⌥⇧A"))
+        }
+        return outcome.session
     }
 
     private func activateSession(_ session: Session) async throws -> Session {
@@ -668,7 +690,7 @@ final class AppController: NSObject, NSMenuDelegate {
         return session
     }
 
-    private func presentSessionCandidates(_ candidates: [SessionCandidate]) {
+    private func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
         let calendar = pipeline.calendar
         let choices = candidates.map {
             Suggestion(title: $0.name,
@@ -680,10 +702,16 @@ final class AppController: NSObject, NSMenuDelegate {
         input = panel
         panel.present(placeholder: "Select a session…",
                       title: "Multiple sessions found with the given name",
+                      secondary: "↩ Resume · ⌘↩ Rename and resume",
                       selectionOnly: true,
+                      selectedValue: selectedPath,
                       suggestions: { prefix in
             let key = NoteTitle.matchKey(prefix)
             return choices.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }
+        }, onAlternateSubmit: { [weak self] path in
+            self?.inputClosed()
+            guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
+            self.presentSessionRename(candidate, candidates: candidates)
         }, onSubmit: { [weak self] path in
             self?.inputClosed()
             guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
@@ -696,8 +724,37 @@ final class AppController: NSObject, NSMenuDelegate {
         }, onCancel: { [weak self] in self?.inputClosed() })
     }
 
+    private func presentSessionRename(_ candidate: SessionCandidate, candidates: [SessionCandidate],
+                                      name: String? = nil, errorMessage: String? = nil) {
+        guard !isTerminating else { return }
+        let panel = InputPanelController()
+        input = panel
+        panel.present(placeholder: "New session name", initialText: name ?? candidate.name, selectInitialText: true, title: "Rename session",
+                      secondary: errorMessage ?? candidate.notePath, allowEmptySubmission: true, suggestions: { _ in [] },
+                      onEscape: { [weak self] in
+            self?.inputClosed()
+            self?.presentSessionCandidates(candidates, selectedPath: candidate.notePath)
+        },
+                      onSubmit: { [weak self] name in
+            self?.inputClosed()
+            self?.enqueue { controller in
+                _ = controller.commitPending()
+                await controller.processingTail?.value
+                _ = controller.commitPending()
+                await controller.waitForCommits()
+                guard !controller.isTerminating else { return }
+                do { _ = try await controller.renameSession(candidate, to: name) }
+                catch {
+                    controller.presentSessionRename(candidate, candidates: candidates, name: name,
+                                                    errorMessage: error.localizedDescription)
+                }
+            }
+        }, onCancel: { [weak self] in self?.inputClosed() })
+    }
+
     @discardableResult
     func endSession(_ session: Session) async throws -> Int {
+        try await pipeline.recoverSessionIdentity()
         try await pipeline.sessions.end()
         activeSession = nil
         refreshStatus()
@@ -724,6 +781,8 @@ final class AppController: NSObject, NSMenuDelegate {
             } catch { controller.report(error, title: "Couldn't save pending capture"); return }
             guard !controller.isTerminating else { return }
             let pipeline = controller.pipeline
+            do { try await pipeline.recoverSessionIdentity() }
+            catch { controller.report(error, title: "Couldn't restore session state"); return }
             let active = await pipeline.sessions.current()
             let sessionDestination: Destination?
             if let active {
@@ -906,7 +965,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = try await pipeline.service.prepareNote(capture, destination: destination, newNote: newNote, calendar: pipeline.calendar)
+            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText)
         }
         let preparedNote = try await preparation.value.prepared
@@ -938,9 +997,10 @@ final class AppController: NSObject, NSMenuDelegate {
             guard await controller.closePanels() else { return }
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
-            let active = await controller.pipeline.sessions.current()
             let destination: Destination
             do {
+                try await controller.pipeline.recoverSessionIdentity()
+                let active = await controller.pipeline.sessions.current()
                 destination = try Router.destination(noteTitle: nil, activeSession: active,
                                                      notes: [], vault: controller.pipeline.vault)
             } catch {
@@ -968,9 +1028,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let pipeline = pipeline
         let capture = Capture(id: UUID(), createdAt: Date(), content: .subheading(text), source: CaptureSource())
         let preparation = Task.detached(priority: .userInitiated) {
-            let prepared: PreparedCapture
-            if let destination { prepared = PreparedCapture(capture: capture, destination: destination) }
-            else { prepared = try await pipeline.service.prepare(capture, noteTitle: nil) }
+            let prepared = try await pipeline.prepareCapture(capture, destination: destination)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
         preparedJobs[capture.id] = preparation

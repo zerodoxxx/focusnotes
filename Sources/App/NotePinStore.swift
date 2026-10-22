@@ -31,6 +31,18 @@ final class NotePinStore: @unchecked Sendable {
             try write(current)
         }
     }
+    func rename(from oldPath: String, to newPath: String) throws {
+        guard oldPath != newPath else { return }
+        try lock.withLock {
+            let data: Data
+            do { data = try Data(contentsOf: url) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile { return }
+            var current = Set((try? JSONDecoder().decode([String].self, from: data)) ?? [])
+            guard current.remove(oldPath) != nil else { return }
+            current.insert(newPath)
+            try write(current)
+        }
+    }
     private func read() -> Set<String> {
         guard let data = try? Data(contentsOf: url), let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
         return Set(list)

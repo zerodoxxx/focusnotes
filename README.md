@@ -19,7 +19,8 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
   Include folder segments in the title to save a note in a subfolder.
 - **Sessions.** Start a session for a topic (a course, a paper, a design review) and every capture goes to that
   topic's note until you end it. A unique existing name resumes its note; duplicate matches open a chooser,
-  while a slash-qualified name picks a path under `Sessions/`. Add subheadings to start new sections.
+  where ⌘↩ (Ctrl+Enter on Windows) renames and resumes the selected session. A slash-qualified name picks a
+  path under `Sessions/`. Add subheadings to start new sections.
 - **Search.** Keyword search across all notes, plus optional on-device semantic search.
 - **No focus stealing.** focusnotes never activates itself; every action has a global shortcut and a toast confirms
   the save.

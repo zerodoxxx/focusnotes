@@ -1,5 +1,6 @@
 import CaptureKit
 import Core
+import CryptoKit
 import Foundation
 
 struct CaptureJob: Sendable {
@@ -11,6 +12,39 @@ struct CaptureJob: Sendable {
 }
 
 actor CaptureJournal {
+    struct SessionRenameIntent: Codable, Sendable {
+        let oldPath: String
+        let session: Session
+        let captureIDs: [UUID]
+        let sourceDevice: UInt64
+        let sourceInode: UInt64
+        let sourceSize: Int64
+        let sourceModifiedSeconds: Int64
+        let sourceModifiedNanoseconds: Int64
+        let sourceChangedSeconds: Int64
+        let sourceChangedNanoseconds: Int64
+        let sourceDigest: String
+        var installedDevice: UInt64? = nil
+        var installedInode: UInt64? = nil
+
+        func isOriginal(_ snapshot: VaultFileSnapshot) -> Bool {
+            guard snapshot.device == sourceDevice && snapshot.inode == sourceInode else { return false }
+            if snapshot.size == sourceSize &&
+                snapshot.modifiedSeconds == sourceModifiedSeconds && snapshot.modifiedNanoseconds == sourceModifiedNanoseconds &&
+                snapshot.changedSeconds == sourceChangedSeconds && snapshot.changedNanoseconds == sourceChangedNanoseconds { return true }
+            // A rolled-back atomic swap updates ctime even though the original
+            // inode and every byte are restored. Accept that same original only
+            // after hashing a fresh validated snapshot, never by inode alone.
+            guard let contents = snapshot.contents else { return false }
+            return Self.digest(contents) == sourceDigest
+        }
+        func isInstalled(_ snapshot: VaultFileSnapshot) -> Bool {
+            snapshot.device == installedDevice && snapshot.inode == installedInode
+        }
+        static func digest(_ contents: Data) -> String {
+            SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        }
+    }
     struct Record: Codable {
         let prepared: PreparedCapture
         let hasPNG: Bool
@@ -19,12 +53,17 @@ actor CaptureJournal {
     }
 
     let directory: URL
+    private let renameIntentURL: URL
+    private let redirectsURL: URL
 
     init(stateDirectory: URL) {
         directory = stateDirectory.appendingPathComponent("unsaved", isDirectory: true)
+        renameIntentURL = stateDirectory.appendingPathComponent("session-rename.json")
+        redirectsURL = stateDirectory.appendingPathComponent("capture-destinations.json")
     }
 
     func store(_ job: CaptureJob) throws {
+        let job = try redirected(job)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stem = job.prepared.capture.id.uuidString.lowercased()
         if let png = job.png {
@@ -32,6 +71,100 @@ actor CaptureJournal {
         }
         let record = Record(prepared: job.prepared, hasPNG: job.png != nil, ocr: job.ocr, noteDraft: job.noteDraft)
         try JSONEncoder().encode(record).write(to: directory.appendingPathComponent(stem + ".json"), options: .atomic)
+    }
+
+    /// Persist the identity change before touching Markdown. Redirects are keyed
+    /// by capture UUID, so creating a new session at the old filename later does
+    /// not redirect unrelated captures.
+    func beginSessionRename(oldPath: String, session: Session, vault: Vault,
+                            preparedJobs: [CaptureJob]) throws -> SessionRenameIntent {
+        let currentJobs = try preparedJobs.map { try redirected($0) }
+        var ids = Set(currentJobs.filter {
+            (try? vault.noteID(for: $0.prepared.destination.url)) == oldPath
+        }.map { $0.prepared.capture.id })
+        for url in try recordURLs() {
+            let data = try Data(contentsOf: url)
+            guard let record = try? JSONDecoder().decode(Record.self, from: data) else { continue }
+            if (try? vault.noteID(for: record.prepared.destination.url)) == oldPath {
+                ids.insert(record.prepared.capture.id)
+            }
+        }
+        guard let source = try vault.fileSnapshot(relativePath: oldPath), let contents = source.contents else {
+            throw SessionStoreError.candidateNoLongerExists(oldPath)
+        }
+        let intent = SessionRenameIntent(oldPath: oldPath, session: session,
+                                        captureIDs: ids.sorted { $0.uuidString < $1.uuidString },
+                                        sourceDevice: source.device, sourceInode: source.inode, sourceSize: source.size,
+                                        sourceModifiedSeconds: source.modifiedSeconds, sourceModifiedNanoseconds: source.modifiedNanoseconds,
+                                        sourceChangedSeconds: source.changedSeconds, sourceChangedNanoseconds: source.changedNanoseconds,
+                                        sourceDigest: SessionRenameIntent.digest(contents))
+        try FileManager.default.createDirectory(at: renameIntentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(intent).write(to: renameIntentURL, options: .atomic)
+        return intent
+    }
+
+    /// The staged inode is recorded before the atomic swap. Recovery only adopts
+    /// that exact managed file, never an unrelated file at the destination name.
+    func installationRecorder(for intent: SessionRenameIntent) -> @Sendable (UInt64, UInt64) throws -> Void {
+        let url = renameIntentURL
+        return { device, inode in
+            var installed = intent
+            installed.installedDevice = device
+            installed.installedInode = inode
+            try JSONEncoder().encode(installed).write(to: url, options: .atomic)
+        }
+    }
+
+    func pendingSessionRename() throws -> SessionRenameIntent? {
+        guard FileManager.default.fileExists(atPath: renameIntentURL.path) else { return nil }
+        return try JSONDecoder().decode(SessionRenameIntent.self, from: Data(contentsOf: renameIntentURL))
+    }
+
+    func finishSessionRename(_ intent: SessionRenameIntent, vault: Vault) throws {
+        var redirects = try destinationRedirects()
+        let destination = Destination(url: try vault.managedURL(forRelativePath: intent.session.notePath),
+                                      title: intent.session.name, kind: .session)
+        for id in intent.captureIDs { redirects[id.uuidString.lowercased()] = destination }
+        try JSONEncoder().encode(redirects).write(to: redirectsURL, options: .atomic)
+        for id in intent.captureIDs {
+            let url = directory.appendingPathComponent(id.uuidString.lowercased() + ".json")
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: url))
+            guard let destination = redirects[record.prepared.capture.id.uuidString.lowercased()] else { continue }
+            let updated = Record(prepared: replacingDestination(record.prepared, with: destination),
+                                 hasPNG: record.hasPNG, ocr: record.ocr, noteDraft: record.noteDraft)
+            try JSONEncoder().encode(updated).write(to: url, options: .atomic)
+        }
+    }
+
+    /// After recovery, persisted records already contain their destination and a
+    /// fresh process has no stale prepared objects requiring UUID redirects.
+    func discardPreviousProcessRedirects() throws {
+        if FileManager.default.fileExists(atPath: redirectsURL.path) {
+            try FileManager.default.removeItem(at: redirectsURL)
+        }
+    }
+
+    func clearSessionRename() throws {
+        if FileManager.default.fileExists(atPath: renameIntentURL.path) {
+            try FileManager.default.removeItem(at: renameIntentURL)
+        }
+    }
+
+    func redirected(_ job: CaptureJob) throws -> CaptureJob {
+        guard let destination = try destinationRedirects()[job.prepared.capture.id.uuidString.lowercased()] else { return job }
+        return CaptureJob(prepared: replacingDestination(job.prepared, with: destination), png: job.png,
+                          ocr: job.ocr, deferredOCR: job.deferredOCR, noteDraft: job.noteDraft)
+    }
+
+    private func destinationRedirects() throws -> [String: Destination] {
+        guard FileManager.default.fileExists(atPath: redirectsURL.path) else { return [:] }
+        return try JSONDecoder().decode([String: Destination].self, from: Data(contentsOf: redirectsURL))
+    }
+
+    private func replacingDestination(_ prepared: PreparedCapture, with destination: Destination) -> PreparedCapture {
+        PreparedCapture(capture: prepared.capture, destination: destination,
+                        createsNote: prepared.createsNote == true, noteMarkerIsIdentity: prepared.noteMarkerIsIdentity == true)
     }
 
     enum RecordError: Error {
@@ -70,10 +203,10 @@ actor CaptureJournal {
                 }
                 let original = record.prepared.capture
                 let capture = Capture(id: original.id, createdAt: original.createdAt, content: .text(text), source: original.source)
-                return CaptureJob(prepared: PreparedCapture(capture: capture, destination: record.prepared.destination), png: nil, ocr: nil)
+                return try redirected(CaptureJob(prepared: PreparedCapture(capture: capture, destination: record.prepared.destination), png: nil, ocr: nil))
             }
         }
-        return CaptureJob(prepared: record.prepared, png: png, ocr: record.ocr, noteDraft: record.noteDraft)
+        return try redirected(CaptureJob(prepared: record.prepared, png: png, ocr: record.ocr, noteDraft: record.noteDraft))
     }
 
     /// Keep undecodable records and their PNGs without retrying them on every launch.

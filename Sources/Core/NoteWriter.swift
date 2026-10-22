@@ -1,6 +1,6 @@
 import Foundation
 
-/// Serializes all note and asset writes. Note files are only ever appended to, never rewritten.
+/// Serializes capture and asset writes. Captures append; SessionStore owns safe heading rewrites during renames.
 public actor NoteWriter {
     private let vault: Vault
     private let calendar: Calendar

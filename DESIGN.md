@@ -12,6 +12,8 @@ The interactive surfaces are borderless, nonactivating panels: they borrow keybo
 
 ### Sessions
 
+In the duplicate-session picker, ⌘↩ on macOS or Ctrl+Enter on Windows opens a rename field with the highlighted session's title selected. Return renames its file and title heading, keeps it in the same folder, and resumes it. Escape returns to the picker with the same selection. Rename rejects folder separators and existing destination names, including case-insensitive matches. The rewrite preserves the remaining Markdown and relative image links, and pins, pending captures, session state, and search follow the new path. A unique match still resumes directly without a picker.
+
 Starting a session with a bare name resumes its only matching note at the existing path, or creates a new top-level note under `Sessions/` when there is no match. Duplicate bare-name matches open a picker with each note's title, path, and modification date, newest first; Up/Down selects, Return resumes the selected path, and Escape cancels. A valid slash-qualified name such as `archive/Standup` resolves directly under `Sessions/` and skips the picker. Relative malformed slash forms, including whitespace next to a slash or trailing/repeated separators, use the cleaned flat-name matching flow; a leading slash after title cleaning is an explicit HOME-relative target for typed notes and remains invalid for sessions. ([Sources/Core/SessionStore.swift](Sources/Core/SessionStore.swift), [Sources/App/AppController.swift](Sources/App/AppController.swift), [Sources/OverlayKit/InputPanel.swift](Sources/OverlayKit/InputPanel.swift))
 
 ### Quick note

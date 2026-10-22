@@ -21,7 +21,9 @@ public sealed record SearchActions(Action<SearchRow> Primary, Action<SearchRow> 
     Action? OnClose = null, Func<SearchRow, SearchAction, Action?>? Freeze = null);
 public sealed record InputRequest(string Placeholder, Func<string, IReadOnlyList<Suggestion>> Suggestions,
     Action<string> OnSubmit, Action OnCancel, string InitialText = "", string? Title = null, string? Secondary = null,
-    bool SelectionOnly = false, Action<string>? OnAccept = null);
+    bool SelectionOnly = false, Action<string>? OnAccept = null, Action<string>? OnAlternateSubmit = null,
+    string? SelectedValue = null, bool SelectInitialText = false, Action? OnEscape = null,
+    bool AllowEmptySubmission = false);
 
 // Stable UI-only contracts for the cards in step 6b, mirroring NoteContracts.swift.
 public enum NoteActionId { NewNote, Browse, Pin, OpenAsNote, CopyMarkdown, DiscardDraft, SaveAsNewNote }

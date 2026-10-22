@@ -45,33 +45,56 @@ public sealed class InputPanelView : OverlaySurface
         if (selectedRow is not null) { scroll.UpdateLayout(); selectedRow.BringIntoView(); }
     }
 }
+public enum InputSubmitAction { Ignore, Submit, Alternate }
+
 public class InputPanelController
 {
+    public static InputSubmitAction SubmissionAction(ModifierKeys modifiers, bool hasAlternate) => modifiers switch
+    {
+        ModifierKeys.None => InputSubmitAction.Submit,
+        ModifierKeys.Control when hasAlternate => InputSubmitAction.Alternate,
+        _ when !hasAlternate => InputSubmitAction.Submit,
+        _ => InputSubmitAction.Ignore
+    };
     private OverlayWindow? panel;
     private InputPanelView? view;
     private InputRequest? request;
     private IReadOnlyList<Suggestion> suggestions = [];
     private int? selection;
     private string? submitted;
+    private bool alternateSubmitted;
+    private bool escaped;
     public bool IsVisible => panel?.IsVisible == true;
     public void Present(InputRequest request, bool typingNeeded = true)
     {
         panel?.Dismiss(DismissReason.Replaced, false);
-        this.request = request; submitted = null; selection = null;
+        this.request = request; submitted = null; alternateSubmitted = false; escaped = false; selection = null;
         suggestions = request.Suggestions(request.InitialText);
-        var content = new InputPanelView(request.Placeholder, request.InitialText, suggestions, null, request.Title, request.Secondary); view = content;
+        if (request.SelectedValue is { } selected)
+        {
+            var index = suggestions.ToList().FindIndex(s => (s.Value ?? s.Title) == selected);
+            if (index >= 0) selection = index;
+        }
+        var content = new InputPanelView(request.Placeholder, request.InitialText, suggestions, selection, request.Title, request.Secondary); view = content;
         var window = new OverlayWindow(content); panel = window;
+        window.CancelHandler = () => { escaped = true; return false; };
         content.Field.TextChanged += (_, _) => { if (view != content) return; selection = null; suggestions = request.Suggestions(content.Field.Text); Refresh(); };
         content.Selected += index => { selection = index; Refresh(); };
         window.PreviewKeyDown += HandleKey;
         window.Closed += (_, _) =>
         {
             if (panel != window) return;
-            var result = submitted; var handlers = this.request;
+            var result = submitted; var alternate = alternateSubmitted; var escape = escaped; var handlers = this.request;
             panel = null; view = null; this.request = null; suggestions = []; selection = null; submitted = null;
-            if (result is not null) handlers?.OnSubmit(result); else handlers?.OnCancel();
+            if (result is not null)
+            {
+                if (alternate) handlers?.OnAlternateSubmit?.Invoke(result); else handlers?.OnSubmit(result);
+            }
+            else if (escape && handlers?.OnEscape is { } onEscape) onEscape();
+            else handlers?.OnCancel();
         };
         window.Present(typingNeeded, content.Field);
+        if (request.SelectInitialText) content.Field.SelectAll();
     }
     private void Refresh()
     {
@@ -91,9 +114,13 @@ public class InputPanelController
                 e.Handled = true; break;
             case Key.Enter:
                 e.Handled = true;
+                var modifiers = Keyboard.Modifiers;
+                var action = SubmissionAction(modifiers, request.OnAlternateSubmit is not null);
+                if (action == InputSubmitAction.Ignore) return;
                 if (request.SelectionOnly && selection is null) return;
                 var value = selection is { } index ? suggestions[index].Value ?? suggestions[index].Title : view.Field.Text.Trim();
-                submitted = string.IsNullOrWhiteSpace(value) ? null : value;
+                submitted = !request.AllowEmptySubmission && string.IsNullOrWhiteSpace(value) ? null : value;
+                alternateSubmitted = action == InputSubmitAction.Alternate;
                 if (submitted is not null) request.OnAccept?.Invoke(submitted);
                 panel?.Dismiss(); break;
         }
@@ -102,7 +129,9 @@ public class InputPanelController
 }
 public sealed class SessionPickerController : InputPanelController
 {
-    public void Present(IReadOnlyList<Suggestion> choices, Action<string> onSubmit, Action onCancel, bool typingNeeded = true) =>
+    public void Present(IReadOnlyList<Suggestion> choices, Action<string> onSubmit, Action onCancel, bool typingNeeded = true,
+        Action<string>? onRename = null) =>
         Present(new InputRequest("Select a session…", prefix => choices.Where(s => s.Title.Normalize().StartsWith(prefix.Trim().Normalize(), StringComparison.OrdinalIgnoreCase)).ToArray(), onSubmit, onCancel,
-            Title: "Multiple sessions found with the given name", SelectionOnly: true), typingNeeded);
+            Title: "Multiple sessions found with the given name", Secondary: onRename is null ? null : "Enter resumes · Ctrl+Enter renames",
+            SelectionOnly: true, OnAlternateSubmit: onRename), typingNeeded);
 }

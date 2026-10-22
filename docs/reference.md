@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-22 (previous commit: `62ccd67`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -8,7 +8,7 @@ Detailed behaviour of capture, note storage and the quick-note editor. For setup
 
 Pressing a capture shortcut again while its toast is visible chooses the destination note.
 
-Notes are append-only, plain Markdown compatible with Obsidian: `#` contains the note title;
+Captures append to plain Markdown compatible with Obsidian: `#` contains the note title;
 `##` is a user subheading, and `###` identifies a source. A source heading
 appears on the first capture, when the source changes, or after an intervening
 Markdown heading outside fenced code. Timestamps and apps live in invisible
@@ -39,7 +39,15 @@ Browser suffixes are removed from source titles; empty titles fall back to the
 app, then “Unknown source”. Legacy dated capture blocks remain readable and are
 never rewritten. Session notes can live at any depth under `Sessions/`. A unique
 bare-name match resumes at its full path; several matches open a newest-first
-picker with title, path, and modified date. A slash-qualified name such as
+picker with title, path, and modified date. Return resumes the highlighted session;
+⌘↩ (Ctrl+Enter on Windows) opens a rename field with its current title selected.
+Return confirms the rename and resumes the session; Escape returns to the picker.
+Renaming changes the filename and title heading in the same folder, preserving the
+remaining Markdown and relative image links. Names use session filename cleanup,
+cannot contain folder separators, and cannot replace another file, including a
+case-insensitive match. Pins, pending captures, and search follow the new path.
+The heading rewrite uses an atomic replacement rather than truncating the note.
+A slash-qualified name such as
 `archive/Standup` resolves directly under `Sessions/`; a missing qualified name
 creates that nested path. Escape cancels without changing session state. Existing
 dated session notes can also resume in place. Images stay in `assets/`, with

@@ -10,6 +10,14 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
     // Use a separate lock so the editor can inspect reservations during a disk save.
     public IReadOnlySet<string> ReservedNoteUrls => preparedNoteUrls.Snapshot;
 
+    public Session RenameSession(SessionCandidate candidate, string newName, Action<SessionRenamePlan>? beforeRename = null)
+    {
+        lock (gate)
+        {
+            return sessions.RenameAndResume(candidate, newName, beforeRename);
+        }
+    }
+
     private sealed class ReservedNotes
     {
         private readonly object gate = new();

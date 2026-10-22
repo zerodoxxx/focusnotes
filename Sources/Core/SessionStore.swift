@@ -32,6 +32,8 @@ public struct SessionCandidate: Sendable, Equatable {
 public enum SessionStoreError: Error, Sendable, LocalizedError {
     case ambiguous([SessionCandidate])
     case candidateNoLongerExists(String)
+    case invalidRename
+    case renameConflict
 
     public var errorDescription: String? {
         switch self {
@@ -39,6 +41,10 @@ public enum SessionStoreError: Error, Sendable, LocalizedError {
             return "Several sessions match this name."
         case .candidateNoLongerExists(let path):
             return "The selected session no longer exists at \(path)."
+        case .invalidRename:
+            return "Enter a session name without folder separators."
+        case .renameConflict:
+            return "A file with that name already exists in this folder."
         }
     }
 }
@@ -145,6 +151,55 @@ public actor SessionStore {
             throw SessionStoreError.candidateNoLongerExists(candidate.notePath)
         }
         return try start(title: existing.note.title, notePath: existing.notePath, existing: existing)
+    }
+
+    /// Renaming stays in the candidate's folder; this deliberately does not use
+    /// start(name:), whose qualified names may create directories or new notes.
+    public func rename(_ candidate: SessionCandidate, to rawName: String,
+                       beforeInstall: @Sendable (UInt64, UInt64) throws -> Void = { _, _ in }) throws -> Session {
+        let destination = try renameDestination(candidate, to: rawName)
+        do {
+            try NoteFile.renameSession(in: vault.rootAnchor, relativePath: candidate.notePath,
+                                       newName: (destination.notePath as NSString).lastPathComponent,
+                                       title: destination.name, beforeInstall: beforeInstall)
+        } catch let error as POSIXError where error.code == .EEXIST { throw SessionStoreError.renameConflict }
+        // The file is already committed. Keep the in-memory identity current even
+        // if persisting state fails; the app's rename intent repairs it on retry.
+        session = destination
+        try persist(destination)
+        return destination
+    }
+
+    public func renameDestination(_ candidate: SessionCandidate, to rawName: String) throws -> Session {
+        try vault.prepare()
+        guard !rawName.contains("/"), !rawName.contains("\\"), !rawName.contains("\0") else {
+            throw SessionStoreError.invalidRename
+        }
+        let title = NoteTitle.cleanTitle(rawName)
+        guard !title.isEmpty, title != ".", title != ".." else { throw SessionStoreError.invalidRename }
+        let stem = NoteTitle.fileStem(for: title)
+        guard !stem.hasPrefix("~$") else { throw SessionStoreError.invalidRename }
+        guard candidate.notePath.hasPrefix(Vault.sessionsDirectoryName + "/"),
+              try existingSessions().contains(where: { $0.notePath == candidate.notePath }) else {
+            throw SessionStoreError.candidateNoLongerExists(candidate.notePath)
+        }
+        let directory = (candidate.notePath as NSString).deletingLastPathComponent
+        do {
+            _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
+        } catch { throw SessionStoreError.invalidRename }
+        var renamed = Session(name: title, notePath: directory + "/" + stem + ".md", startedAt: now())
+        renamed.resumed = true
+        return renamed
+    }
+
+    /// Completes persisted identity migration after a committed file rename.
+    public func recoverRenamedSession(_ renamed: Session) throws {
+        guard renamed.notePath.hasPrefix(Vault.sessionsDirectoryName + "/"),
+              try existingSessions().contains(where: { $0.notePath == renamed.notePath }) else {
+            throw SessionStoreError.candidateNoLongerExists(renamed.notePath)
+        }
+        session = renamed
+        try persist(renamed)
     }
 
     /// Ends the active session and deletes the state file.

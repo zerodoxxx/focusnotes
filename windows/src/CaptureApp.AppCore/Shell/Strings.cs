@@ -55,6 +55,11 @@ public static class Strings
     public const string SessionNamePlaceholder = "Session name";
     public const string SelectSessionPlaceholder = "Select a session…";
     public const string MultipleSessionsTitle = "Multiple sessions found with the given name";
+    public const string SessionPickerHint = "Enter resumes · Ctrl+Enter renames";
+    public const string RenameSessionTitle = "Rename and resume session";
+    public const string RenameSessionHint = "Enter renames and resumes · Esc returns to sessions";
+    public const string RenameSessionFailureHint = "Check the name and file access. Existing files are kept.";
+    public const string CouldNotRenameSession = "Couldn't rename session";
     public const string SubheadingPlaceholder = "Subheading";
     public const string AddSubheadingTitle = "Add subheading";
     public const string RecentSection = "Recent";

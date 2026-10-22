@@ -98,6 +98,16 @@ Use a temporary vault and a disposable test folder under your home directory.
    Escape leaves the session state and both notes untouched. A unique nested
    bare-name match resumes its exact path, while `archive/Standup` resolves
    directly without a chooser. A missing qualified name creates a nested session.
+   **Rename from the chooser:** Highlight the archived session and press ⌘↩
+   (Ctrl+Enter on Windows). Confirm its current title is selected for editing.
+   Escape returns to the chooser without changing either file. Open rename again,
+   enter `Daily sync`, and confirm: only the archived file becomes
+   `Sessions/archive/Daily sync.md`, its `# ` heading changes, and the session
+   resumes there. Subsequent captures append to the renamed note. Check that
+   existing image links still resolve, a pin follows the renamed note, pending
+   journaled captures recover there, and Search drops the old path and finds the
+   new title. Try a separator-containing name and an existing filename with
+   different casing: both must show an error and leave the original intact.
 6. **Registry preservation and recovery:** With a disposable state directory,
    register two external notes, then replace `external-notes.json` with malformed
    bytes, version 2, or a symlink. Confirm Focusnotes warns that the registry was

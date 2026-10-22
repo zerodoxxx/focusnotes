@@ -53,6 +53,33 @@ public sealed class NotePinStore
         }
     }
 
+    public void Move(string oldPath, string newPath)
+    {
+        lock (gate)
+        {
+            if (oldPath == newPath) { return; }
+            var current = ReadForRename();
+            if (!current.Remove(oldPath)) { return; }
+            current.Add(newPath);
+            Write(current);
+        }
+    }
+
+    private HashSet<string> ReadForRename()
+    {
+        try
+        {
+            var paths = JsonSerializer.Deserialize<string[]>(File.ReadAllBytes(Url), JsonOptions);
+            return paths is null ? new(StringComparer.Ordinal) : new(paths, StringComparer.Ordinal);
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException or JsonException or NotSupportedException)
+        {
+            // A missing or malformed store follows the normal empty-store policy. Other I/O
+            // errors must retain the rename intent so an unreadable pin can migrate on retry.
+            return new(StringComparer.Ordinal);
+        }
+    }
+
     private HashSet<string> Read()
     {
         try

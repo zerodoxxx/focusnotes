@@ -3,7 +3,7 @@ using System.Text;
 
 namespace CaptureApp.Core;
 /// Safe reads and durable, exclusive writes for both vault and registered HOME files.
-public static class NoteFile
+public static partial class NoteFile
 {
     public static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     private static readonly ConcurrentDictionary<string, object> Gates = new(StringComparer.Ordinal);
