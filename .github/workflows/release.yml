@@ -290,8 +290,9 @@ jobs:
           $packId = "$appName-win-${{ matrix.arch }}"
           $packages = "$env:RUNNER_TEMP/pack/win-${{ matrix.arch }}"
           Start-Process -FilePath (Join-Path $packages "$packId-Setup.exe") -ArgumentList '--silent' -Wait
-          $inventoryArgs = @('-Layout', (Join-Path $env:LOCALAPPDATA $packId), '-Packages', $packages, '-Out', "$packages/signing-inventory-${{ matrix.arch }}.json")
-          if ('${{ needs.windows-gate.outputs.signing_enabled }}' -eq 'true') { $inventoryArgs += '-Enforce' }
+          # Hashtable splat: array splatting binds '-Layout' etc. positionally to PowerShell scripts.
+          $inventoryArgs = @{ Layout = (Join-Path $env:LOCALAPPDATA $packId); Packages = $packages; Out = "$packages/signing-inventory-${{ matrix.arch }}.json" }
+          if ('${{ needs.windows-gate.outputs.signing_enabled }}' -eq 'true') { $inventoryArgs.Enforce = $true }
           ./windows/scripts/signing-inventory.ps1 @inventoryArgs
 
       - uses: actions/upload-artifact@v7
