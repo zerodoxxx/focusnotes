@@ -214,11 +214,13 @@ public sealed class CaptureCoordinator
 
     private CaptureJob Prepare(PendingCapture capture, string? noteTitle, Destination? destination)
     {
-        var route = destination is null ? noteTitle ?? (capture.OutsideSession ? Vault.InboxTitle : null) : null;
-        var job = capture.Png is not null
-            ? Pipeline.PrepareImage(capture.Png, capture.Source, route, capture.Ocr, capture.Id, capture.CreatedAt)
-            : Pipeline.PrepareText(capture.Content.Value, capture.Source, route, null, capture.Id, capture.CreatedAt);
-        return destination is null ? job : Pipeline.WithDestination(job, destination);
+        // Resolve the outside fallback before preparation: title matching can pick
+        // another Inbox, and preparing then overriding still performs routing work.
+        if (destination is null && noteTitle is null && capture.OutsideSession)
+            destination = new(Pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+        return capture.Png is not null
+            ? Pipeline.PrepareImage(capture.Png, capture.Source, noteTitle, capture.Ocr, capture.Id, capture.CreatedAt, destination)
+            : Pipeline.PrepareText(capture.Content.Value, capture.Source, noteTitle, null, capture.Id, capture.CreatedAt, destination);
     }
 
     // Staging and commit.

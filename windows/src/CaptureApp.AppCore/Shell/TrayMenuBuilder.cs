@@ -12,6 +12,8 @@ public static class MenuIds
     public const string FinishSetup = "finish-setup";
     public const string CaptureSelection = "capture-selection";
     public const string CaptureArea = "capture-area";
+    public const string CaptureSelectionOutsideSession = "capture-selection-outside-session";
+    public const string CaptureAreaOutsideSession = "capture-area-outside-session";
     public const string Search = "search";
     public const string Session = "session";
     public const string WriteNote = "write-note";
@@ -71,6 +73,8 @@ public static class TrayMenuBuilder
 
         items.Add(Command(state, MenuIds.CaptureSelection, Strings.MenuCaptureSelection));
         items.Add(Command(state, MenuIds.CaptureArea, Strings.MenuCaptureArea));
+        items.Add(Command(state, MenuIds.CaptureSelectionOutsideSession, Strings.MenuCaptureSelectionOutsideSession));
+        items.Add(Command(state, MenuIds.CaptureAreaOutsideSession, Strings.MenuCaptureAreaOutsideSession));
         items.Add(Command(state, MenuIds.Search, Strings.MenuSearch));
         items.Add(Command(state, MenuIds.Session, state.SessionName is { } name ? Strings.MenuEndSession(name) : Strings.MenuStartSession));
         items.Add(Command(state, MenuIds.WriteNote, Strings.MenuWriteNote));

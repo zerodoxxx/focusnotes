@@ -173,11 +173,23 @@ Ctrl+Shift+Q / Ctrl+Shift+G for the outside-session selection / area captures.
    the note picker: each saves to Inbox, leaves Thermo unchanged, and keeps the
    session active. Repeat without a session. A normal capture's toast re-press
    must still open its existing destination picker.
+   Repeat with a session named `Inbox` and with a separate `science/Inbox.md` note:
+   Escape must always save to the vault's root `Inbox.md`, leaving those notes unchanged.
 5. Occupy either new capture chord with another app or a test host before
    registration. Confirm the existing unavailable-shortcuts warning appears,
-   release the chord, and use Retry Shortcuts. Both new captures should work.
+   then use **Capture Selection Outside Session…** and **Capture Area Outside Session…**
+   from the menu bar or Windows tray menu. Both must still open the destination picker.
+   Release the chord and use Retry Shortcuts. Both new shortcuts should work.
    On Windows, rebind both under Settings → Shortcuts and confirm the displayed
-   combinations and handlers follow the saved bindings.
+   combinations and menu labels follow the saved bindings. Turn the shortcuts off
+   and repeat both tray commands; selection must still capture the original application's text.
+6. **Windows upgrade:** In a disposable profile from the previous version, bind Search to
+   Ctrl+Shift+Q and Session to Ctrl+Shift+G. Upgrade and confirm both actions keep those
+   bindings; the new captures get distinct alternatives shown in Settings and the tray menu.
+   Repeat with Quick Note bound to Ctrl+Shift+N and another customized shortcut. Confirm
+   only the now-reserved combination gets a replacement, Settings explains it, and changing
+   either shortcut works without resetting the others. Restart after saving and confirm
+   the chosen bindings and unrelated settings remain intact.
 
 # Quick note panel (⌥⇧N)
 

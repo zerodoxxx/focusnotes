@@ -14,6 +14,116 @@ func checkAppReliability() async throws {
     try await checkSessionRenameCrashBoundaries()
     try await checkSessionRenameAbandonment()
     try await checkSessionPickerEscapeRestoresSelection()
+    try await checkOutsideCaptureInboxCollisions()
+    try await checkFixedCapturePreparationBypassesRouting()
+}
+
+@MainActor
+private func checkOutsideCaptureInboxCollisions() async throws {
+    for image in [false, true] {
+        for nestedInbox in [false, true] {
+            for completion in ["escape", "shutdown", "replay"] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("outside-inbox-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: root) }
+                let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+                let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+                let session = try await pipeline.sessions.start(name: "Inbox")
+                let sessionURL = vaultRoot.appendingPathComponent(session.notePath)
+                let sessionBefore = try Data(contentsOf: sessionURL)
+                let nestedURL = vaultRoot.appendingPathComponent("science/Inbox.md")
+                let nestedBefore = Data("# Inbox\n\nKeep this nested note unchanged.\n".utf8)
+                if nestedInbox {
+                    try FileManager.default.createDirectory(at: nestedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try nestedBefore.write(to: nestedURL)
+                }
+                let png = Data([137, 80, 78, 71])
+                let capture = PendingCapture(trigger: image ? .region : .selection,
+                                             content: image ? .image(png: png, ocr: "outside recovery OCR") : .text("outside recovery capture"),
+                                             source: CaptureSource(appName: "Outside collision check", windowTitle: nil), subtitle: "check")
+                // Escape runs the actual picker callback; other cases need no panel.
+                let controller = AppController(pipeline: pipeline, presentsUI: completion == "escape")
+                defer { controller.inputForChecks?.dismiss() }
+                await controller.stage(capture, outsideSession: true)
+                let records = try await pipeline.journal.recordURLs()
+                guard records.count == 1 else { throw SelfTestFailure("Outside capture was not journaled before choosing a note") }
+                let journaled = try await pipeline.journal.load(record: records[0])
+                let inbox = Destination(url: pipeline.vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+                guard journaled.prepared.destination == inbox, await pipeline.sessions.current() == session else {
+                    throw SelfTestFailure("Outside default matched a session or nested note named Inbox")
+                }
+                if completion == "escape" {
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+                    while controller.inputForChecks == nil, ContinuousClock.now < deadline {
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                    guard let input = controller.inputForChecks,
+                          let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                      windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53) else {
+                        throw SelfTestFailure("Outside capture did not present its picker")
+                    }
+                    _ = input.handleKeyForChecks(event)
+                    while controller.inputForChecks != nil, ContinuousClock.now < deadline {
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                    guard controller.inputForChecks == nil else {
+                        throw SelfTestFailure("Escape did not finish the outside capture picker callback")
+                    }
+                    _ = await controller.beginTermination().value
+                } else if completion == "shutdown" {
+                    _ = await controller.beginTermination().value
+                }
+                let reopened = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+                let restored = await reopened.replayUnsaved()
+                guard restored == (completion == "replay" ? 1 : 0),
+                      try await reopened.index.capture(id: capture.id)?.notePath == "Inbox.md",
+                      try Data(contentsOf: sessionURL) == sessionBefore,
+                      await reopened.sessions.current() == session else {
+                    throw SelfTestFailure("Outside capture \(completion) rerouted its journaled Inbox destination")
+                }
+                if nestedInbox, try Data(contentsOf: nestedURL) != nestedBefore {
+                    throw SelfTestFailure("Outside capture modified a nested note named Inbox")
+                }
+                if image {
+                    guard case .image(let asset) = journaled.prepared.capture.content,
+                          try await reopened.assetData(asset) == png else {
+                        throw SelfTestFailure("Outside image recovery lost its pixels")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+private func checkFixedCapturePreparationBypassesRouting() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("fixed-capture-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let registry = state.appendingPathComponent("external-notes.json")
+    let invalidRegistry = Data("{invalid JSON".utf8)
+    try invalidRegistry.write(to: registry)
+    let probe = Capture(id: UUID(), createdAt: Date(), content: .text("routing probe"),
+                        source: CaptureSource(appName: "Fixed routing check", windowTitle: nil))
+    do {
+        _ = try await pipeline.service.prepare(probe, noteTitle: nil)
+        throw SelfTestFailure("Routing probe unexpectedly accepted a damaged registry")
+    } catch is ExternalNoteRegistryError {}
+    let inboxBefore = try Data(contentsOf: pipeline.vault.inboxURL)
+    let inbox = Destination(url: pipeline.vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+    for image in [false, true] {
+        let capture = PendingCapture(trigger: image ? .region : .selection,
+                                     content: image ? .image(png: Data([137, 80, 78, 71]), ocr: nil) : .text("fixed capture"),
+                                     source: CaptureSource(appName: "Fixed routing check", windowTitle: nil), subtitle: "check")
+        let outside = try await pipeline.prepare(capture, noteTitle: nil, outsideSession: true)
+        let fixed = try await pipeline.prepare(capture, noteTitle: "../invalid", destination: inbox)
+        guard outside.prepared.destination == inbox, fixed.prepared.destination == inbox,
+              try Data(contentsOf: registry) == invalidRegistry,
+              try Data(contentsOf: pipeline.vault.inboxURL) == inboxBefore,
+              try FileManager.default.contentsOfDirectory(atPath: pipeline.vault.root.appendingPathComponent("assets").path).isEmpty else {
+            throw SelfTestFailure("Fixed preparation routed or wrote files before honoring its destination")
+        }
+    }
 }
 
 private enum RenameCheckError: Error { case originalFailure }

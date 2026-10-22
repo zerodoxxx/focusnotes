@@ -101,6 +101,8 @@ internal sealed partial class AppController
         {
             [MenuIds.CaptureSelection] = BindingText(HotkeyAction.CaptureSelection),
             [MenuIds.CaptureArea] = BindingText(HotkeyAction.CaptureArea),
+            [MenuIds.CaptureSelectionOutsideSession] = BindingText(HotkeyAction.CaptureSelectionOutsideSession),
+            [MenuIds.CaptureAreaOutsideSession] = BindingText(HotkeyAction.CaptureAreaOutsideSession),
             [MenuIds.Search] = BindingText(HotkeyAction.SearchNotes),
             [MenuIds.Session] = BindingText(HotkeyAction.ToggleSession),
             [MenuIds.WriteNote] = BindingText(HotkeyAction.WriteNote),
@@ -113,6 +115,8 @@ internal sealed partial class AppController
             {
                 HotkeyAction.CaptureSelection => MenuIds.CaptureSelection,
                 HotkeyAction.CaptureArea => MenuIds.CaptureArea,
+                HotkeyAction.CaptureSelectionOutsideSession => MenuIds.CaptureSelectionOutsideSession,
+                HotkeyAction.CaptureAreaOutsideSession => MenuIds.CaptureAreaOutsideSession,
                 HotkeyAction.SearchNotes => MenuIds.Search,
                 HotkeyAction.ToggleSession => MenuIds.Session,
                 HotkeyAction.WriteNote => MenuIds.WriteNote,
@@ -135,6 +139,8 @@ internal sealed partial class AppController
             case MenuIds.FinishSetup: OpenSetup(manual: true); break;
             case MenuIds.CaptureSelection: AfterMenu(() => _ = CaptureSelectionFromMenuAsync()); break;
             case MenuIds.CaptureArea: AfterMenu(() => Capture(CaptureTrigger.Region, false, FrontmostContext.Capture())); break;
+            case MenuIds.CaptureSelectionOutsideSession: AfterMenu(() => _ = CaptureSelectionFromMenuAsync(outsideSession: true)); break;
+            case MenuIds.CaptureAreaOutsideSession: AfterMenu(() => Capture(CaptureTrigger.Region, false, FrontmostContext.Capture(), outsideSession: true)); break;
             case MenuIds.Search: OpenSearch(); break;
             case MenuIds.Session: ToggleSession(); break;
             case MenuIds.WriteNote: OpenNoteEditor(); break;
@@ -166,7 +172,7 @@ internal sealed partial class AppController
         timer.Start();
     }
 
-    private async Task CaptureSelectionFromMenuAsync()
+    private async Task CaptureSelectionFromMenuAsync(bool outsideSession = false)
     {
         try
         {
@@ -174,7 +180,7 @@ internal sealed partial class AppController
                 hadTarget => Coordinator.ShowToast(hadTarget
                     ? new(AppToastStyle.Warning, PlatformStrings.CouldNotCapture)
                     : new(AppToastStyle.Warning, PlatformStrings.NoTextSelected, Strings.NoTextSelectedSubtitle(BindingText(HotkeyAction.CaptureArea)))),
-                context => Capture(CaptureTrigger.Selection, false, context));
+                context => Capture(CaptureTrigger.Selection, false, context, outsideSession));
         }
         catch (Exception error)
         {

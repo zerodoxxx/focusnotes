@@ -362,7 +362,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
         let preparation = Task.detached(priority: .userInitiated) {
-            try await pipeline.prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil)
+            try await pipeline.prepare(capture, noteTitle: nil, outsideSession: outsideSession)
         }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
@@ -392,7 +392,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let recovered = try? await recovery?.value
-            return try await pipeline.prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil, destination: recovered?.prepared.destination)
+            return try await pipeline.prepare(capture, noteTitle: nil, destination: recovered?.prepared.destination, outsideSession: outsideSession)
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
@@ -438,7 +438,7 @@ final class AppController: NSObject, NSMenuDelegate {
             if let recovery { destination = try? await recovery.value.prepared.destination }
             else if noteTitle == nil { destination = try? await staged?.preparation.value.prepared.destination }
             else { destination = nil }
-            return try await pipeline.prepare(capture, noteTitle: noteTitle ?? (outsideSession ? Vault.inboxTitle : nil), destination: destination)
+            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination, outsideSession: outsideSession)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
@@ -575,7 +575,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 _ = controller?.commitPending(noteTitle: noteTitle, announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending(noteTitle: outsideSession ? Vault.inboxTitle : nil, announce: outsideSession)
+                _ = controller?.commitPending(announce: outsideSession)
             })
         }
     }

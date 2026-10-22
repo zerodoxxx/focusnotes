@@ -3,12 +3,17 @@ using CaptureApp.Core;
 
 namespace CaptureApp.Platform.Hotkeys;
 
+public sealed record HotkeyBindingAdjustment(HotkeyAction Action, KeyChord PreviousChord, KeyChord Replacement, string Reason);
+
 /// <summary>Reads and updates the settings.json "shortcuts" section while preserving the other sections.</summary>
 public sealed class HotkeyBindingStore
 {
     private const string Section = "shortcuts";
 
     private readonly string _settingsPath;
+
+    /// <summary>Upgrade adjustments in the most recently loaded bindings, for display in shortcut settings.</summary>
+    public IReadOnlyList<HotkeyBindingAdjustment> Adjustments { get; private set; } = [];
 
     public HotkeyBindingStore(string settingsPath)
     {
@@ -18,11 +23,13 @@ public sealed class HotkeyBindingStore
 
     public IReadOnlyDictionary<HotkeyAction, KeyChord> Load()
     {
-        var bindings = new Dictionary<HotkeyAction, KeyChord>(HotkeyDefaults.All);
+        Adjustments = [];
+        var bindings = new Dictionary<HotkeyAction, KeyChord>();
+        var retiredBindings = new Dictionary<HotkeyAction, KeyChord>();
         var shortcutsNode = SectionedJsonFile.ReadSection(_settingsPath, Section);
         if (shortcutsNode is null)
         {
-            return bindings;
+            return new Dictionary<HotkeyAction, KeyChord>(HotkeyDefaults.All);
         }
 
         if (shortcutsNode is not JsonObject shortcuts)
@@ -32,7 +39,7 @@ public sealed class HotkeyBindingStore
 
         foreach (var pair in shortcuts)
         {
-            if (!Enum.TryParse<HotkeyAction>(pair.Key, ignoreCase: true, out var action))
+            if (!Enum.TryParse<HotkeyAction>(pair.Key, ignoreCase: true, out var action) || !Enum.IsDefined(action))
             {
                 continue;
             }
@@ -55,12 +62,57 @@ public sealed class HotkeyBindingStore
             var validation = HotkeyValidator.Validate(chord);
             if (!validation.IsValid)
             {
+                // This chord was valid before the editor gained its outside-session command.
+                // Isolate that upgrade instead of discarding every saved customization.
+                if (chord == new KeyChord(HotkeyModifiers.Control | HotkeyModifiers.Shift, 'N'))
+                {
+                    retiredBindings[action] = chord;
+                    continue;
+                }
+
                 throw new InvalidDataException($"The shortcut for {action} is not allowed: {validation.Error}");
             }
 
             bindings[action] = chord;
         }
 
+        var occupied = bindings.Values.ToHashSet();
+        var pending = new List<HotkeyAction>();
+        var adjustments = new List<HotkeyBindingAdjustment>();
+        // Every explicit valid binding wins, even when it uses a newly introduced default.
+        // Reserve the remaining defaults before choosing fallback letters for conflicts.
+        foreach (var action in HotkeyDefaults.All.Keys.Order())
+        {
+            if (bindings.ContainsKey(action)) { continue; }
+            var desired = HotkeyDefaults.For(action);
+            if (occupied.Add(desired))
+            {
+                bindings[action] = desired;
+                if (retiredBindings.TryGetValue(action, out var previous))
+                {
+                    adjustments.Add(new(action, previous, desired, "The previous combination is now used inside note panels."));
+                }
+            }
+            else
+            {
+                pending.Add(action);
+            }
+        }
+
+        foreach (var action in pending)
+        {
+            // Alt+Shift does not invoke AltGr. There are more fallback letters than actions.
+            var replacement = AltGrGuard.FallbackOrder.Select(letter => new KeyChord(HotkeyDefaults.Modifiers, letter))
+                .First(chord => !occupied.Contains(chord));
+            occupied.Add(replacement);
+            bindings[action] = replacement;
+            var retired = retiredBindings.TryGetValue(action, out var previous);
+            adjustments.Add(new(action, retired ? previous : HotkeyDefaults.For(action), replacement,
+                retired ? "The previous combination is now used inside note panels; the default is already assigned."
+                        : "The default combination is already assigned to a saved shortcut."));
+        }
+
+        Adjustments = adjustments.AsReadOnly();
         return bindings;
     }
 

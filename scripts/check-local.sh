@@ -18,6 +18,12 @@ is_host_source() {
       case "$1" in windows/*) return 1 ;; esac
       ;;
     MINGW*|MSYS*|CYGWIN*)
+      # ManifestSyncTests reads the Swift manifest/model ID; Windows embedding
+      # and tokenizer parity tests use the Mac fixtures too. Keep in sync with
+      # scripts/ci_selection.py before excluding other Swift-only inputs.
+      case "$1" in
+        Sources/EmbedKit/ModelManifest.swift|Sources/EmbedKit/Embedder.swift|Sources/EmbedChecks/Fixtures/*) return 0 ;;
+      esac
       case "$1" in Sources/*|Package.swift|Package.resolved|assets/*) return 1 ;; esac
       ;;
   esac

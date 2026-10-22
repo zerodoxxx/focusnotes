@@ -58,17 +58,26 @@ public sealed class OutsideSessionTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task OutsideCapturePromptsImmediatelyAndEscUsesJournaledInbox(bool image)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task OutsideCapturePromptsImmediatelyAndEscUsesJournaledInbox(bool image, bool nestedInbox)
     {
         using var temp = new TempDirectory();
         using var pipeline = Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
-        var session = await coordinator.StartSessionAsync("Thermo");
+        var session = await coordinator.StartSessionAsync("Inbox");
         var sessionUrl = pipeline.Vault.ManagedUrl(session.NotePath);
         var before = File.ReadAllText(sessionUrl);
+        var nestedUrl = Path.Combine(pipeline.Vault.Root, "science", "Inbox.md");
+        const string nestedBefore = "# Inbox\n\nKeep this note unchanged.\n";
+        if (nestedInbox)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(nestedUrl)!);
+            File.WriteAllText(nestedUrl, nestedBefore);
+        }
         Guid? requested = null;
         coordinator.ChooseNoteRequested = id => requested = id;
         var capture = (image ? PendingCaptures.Image([137, 80, 78, 71], "OCR text", new())
@@ -76,17 +85,98 @@ public sealed class OutsideSessionTests
         await coordinator.StageAsync(capture);
         Assert.Equal(capture.Id, requested);
         Assert.False(coordinator.HasPendingToast);
-        Assert.Equal(pipeline.Vault.InboxUrl, pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths())).Prepared.Destination.Url);
-        var saved = await coordinator.CommitPending(announce: true)!;
-        Assert.Equal(pipeline.Vault.InboxUrl, saved.Destination.Url);
-        Assert.Equal(before, File.ReadAllText(sessionUrl));
+        var journaled = pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths())).Prepared.Destination;
+        Assert.Equal(new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox), journaled);
         Assert.Equal(session, pipeline.Sessions.Current());
+        // Cancelling keeps the staged destination even if session state changes.
+        pipeline.Sessions.End();
+        var saved = await coordinator.CommitPending(announce: true)!;
+        Assert.Equal(journaled, saved.Destination);
+        Assert.Equal(before, File.ReadAllText(sessionUrl));
+        Assert.Null(pipeline.Sessions.Current());
+        if (nestedInbox) Assert.Equal(nestedBefore, File.ReadAllText(nestedUrl));
         if (image)
         {
             var asset = Assert.Single(Directory.GetFiles(pipeline.Vault.AssetsUrl));
             Assert.Equal(capture.Png, File.ReadAllBytes(asset));
             Assert.Contains("assets/", File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
         }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task OutsideCaptureShutdownAndReplayKeepActualInbox(bool image, bool replay)
+    {
+        using var temp = new TempDirectory();
+        Guid id;
+        string sessionUrl;
+        string sessionBefore;
+        string nestedUrl;
+        const string nestedBefore = "# Inbox\n\nPreserve nested Inbox.\n";
+        using (var pipeline = Open(temp))
+        {
+            var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+            var session = await coordinator.StartSessionAsync("Inbox");
+            sessionUrl = pipeline.Vault.ManagedUrl(session.NotePath);
+            sessionBefore = File.ReadAllText(sessionUrl);
+            nestedUrl = Path.Combine(pipeline.Vault.Root, "science", "Inbox.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(nestedUrl)!);
+            File.WriteAllText(nestedUrl, nestedBefore);
+            var capture = (image ? PendingCaptures.Image([137, 80, 78, 71], "recovery OCR", new())
+                : PendingCaptures.Selection("outside recovery capture", new())) with { OutsideSession = true };
+            id = capture.Id;
+            await coordinator.StageAsync(capture);
+            var destination = pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths())).Prepared.Destination;
+            Assert.Equal(new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox), destination);
+            if (!replay)
+            {
+                Assert.True(await coordinator.BeginTermination());
+                Assert.Empty(pipeline.Journal.RecordPaths());
+                Assert.Equal("Inbox.md", pipeline.Index.Capture(id)?.NotePath);
+            }
+        }
+        using var reopened = Open(temp);
+        Assert.Equal(replay ? 1 : 0, await reopened.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("Inbox.md", reopened.Index.Capture(id)?.NotePath);
+        Assert.Equal(sessionBefore, File.ReadAllText(sessionUrl));
+        Assert.Equal(nestedBefore, File.ReadAllText(nestedUrl));
+        Assert.Equal("Inbox", reopened.Sessions.Current()?.Name);
+        if (image)
+        {
+            var asset = Assert.Single(Directory.GetFiles(reopened.Vault.AssetsUrl));
+            Assert.Equal(new byte[] { 137, 80, 78, 71 }, File.ReadAllBytes(asset));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FixedDestinationsBypassRoutingBeforePreparation(bool image)
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var destination = new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+        var registry = Path.Combine(pipeline.StateDirectory, "external-notes.json");
+        const string invalidRegistry = "{invalid JSON";
+        var inboxBefore = File.ReadAllText(pipeline.Vault.InboxUrl);
+        File.WriteAllText(registry, invalidRegistry);
+        var capture = new Capture(Guid.NewGuid(), DateTimeOffset.UtcNow, CaptureContent.Text("routing probe"), new());
+        Assert.Throws<ExternalNoteRegistryException>(() => pipeline.Service.Prepare(capture));
+        var prepared = image
+            ? pipeline.PrepareImage([137, 80, 78, 71], new(), destination: destination)
+            : pipeline.PrepareText("fixed capture", new(), destination: destination);
+        Assert.Equal(destination, prepared.Prepared.Destination);
+        Assert.Equal(invalidRegistry, File.ReadAllText(registry));
+        Assert.Equal(inboxBefore, File.ReadAllText(pipeline.Vault.InboxUrl));
+        Assert.Empty(Directory.GetFiles(pipeline.Vault.AssetsUrl));
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        var outside = (image ? PendingCaptures.Image([137, 80, 78, 71], null, new())
+            : PendingCaptures.Selection("outside routing probe", new())) with { OutsideSession = true };
+        await coordinator.StageAsync(outside);
+        Assert.Equal(destination, pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths())).Prepared.Destination);
     }
 
     [Theory]

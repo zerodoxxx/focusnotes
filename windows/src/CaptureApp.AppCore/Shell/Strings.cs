@@ -134,6 +134,8 @@ public static class Strings
     // Tray menu.
     public const string MenuCaptureSelection = "Capture Selection";
     public const string MenuCaptureArea = "Capture Area";
+    public const string MenuCaptureSelectionOutsideSession = "Capture Selection Outside Session…";
+    public const string MenuCaptureAreaOutsideSession = "Capture Area Outside Session…";
     public const string MenuSearch = "Search Notes…";
     public const string MenuStartSession = "Start Session…";
     public const string MenuWriteNote = "Write a Note…";

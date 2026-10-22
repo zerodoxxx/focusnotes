@@ -212,6 +212,8 @@ These defaults are provisional until they are tested against common apps on real
 <kbd>Ctrl+P</kbd> browses notes, <kbd>Ctrl+Shift+N</kbd> toggles **Write outside session** while a session
 is active, and <kbd>Esc</kbd> closes it and keeps your draft. <kbd>Ctrl+N</kbd> on a blank editor returns
 to the session. Outside-session captures open the same note picker; <kbd>Esc</kbd> saves to Inbox.
+Both outside-session capture commands are also available from the tray menu, including when their shortcuts are turned off or unavailable.
+After an upgrade, existing custom shortcuts take priority over new defaults. Settings shows any replacement needed for a conflict or a combination newly reserved by the editor; use **Change…** to choose another shortcut.
 
 ### Where things live on Windows
 

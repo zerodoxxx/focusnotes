@@ -82,23 +82,23 @@ public sealed class CapturePipeline : IDisposable
     }
 
     public CaptureJob PrepareText(string text, CaptureSource source, string? noteTitle = null, string? noteDraft = null,
-        Guid? id = null, DateTimeOffset? createdAt = null)
-        => PrepareLocked(() => PrepareTextCore(text, source, noteTitle, noteDraft, id, createdAt));
+        Guid? id = null, DateTimeOffset? createdAt = null, Destination? destination = null)
+        => PrepareLocked(() => PrepareTextCore(text, source, noteTitle, noteDraft, id, createdAt, destination));
 
     private CaptureJob PrepareTextCore(string text, CaptureSource source, string? noteTitle, string? noteDraft,
-        Guid? id, DateTimeOffset? createdAt)
+        Guid? id, DateTimeOffset? createdAt, Destination? destination)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Text(text), source);
-        return new(Service.Prepare(capture, noteTitle), NoteDraft: noteDraft);
+        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), NoteDraft: noteDraft);
     }
 
     public CaptureJob PrepareImage(byte[] png, CaptureSource source, string? noteTitle = null, string? ocr = null,
-        Guid? id = null, DateTimeOffset? createdAt = null)
-        => PrepareLocked(() => PrepareImageCore(png, source, noteTitle, ocr, id, createdAt));
+        Guid? id = null, DateTimeOffset? createdAt = null, Destination? destination = null)
+        => PrepareLocked(() => PrepareImageCore(png, source, noteTitle, ocr, id, createdAt, destination));
 
     private CaptureJob PrepareImageCore(byte[] png, CaptureSource source, string? noteTitle, string? ocr,
-        Guid? id, DateTimeOffset? createdAt)
+        Guid? id, DateTimeOffset? createdAt, Destination? destination)
     {
         ThrowIfDisposed();
         var captureId = id ?? Guid.NewGuid();
@@ -106,7 +106,7 @@ public sealed class CapturePipeline : IDisposable
         var stamp = CaptureFormat.LocalStamp(created, "yyyy-MM-dd-HHmmss", TimeZone);
         var asset = $"{Vault.AssetsDirectoryName}/{stamp}-{captureId.ToString("D").ToLowerInvariant()}.png";
         var capture = new Capture(captureId, created, CaptureContent.Image(asset), source);
-        return new(Service.Prepare(capture, noteTitle), png, ocr);
+        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), png, ocr);
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,

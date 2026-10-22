@@ -74,6 +74,15 @@ class SelectionTests(unittest.TestCase):
             (["Package.swift", "Package.resolved"], (True, False)),
             (["windows/src/CaptureApp.App/AppController.cs"], (False, True)),
             (["Sources/Core/Fixtures/README.md"], (True, False)),
+            (["Sources/EmbedKit/ModelManifest.swift"], (True, True)),
+            (["Sources/EmbedKit/Embedder.swift"], (True, True)),
+            (["Sources/EmbedChecks/Fixtures/tokenizer.json"], (True, True)),
+            (["Sources/EmbedChecks/Fixtures/embeddings.json"], (True, True)),
+            (["Sources/EmbedChecks/Fixtures/token-bucket.png"], (True, True)),
+            (["Sources/EmbedChecks/Fixtures/bar-chart.png"], (True, True)),
+            (["Sources/EmbedChecks/Fixtures/nested/README.md"], (True, True)),
+            (["Sources/EmbedKit/Tokenizer.swift"], (True, False)),
+            (["Sources/EmbedChecks/main.swift", "Sources/EmbedChecks/Fixtures-old/example.json"], (True, False)),
             (["conformance/scenarios/router/test.json"], (True, True)),
             (["Config/app.env"], (True, True)),
             ([".github/workflows/checks.yml"], (True, True)),
@@ -101,6 +110,14 @@ class SelectionTests(unittest.TestCase):
         with patch.object(ci, "changed_paths", return_value=["windows/tests/NewTests.cs"]):
             selected = ci.selection("pull_request", pr_event(), False)
         self.assertEqual((selected["macos"], selected["windows"], selected["full"]), ("false", "true", "false"))
+
+    def test_shared_embedding_inputs_select_both_lean_platforms(self):
+        for path in ("Sources/EmbedKit/ModelManifest.swift", "Sources/EmbedKit/Embedder.swift",
+                     "Sources/EmbedChecks/Fixtures/tokenizer.json", "Sources/EmbedChecks/Fixtures/embeddings.json",
+                     "Sources/EmbedChecks/Fixtures/token-bucket.png", "Sources/EmbedChecks/Fixtures/bar-chart.png"):
+            with self.subTest(path=path), patch.object(ci, "changed_paths", return_value=[path]):
+                selected = ci.selection("pull_request", pr_event(), False)
+                self.assertEqual((selected["macos"], selected["windows"], selected["full"]), ("true", "true", "false"))
 
     def test_bad_diff_falls_back_to_both_platforms(self):
         with patch.object(ci, "changed_paths", side_effect=subprocess.CalledProcessError(1, "git")), redirect_stdout(StringIO()):

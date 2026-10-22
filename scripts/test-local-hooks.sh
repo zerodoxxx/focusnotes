@@ -176,6 +176,45 @@ export HOOK_TEST_FAIL_BUILD=1
 if push_update "$windows_tip" "$tip"; then echo 'Ignored a failing build.' >&2; exit 1; fi
 unset HOOK_TEST_FAIL_BUILD
 
+# Windows checks also consume Swift model metadata and the Mac embedding and
+# tokenizer fixtures. Exercise each dependency independently on both hosts.
+mkdir -p Sources/EmbedKit Sources/EmbedChecks/Fixtures/nested docs
+for path in Sources/EmbedKit/ModelManifest.swift Sources/EmbedKit/Embedder.swift \
+    Sources/EmbedChecks/Fixtures/tokenizer.json Sources/EmbedChecks/Fixtures/embeddings.json \
+    Sources/EmbedChecks/Fixtures/token-bucket.png Sources/EmbedChecks/Fixtures/bar-chart.png \
+    Sources/EmbedChecks/Fixtures/nested/README.md; do
+  previous_tip="$(git rev-parse HEAD)"
+  commit_file "$path" 'shared embedding input'
+  shared_embedding_tip="$(git rev-parse HEAD)"
+  for HOOK_TEST_HOST in MINGW64_NT-10.0 Darwin; do
+    : > "$HOOK_TEST_LOG"
+    push_update "$shared_embedding_tip" "$previous_tip"
+    if [[ "$HOOK_TEST_HOST" == Darwin ]]; then
+      expect_line 'swift build'
+    else
+      expect_line 'dotnet build CaptureApp.sln -c Release --no-restore -m:1 -warnaserror'
+    fi
+  done
+done
+export HOOK_TEST_HOST=MINGW64_NT-10.0
+printf 'untracked fixture\n' > Sources/EmbedChecks/Fixtures/untracked.png
+if push_update "$shared_embedding_tip" "$previous_tip"; then echo 'Accepted an untracked shared fixture on Windows.' >&2; exit 1; fi
+rm Sources/EmbedChecks/Fixtures/untracked.png
+
+# A shared fixture removed or moved into docs still affects Windows parity tests.
+git mv Sources/EmbedChecks/Fixtures/tokenizer.json docs/removed-tokenizer.json
+git commit -qm 'move shared fixture into docs'
+removed_fixture_tip="$(git rev-parse HEAD)"
+: > "$HOOK_TEST_LOG"
+push_update "$removed_fixture_tip" "$shared_embedding_tip"
+expect_line 'dotnet build CaptureApp.sln -c Release --no-restore -m:1 -warnaserror'
+
+# The exception must not make unrelated Swift source trigger Windows builds.
+commit_file Sources/Core/Example.swift 'Mac-only source'
+: > "$HOOK_TEST_LOG"
+push_update "$(git rev-parse HEAD)" "$removed_fixture_tip"
+expect_empty_log 'Mac-only source ran Windows checks.'
+
 # A merge commit can add source that appears in neither of its own branch's
 # ordinary commits. New-branch selection must include merge-parent diffs.
 export HOOK_TEST_HOST=Darwin

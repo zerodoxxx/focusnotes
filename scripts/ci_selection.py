@@ -20,7 +20,11 @@ def platforms_for_paths(paths: list[str]) -> tuple[bool, bool]:
             "/" not in path and (path.endswith(".md") or path in {"LICENSE", "SECURITY.txt"})
         ):
             continue
-        if path.startswith("Sources/") or path in {"Package.swift", "Package.resolved"}:
+        # Windows ManifestSyncTests reads these Swift inputs, and its tokenizer/
+        # embedding parity tests consume the same fixtures as the Mac checks.
+        if path in {"Sources/EmbedKit/ModelManifest.swift", "Sources/EmbedKit/Embedder.swift"} or path.startswith("Sources/EmbedChecks/Fixtures/"):
+            macos = windows = True
+        elif path.startswith("Sources/") or path in {"Package.swift", "Package.resolved"}:
             macos = True
         elif path.startswith("windows/"):
             windows = True

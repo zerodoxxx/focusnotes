@@ -33,6 +33,8 @@ internal static class AppSelfTest
         {
             [MenuIds.CaptureSelection] = HotkeyDefaults.For(HotkeyAction.CaptureSelection).DisplayString,
             [MenuIds.CaptureArea] = HotkeyDefaults.For(HotkeyAction.CaptureArea).DisplayString,
+            [MenuIds.CaptureSelectionOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureSelectionOutsideSession).DisplayString,
+            [MenuIds.CaptureAreaOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureAreaOutsideSession).DisplayString,
             [MenuIds.Search] = HotkeyDefaults.For(HotkeyAction.SearchNotes).DisplayString,
             [MenuIds.Session] = HotkeyDefaults.For(HotkeyAction.ToggleSession).DisplayString,
             [MenuIds.WriteNote] = HotkeyDefaults.For(HotkeyAction.WriteNote).DisplayString,
