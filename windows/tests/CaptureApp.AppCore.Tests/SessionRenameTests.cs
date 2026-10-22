@@ -9,6 +9,23 @@ namespace CaptureApp.AppCore.Tests;
 public sealed class SessionRenameTests
 {
     [Fact]
+    public async Task SuccessfulRenameFeedbackDoesNotRepeatAFailedIndexCacheUpdate()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var session = pipeline.Sessions.Start("Standup");
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        pipeline.Index.Dispose(); // The pipeline treats search-cache failure as repairable.
+
+        var outcome = await coordinator.RenameSessionAsync(Candidate(session), "Daily sync");
+
+        Assert.False(outcome.IdentityUpdatePending);
+        Assert.Equal(outcome.Session, coordinator.ActiveSession);
+        Assert.True(File.Exists(pipeline.Vault.ManagedUrl(outcome.Session.NotePath)));
+        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+    }
+
+    [Fact]
     public void FailedMoveImmediatelyClearsIntentBeforeLaterSourceEdits()
     {
         using var temp = new TempDirectory();

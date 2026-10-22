@@ -565,7 +565,8 @@ public sealed class CaptureCoordinator
             host.StatusChanged();
             if (outcome.IdentityUpdatePending)
                 ShowToast(new(AppToastStyle.Warning, $"Session rename pending · {outcome.Session.Name}", "State updates will retry before the next save."));
-            else ActivateSession(outcome.Session);
+            else ShowToast(new(AppToastStyle.Session, Strings.SessionStarted(outcome.Session.Name, true),
+                Strings.SessionCapturesGoHere(host.SessionBinding)));
             return outcome;
         }
         finally
