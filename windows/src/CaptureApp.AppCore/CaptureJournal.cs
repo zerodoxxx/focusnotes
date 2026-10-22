@@ -3,12 +3,12 @@ using CaptureApp.Core;
 
 namespace CaptureApp.AppCore;
 
-public sealed record CaptureJob(PreparedCapture Prepared, byte[]? Png = null, string? Ocr = null, string? NoteDraft = null, bool NoteOutsideSession = false);
+public sealed record CaptureJob(PreparedCapture Prepared, byte[]? Png = null, string? Ocr = null, string? NoteDraft = null, bool NoteOutsideSession = false, NoteFolder? NoteFolder = null);
 
 /// Durable append intent. Records are written before a capture reaches the vault.
 public sealed class CaptureJournal
 {
-    private sealed record JournalRecord(PreparedCapture Prepared, bool HasPNG, string? Ocr, string? NoteDraft, bool NoteOutsideSession = false);
+    private sealed record JournalRecord(PreparedCapture Prepared, bool HasPNG, string? Ocr, string? NoteDraft, bool NoteOutsideSession = false, NoteFolder? NoteFolder = null);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -50,7 +50,7 @@ public sealed class CaptureJournal
                 AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
             }
 
-            var record = new JournalRecord(job.Prepared, job.Png is not null, job.Ocr, job.NoteDraft, job.NoteOutsideSession);
+            var record = new JournalRecord(job.Prepared, job.Png is not null, job.Ocr, job.NoteDraft, job.NoteOutsideSession, job.NoteFolder);
             AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".json"), JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions));
             logger.Debug($"Stored capture journal record {stem}.");
         }
@@ -122,7 +122,7 @@ public sealed class CaptureJournal
                 }
             }
 
-            return Resolve(new(record.Prepared, png, record.Ocr, record.NoteDraft, record.NoteOutsideSession));
+            return Resolve(new(record.Prepared, png, record.Ocr, record.NoteDraft, record.NoteOutsideSession, record.NoteFolder));
         }
     }
 

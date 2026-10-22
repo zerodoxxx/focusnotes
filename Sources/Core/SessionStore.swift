@@ -110,6 +110,35 @@ public actor SessionStore {
         session
     }
 
+    /// Creates a fresh timestamped session inside Sessions/<folder>, without resuming.
+    public func start(in folder: NoteFolder) throws -> Session {
+        try vault.prepare()
+        let startedAt = now()
+        let stem = "Session " + CaptureFormat.localStamp(startedAt, pattern: "yyyy-MM-dd HH.mm.ss", calendar: calendar)
+        let directory = ([Vault.sessionsDirectoryName] + folder.components).joined(separator: "/")
+        try NoteFile.prepareManagedDirectory(directory, in: vault.rootAnchor)
+        var suffix = 1
+        while true {
+            let title = suffix == 1 ? stem : "\(stem) \(suffix)"
+            let path = try NotePathName.validated(scope: .vault,
+                components: [Vault.sessionsDirectoryName] + folder.components + [title])
+            let location = try vault.resolveNoteName(path)
+            beforeNoteWrite(location.relativePath)
+            do {
+                try NoteFile.create(Data(CaptureFormat.noteHeader(title: title).utf8), in: vault.rootAnchor,
+                                    relativePath: location.relativePath, requireNew: true)
+            } catch let error as POSIXError where error.code == .EEXIST {
+                suffix += 1
+                continue
+            }
+            var started = Session(name: title, notePath: location.relativePath, startedAt: startedAt)
+            started.resumed = false
+            try persist(started)
+            session = started
+            return started
+        }
+    }
+
     /// Starts a session, resuming a unique matching filename or creating a note.
     /// Qualified names such as `archive/Standup` are rooted inside `Sessions/`.
     public func start(name: String) throws -> Session {

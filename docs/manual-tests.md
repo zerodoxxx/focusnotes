@@ -74,6 +74,48 @@ Run these checks on macOS and Windows, using the menu-bar icon or tray icon resp
    Confirm settings and installed semantic models remain available across both folders.
 7. Restore the original folder setting and restart. Confirm the test did not move or delete notes from either folder.
 
+# Folder shortcuts on macOS and Windows
+
+Use a disposable notes folder. On macOS choose **Folder Shortcuts…** from the menu-bar icon. On Windows use
+**Settings… → Folder Shortcuts** or the **Shortcuts** step in Setup. Repeat the cases on both platforms.
+
+1. **Recorder and cancellation:** Add a Quick Note shortcut for `Projects/Research`, record an unused combination
+   with Command, Option, or Control on macOS, or Ctrl or Alt on Windows, and save. Confirm its displayed combination and action. Start editing the
+   combination, press a different one, then cancel (or **Revert Changes** on Windows); the original combination must still work and the cancelled
+   one must not dispatch. Cancel a new shortcut too and confirm it does not appear after relaunch.
+2. **Validation and cap:** Try an existing folder shortcut combination, a built-in combination, a plain letter,
+   Shift alone with a letter, Escape, and a modifier key. Confirm useful validation and no saved change. Try
+   empty, absolute, home, traversal, hidden, and malformed folder paths. Add 20 valid mappings and confirm a
+   twenty-first cannot be saved. Remove one, add another, and confirm the removed combination no longer acts.
+3. **Other-app conflicts:** Reserve a test combination in another app, then attempt to save it here. Confirm the
+   conflict is visible and does not replace a working binding. Release the combination in the other app and retry;
+   it should register once. Relaunch with the other app holding a previously saved combination and confirm the
+   unavailable shortcut is reported; remove the conflict and retry registration.
+4. **Folder quick note and active session:** Start an ordinary session, invoke the folder Quick Note shortcut,
+   type a fresh title and body, and save. Confirm the note lands in `Projects/Research/`, the active session note
+   is untouched, and the session remains active. Repeat with Browse selecting a note elsewhere; that explicit
+   destination must win. A subsequent normal capture should still use the active session.
+5. **Durable draft:** Invoke the folder shortcut, type text, toggle pin-on-save, and close with Escape. Relaunch
+   and restore the draft; its folder and pin intent must survive and save to the configured folder. Repeat after
+   rapid typing and immediate dismissal. Save or discard the draft, open an ordinary quick note, and confirm it
+   does not inherit the earlier folder context.
+6. **Session action:** Add a Start Session shortcut for `Meetings`. Invoke it twice and confirm each invocation
+   starts a newly named session under `Sessions/Meetings/`, with later normal captures routed to that session.
+   The action must not merely end the previously active session or reuse its note.
+7. **Missing and renamed folders:** Remove an empty configured destination and invoke its shortcut; saving must
+   recreate it. Rename a configured folder outside the app and invoke its shortcut again; it should use the saved
+   path, recreating it, while the renamed folder and its notes remain intact. Try an unwritable destination and
+   confirm the error retains the draft for retry.
+8. **Per-folder settings and persistence:** Relaunch and confirm mappings and actions persist. Switch to a
+   different selected notes folder, restart, and confirm the first folder's mappings do not dispatch there. Switch
+   back and confirm they return. Remove a mapping, relaunch, and confirm its combination remains unregistered.
+
+9. **Windows built-in customization:** Disable a built-in shortcut, assign its combination to a folder shortcut,
+   then try enabling the built-in again or resetting defaults. Confirm the duplicate is rejected without losing
+   either saved setting. Verify AltGr-sensitive combinations are rejected on an affected keyboard layout.
+10. **Menu fallback:** While a saved combination is unavailable, invoke the folder action from the menu and confirm
+    it still uses its configured destination. Remove the external conflict and retry registration.
+
 # Folder paths and external notes
 
 Use a temporary vault and a disposable test folder under your home directory.

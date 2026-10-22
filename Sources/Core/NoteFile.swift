@@ -434,12 +434,12 @@ enum NoteFile {
         }
     }
 
-    static func create(_ data: Data, in root: VaultDirectoryAnchor, relativePath: String) throws {
+    static func create(_ data: Data, in root: VaultDirectoryAnchor, relativePath: String, requireNew: Bool = false) throws {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
         var descriptor = openat(location.parentDescriptor, location.name,
                                 O_RDWR | O_APPEND | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        if descriptor < 0, errno == EEXIST {
+        if descriptor < 0, errno == EEXIST, !requireNew {
             descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
             guard descriptor >= 0 else { throw posixError() }
             try withLockedDescriptor(descriptor) {

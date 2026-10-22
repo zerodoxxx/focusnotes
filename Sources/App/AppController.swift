@@ -158,6 +158,13 @@ final class AppController: NSObject, NSMenuDelegate {
     private var hotkeyFailures: [Hotkey: HotkeyError] = [:]
     private var shortcutStatusItem: NSMenuItem?
     private var retryShortcutsItem: NSMenuItem?
+    private var folderShortcuts: [FolderShortcut] = []
+    private var folderShortcutsPanel: FolderShortcutsPanel?
+    private var folderShortcutsMenu: NSMenu?
+    private var recordingShortcut = false
+    private var folderShortcutStore: FolderShortcutStore {
+        FolderShortcutStore(url: pipeline.drafts.url.deletingLastPathComponent().appendingPathComponent("folder-shortcuts.json"))
+    }
     private var sessionItem: NSMenuItem?
     private var accessibilityItem: NSMenuItem?
     private var screenRecordingItem: NSMenuItem?
@@ -198,6 +205,8 @@ final class AppController: NSObject, NSMenuDelegate {
         activeSession = await pipeline.sessions.current()
         guard !isTerminating else { return restored }
         if presentsUI {
+            do { folderShortcuts = try folderShortcutStore.load() }
+            catch { report(error, title: "Couldn't load folder shortcuts") }
             registerHotkeys()
             installStatusItem()
             // The guide replaces the system AX prompt, and only the first launch ever shows it.
@@ -235,10 +244,11 @@ final class AppController: NSObject, NSMenuDelegate {
         return restored
     }
 
-    private func registerHotkeys() {
+    private func registerHotkeys(showFailures: Bool = true) {
         hotkeys.unregisterAll()
+        guard !isTerminating, !recordingShortcut else { return }
         hotkeyFailures.removeAll()
-        let bindings: [(Hotkey, @MainActor @Sendable () -> Void)] = [
+        var bindings: [(Hotkey, @MainActor @Sendable () -> Void)] = [
             (.captureSelection, { [weak self] in self?.capture(.selection) }),
             (.captureRegion, { [weak self] in self?.capture(.region) }),
             (.captureSelectionOutsideSession, { [weak self] in self?.capture(.selection, outsideSession: true) }),
@@ -249,6 +259,9 @@ final class AppController: NSObject, NSMenuDelegate {
             (.addSubheading, { [weak self] in self?.openSubheading() }),
             (.openLibrary, { [weak self] in self?.openNotesFolder() })
         ]
+        for binding in folderShortcuts {
+            bindings.append((binding.hotkey, { [weak self] in self?.runFolderShortcut(binding) }))
+        }
         for (offset, binding) in bindings.enumerated() {
             switch hotkeys.register(binding.0, id: UInt32(offset + 1), handler: binding.1) {
             case .success:
@@ -259,10 +272,72 @@ final class AppController: NSObject, NSMenuDelegate {
             }
         }
         refreshShortcutStatus()
-        if !hotkeyFailures.isEmpty {
+        if showFailures, !hotkeyFailures.isEmpty {
             showToast(Toast(style: .warning, title: "Some keyboard shortcuts are unavailable",
                             subtitle: "Use the menu bar commands, then choose Retry Shortcuts", duration: 6))
         }
+    }
+
+    private func openFolderShortcuts() {
+        guard !isTerminating else { return }
+        if let folderShortcutsPanel { folderShortcutsPanel.show(); return }
+        do {
+            // Never overwrite an unreadable or newer settings file with an empty list.
+            let saved = try folderShortcutStore.load()
+            let panel = FolderShortcutsPanel(bindings: saved, failures: hotkeyFailures,
+                onSave: { [weak self] proposed in try self?.saveFolderShortcuts(proposed) },
+                onRecordingChanged: { [weak self] recording in
+                    guard let self else { return }
+                    self.recordingShortcut = recording
+                    self.registerHotkeys(showFailures: false)
+                }, onClose: { [weak self] in self?.folderShortcutsPanel = nil })
+            folderShortcutsPanel = panel
+            panel.show()
+        } catch { report(error, title: "Couldn't open folder shortcuts") }
+    }
+
+    private func saveFolderShortcuts(_ proposed: [FolderShortcut]) throws {
+        try FolderShortcutStore.validate(proposed)
+        let previous = folderShortcuts
+        folderShortcuts = proposed
+        registerHotkeys(showFailures: false)
+        do {
+            for binding in proposed where hotkeyFailures[binding.hotkey] != nil {
+                throw FolderShortcutValidationError(message: "\(binding.hotkey.displayString) is unavailable. Release it in the other app or record another shortcut.")
+            }
+            try folderShortcutStore.save(proposed)
+        } catch {
+            folderShortcuts = previous
+            registerHotkeys(showFailures: false)
+            throw error
+        }
+        rebuildFolderShortcutsMenu()
+    }
+
+    func runFolderShortcut(_ binding: FolderShortcut) {
+        guard !isTerminating else { return }
+        do {
+            let folder = try NoteFolder(rawValue: binding.folder)
+            switch binding.action {
+            case .quickNote: openNoteEditor(folder: folder)
+            case .startSession:
+                enqueue { controller in
+                    await controller.drainCaptures()
+                    guard await controller.closePanels() else { return }
+                    await controller.waitForCommits()
+                    guard !controller.isTerminating else { return }
+                    do { _ = try await controller.startFolderSession(in: folder) }
+                    catch { controller.report(error, title: "Couldn't start folder session") }
+                }
+            }
+        } catch { report(error, title: "Couldn't use folder shortcut") }
+    }
+
+    @discardableResult
+    func startFolderSession(in folder: NoteFolder) async throws -> Session {
+        try await pipeline.recoverSessionIdentity()
+        let session = try await pipeline.sessions.start(in: folder)
+        return try await activateSession(session)
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
@@ -501,6 +576,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard editor?.isVisible != true else { return Task { false } }
         let deadline = ContinuousClock.now.advanced(by: timeout)
         isTerminating = true
+        folderShortcutsPanel?.close()
         permissionGuide.dismiss()
         startupIndexTask?.cancel()
         pipeline.monitor.stop()
@@ -788,9 +864,9 @@ final class AppController: NSObject, NSMenuDelegate {
         return count
     }
 
-    func openNoteEditor() {
+    func openNoteEditor(folder requestedFolder: NoteFolder? = nil) {
         enqueue { controller in
-            if let editor = controller.editor, editor.isVisible {
+            if requestedFolder == nil, let editor = controller.editor, editor.isVisible {
                 if editor.isKey { editor.dismiss() } else { editor.focus() }
                 return
             }
@@ -809,8 +885,12 @@ final class AppController: NSObject, NSMenuDelegate {
             do { try await pipeline.recoverSessionIdentity() }
             catch { controller.report(error, title: "Couldn't restore session state"); return }
             let active = await pipeline.sessions.current()
+            let restored: NoteDraftSnapshot
+            do { restored = try pipeline.drafts.loadSnapshot() }
+            catch { controller.report(error, title: "Couldn't restore draft"); return }
+            let folder = requestedFolder ?? restored.folder
             let sessionDestination: Destination?
-            if let active {
+            if folder == nil, let active {
                 do {
                     sessionDestination = try Router.destination(noteTitle: nil, activeSession: active,
                                                                  notes: [], vault: pipeline.vault)
@@ -820,26 +900,27 @@ final class AppController: NSObject, NSMenuDelegate {
                 }
             } else { sessionDestination = nil }
             do {
-                let restored = try pipeline.drafts.loadSnapshot()
                 let draft = restored.text
                 let editor = NoteEditorPanel()
                 controller.editor = editor
-                let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave)
+                let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave, folder: folder)
                 let calendar = pipeline.calendar
                 func noteID(_ destination: Destination?) -> String? {
                     destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
                 }
                 @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
-                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession)
+                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession, folder: state.folder)
                 }
                 let initiallyPinned = noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
-                editor.present(destination: sessionDestination?.title, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
+                // Persist a shortcut's explicit destination before editing an existing draft.
+                try pipeline.drafts.store(draft, pinOnSave: state.pinOnSave, folder: folder)
+                editor.present(destination: state.destinationLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
                         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave)
+                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder)
                         if blank {
                             state.pinOnSave = false
-                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
                     onSubmit: { [weak controller] text in
@@ -852,13 +933,13 @@ final class AppController: NSObject, NSMenuDelegate {
                         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             do { try state.restoreSessionDestination(sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
-                            editor?.setDestination(sessionDestination?.title, isPinned: noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                             return
                         }
                         controller?.enqueue { controller in
                             do {
                                 _ = try await save(text, controller: controller)
-                                controller.openNoteEditor()
+                                controller.openNoteEditor(folder: state.folder)
                             } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
                     },
@@ -918,19 +999,19 @@ final class AppController: NSObject, NSMenuDelegate {
                     titleForText: { TypedNote(markdown: $0, createdAt: Date(), calendar: calendar).title },
                     onScheduleDraft: { [weak controller, weak editor] text in
                         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        pipeline.drafts.scheduleStore(text, pinOnSave: blank ? false : state.pinOnSave) { [weak controller] error in
+                        pipeline.drafts.scheduleStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder) { [weak controller] error in
                             Task { @MainActor in controller?.report(error, title: "Couldn't keep draft; editor stays open") }
                         }
                         if blank {
                             state.pinOnSave = false
-                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
                     existingTitleForText: { text in
                         // A session or Browse destination takes precedence over typed-name matching, as in prepareNote.
                         guard state.destination == nil, sessionDestination == nil || state.outsideSession else { return nil }
                         let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
-                        return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
+                        return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault, folder: state.folder))?.title
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue { controller in
@@ -942,7 +1023,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         { [weak controller, weak editor] in
                             do { try state.toggleOutsideSession(sessionDestination: sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't change note destination"); return }
-                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
@@ -963,9 +1044,9 @@ final class AppController: NSObject, NSMenuDelegate {
     /// suspension; failed saves retain the draft and the exact journaled identity.
     /// `newNote` forces a new note (Save as New Note) even when the title names an existing one.
     @discardableResult
-    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false, outsideSession: Bool = false) async throws -> SavedCapture? {
+    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false, outsideSession: Bool = false, folder: NoteFolder? = nil) async throws -> SavedCapture? {
         guard !isTerminating else { return nil }
-        try pipeline.drafts.store(rawText, pinOnSave: pinOnSave)
+        try pipeline.drafts.store(rawText, pinOnSave: pinOnSave, folder: folder)
         let text = CaptureFormat.noteBody(rawText)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let pendingCommit = commitPending()
@@ -979,7 +1060,7 @@ final class AppController: NSObject, NSMenuDelegate {
         for (key, candidate) in Array(preparedJobs) {
             guard let job = try? await candidate.value else { continue }
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
-                if job.noteOutsideSession != outsideSession || (destination != nil && job.prepared.destination != destination) {
+                if job.noteOutsideSession != outsideSession || job.noteFolder != folder || (destination != nil && job.prepared.destination != destination) {
                     superseded[key] = job.prepared.capture.id
                     continue
                 }
@@ -1000,8 +1081,8 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession)
-            return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText, noteOutsideSession: outsideSession)
+            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, folder: folder)
+            return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText, noteOutsideSession: outsideSession, noteFolder: folder)
         }
         let preparedNote = try await preparation.value.prepared
         let noteID = preparedNote.capture.id
@@ -1290,6 +1371,14 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.addItem(session)
         menu.addItem(menuItem("Write a Note…", hotkey: .writeNote, action: #selector(menuWriteNote)))
         menu.addItem(menuItem("Add Subheading…", hotkey: .addSubheading, action: #selector(menuSubheading)))
+        menu.addItem(menuItem("Folder Shortcuts…", action: #selector(menuFolderShortcuts)))
+        let folders = NSMenuItem(title: "Use Folder Shortcut", action: nil, keyEquivalent: "")
+        let folderMenu = NSMenu()
+        folderMenu.delegate = self
+        folderShortcutsMenu = folderMenu
+        folders.submenu = folderMenu
+        menu.addItem(folders)
+        rebuildFolderShortcutsMenu()
         let shortcuts = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         shortcuts.isEnabled = false
         shortcutStatusItem = shortcuts
@@ -1366,9 +1455,31 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func refreshShortcutStatus() {
         for entry in shortcutItems { setMenuTitle(entry.item, title: entry.item.title, hotkey: entry.hotkey) }
+        for item in folderShortcutsMenu?.items ?? [] {
+            guard let id = item.representedObject as? UUID,
+                  let binding = folderShortcuts.first(where: { $0.id == id }) else { continue }
+            setMenuTitle(item, title: item.title, hotkey: binding.hotkey)
+        }
         shortcutStatusItem?.title = hotkeyFailures.count == 1 ? "1 keyboard shortcut unavailable" : "\(hotkeyFailures.count) keyboard shortcuts unavailable"
         shortcutStatusItem?.isHidden = hotkeyFailures.isEmpty
         retryShortcutsItem?.isHidden = hotkeyFailures.isEmpty
+    }
+
+    private func rebuildFolderShortcutsMenu() {
+        guard let menu = folderShortcutsMenu else { return }
+        menu.removeAllItems()
+        for binding in folderShortcuts {
+            let folder = binding.action == .startSession ? "Sessions/\(binding.folder)" : binding.folder
+            let item = menuItem("\(binding.action.title) → \(folder)", action: #selector(menuUseFolderShortcut(_:)))
+            item.representedObject = binding.id
+            setMenuTitle(item, title: item.title, hotkey: binding.hotkey)
+            menu.addItem(item)
+        }
+        if folderShortcuts.isEmpty {
+            let empty = NSMenuItem(title: "Add bindings in Folder Shortcuts…", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
     }
 
     private func refreshStatus() {
@@ -1442,6 +1553,12 @@ final class AppController: NSObject, NSMenuDelegate {
     }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }
+    @objc private func menuFolderShortcuts() { afterMenu { [weak self] in self?.openFolderShortcuts() } }
+    @objc private func menuUseFolderShortcut(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? UUID,
+              let binding = folderShortcuts.first(where: { $0.id == id }) else { return }
+        afterMenu { [weak self] in self?.runFolderShortcut(binding) }
+    }
     @objc private func menuSubheading() { afterMenu { [weak self] in self?.openSubheading() } }
     @objc private func menuRetryShortcuts() { afterMenu { [weak self] in self?.registerHotkeys() } }
     @objc private func menuSession() { afterMenu { [weak self] in self?.toggleSession() } }

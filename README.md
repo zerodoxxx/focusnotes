@@ -52,6 +52,19 @@ Outside-session capture shortcuts open **Add to note…** immediately, even with
 saves to Inbox. For a normal capture, pressing the same shortcut again while its save toast is visible
 also opens the note picker. The active session stays running in both cases.
 
+Add up to 20 global shortcuts for specific folders. On macOS, choose **Folder Shortcuts…** from the menu-bar icon.
+On Windows, use **Settings… → Folder Shortcuts**, the **Shortcuts** step in Setup, or **Folder Shortcuts → Configure Folder Shortcuts…** in the tray menu.
+Record a combination and choose **Quick Note** or **Start Session**. Built-in and duplicate combinations
+are rejected; combinations already registered by another app show a conflict. Quick Note folders are
+relative to the selected notes folder. Start Session folders are relative to `Sessions/`; each invocation
+starts a new session with an automatic name in that folder.
+
+A folder quick note saves in its configured folder even while another session is active. An explicit
+Browse destination takes precedence over the folder, and the folder takes precedence over the active
+session. Closing the editor keeps its folder with the draft, including across relaunches. Missing folders
+are recreated when saving. Shortcuts bind to paths: renaming a folder outside the app does not update
+its shortcut. Folder shortcut settings belong to each selected notes folder.
+
 ## Install
 
 Requires macOS 14 Sonoma or later on Apple silicon.
@@ -141,7 +154,7 @@ notes stay in their original folder and are not moved.
 
 App state (drafts, search index, pending saves, models) lives in
 `~/Library/Application Support/com.zerodoxxx.focusnotes`.
-Each notes folder keeps its own sessions, drafts, pending saves, pins and search index;
+Each notes folder keeps its own sessions, drafts, pending saves, pins, folder shortcuts and search index;
 returning to a previous folder restores that folder's state. Settings and downloaded models
 are shared across folders.
 
@@ -218,6 +231,7 @@ is active, and <kbd>Esc</kbd> closes it and keeps your draft. <kbd>Ctrl+N</kbd> 
 to the session. Outside-session captures open the same note picker; <kbd>Esc</kbd> saves to Inbox.
 Both outside-session capture commands are also available from the tray menu, including when their shortcuts are turned off or unavailable.
 After an upgrade, existing custom shortcuts take priority over new defaults. Settings shows any replacement needed for a conflict or a combination newly reserved by the editor; use **Change…** to choose another shortcut.
+Windows Setup and Settings customize the built-in shortcuts and provide folder-bound Quick Note and Start Session shortcuts.
 
 ### Where things live on Windows
 
@@ -228,7 +242,7 @@ After an upgrade, existing custom shortcuts take priority over new defaults. Set
 | The installed app | `%LocalAppData%\focusnotes-win-<arch>` (per user, no administrator rights needed) |
 
 The folder picker uses the native Windows dialog and checks that the selected folder is writable before saving.
-Changing folders leaves existing notes in their original location. Sessions, drafts, pending saves, pins and
+Changing folders leaves existing notes in their original location. Sessions, drafts, pending saves, pins, folder shortcuts and
 search indexes belong to each notes folder and are retained when you switch back. Settings and downloaded
 models are shared across folders.
 

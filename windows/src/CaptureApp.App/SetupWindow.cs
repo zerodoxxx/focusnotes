@@ -381,6 +381,8 @@ internal sealed class SetupWindow : Window
         ShortcutsPanel? panel = null;
         panel = new ShortcutsPanel(controller, () => { Evaluate(); });
         body.Children.Add(panel);
+        body.Children.Add(UiKit.Rule());
+        body.Children.Add(new FolderShortcutsPanel(controller));
         void Evaluate()
         {
             if (!State.ConsentAnswered) { return; }

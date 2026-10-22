@@ -47,6 +47,7 @@ public sealed class SessionStore
     private readonly string stateDirectory;
     private readonly Vault vault;
     private readonly TimeProvider clock;
+    private readonly TimeZoneInfo timeZone;
     private readonly Action<string>? beforeNoteWrite;
     private Session? session;
     private static readonly JsonSerializerOptions Options = new()
@@ -58,7 +59,7 @@ public sealed class SessionStore
 
     public SessionStore(string stateDirectory, Vault vault, TimeZoneInfo timeZone, TimeProvider? timeProvider = null, Action<string>? beforeNoteWrite = null)
     {
-        _ = timeZone;
+        this.timeZone = timeZone;
         this.stateDirectory = System.IO.Path.GetFullPath(stateDirectory);
         this.vault = vault;
         clock = timeProvider ?? TimeProvider.System;
@@ -87,6 +88,29 @@ public sealed class SessionStore
         lock (gate)
         {
             return session;
+        }
+    }
+
+    public Session StartInFolder(NoteFolder folder)
+    {
+        lock (gate)
+        {
+            vault.Prepare();
+            var startedAt = clock.GetUtcNow();
+            var stamp = TimeZoneInfo.ConvertTime(startedAt, timeZone).ToString("yyyy-MM-dd HH.mm.ss", System.Globalization.CultureInfo.InvariantCulture);
+            var stem = "Session " + stamp;
+            var directory = string.Join('/', new[] { Vault.SessionsDirectoryName }.Concat(folder.Components));
+            NoteFile.PrepareManagedDirectory(vault.Root, directory);
+            for (var suffix = 1; ; suffix++)
+            {
+                var title = suffix == 1 ? stem : stem + " " + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var path = NotePathName.Validated(NotePathScope.Vault,
+                    new[] { Vault.SessionsDirectoryName }.Concat(folder.Components).Append(title), vault.NamingRules);
+                var location = vault.ResolveNoteName(path);
+                beforeNoteWrite?.Invoke(location.RelativePath);
+                if (!NoteFile.TryCreateNew(NoteFile.Utf8.GetBytes(CaptureFormat.NoteHeader(title)), vault.Root, location.RelativePath)) continue;
+                return Persist(new(title, location.RelativePath, startedAt, false));
+            }
         }
     }
 

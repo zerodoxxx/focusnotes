@@ -39,6 +39,7 @@ internal sealed partial class AppController
     {
         hotkeys ??= new HotkeyRegistrar();
         hotkeys.UnregisterAll();
+        if (quitting || !Setup.ConsentAnswered) return;
         failures.Clear();
         LoadBindings();
         var disabled = Settings.DisabledShortcuts;
@@ -69,8 +70,9 @@ internal sealed partial class AppController
             if (!result.Succeeded) { failures[action] = result; log.Error($"Hotkey {action} {chord.DisplayString} failed ({result.Win32Error})"); }
         }
 
+        RegisterFolderBindings();
         RefreshMenu();
-        if (failures.Count > 0)
+        if (failures.Count > 0 || folderFailures.Count > 0)
         {
             Coordinator?.ShowToast(new(AppToastStyle.Warning, Strings.ShortcutsUnavailableTitle, Strings.ShortcutsUnavailableSubtitle, Duration: 6));
         }
@@ -87,7 +89,9 @@ internal sealed partial class AppController
     {
         if (tray is null || disposed) { return; }
         var entries = TrayMenuBuilder.Build(BuildMenuState());
-        tray.Menu = new TrayMenuModel(entries.Select(ToTray));
+        var items = entries.Select(ToTray).ToList();
+        if (Setup.ConsentAnswered) items.Insert(0, FolderShortcutsMenu());
+        tray.Menu = new TrayMenuModel(items);
         tray.SetAttention(Setup.NeedsAttention);
     }
 
@@ -127,13 +131,20 @@ internal sealed partial class AppController
             if (id is not null) bindings[id] = "";
         }
 
-        return new MenuState(Setup.ConsentAnswered, Setup.AttentionCount, Coordinator?.ActiveSession?.Name, bindings, failures.Count,
+        return new MenuState(Setup.ConsentAnswered, Setup.AttentionCount, Coordinator?.ActiveSession?.Name, bindings, failures.Count + folderFailures.Count,
             CurrentSemanticMenu(), CurrentUpdateMenu());
     }
 
     private void OnMenu(string id)
     {
         if (quitting) { return; }
+        if (id == "folder-shortcuts.settings") { OpenSettings(3); return; }
+        if (id.StartsWith("folder-shortcuts.", StringComparison.Ordinal)
+            && Guid.TryParse(id["folder-shortcuts.".Length..], out var bindingId))
+        {
+            if (folderBindings.FirstOrDefault(binding => binding.Id == bindingId) is { } binding) RunFolderShortcut(binding);
+            return;
+        }
         switch (id)
         {
             case MenuIds.FinishSetup: OpenSetup(manual: true); break;
