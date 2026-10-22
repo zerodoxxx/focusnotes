@@ -91,6 +91,11 @@ Prefix the path with `/` to resolve it from your home folder: `/Desktop/science/
 saves to `~/Desktop/science/math/trigonometry.md`. If the target note already exists,
 Focusnotes appends to it. Folder and filename matching ignores case. External note paths
 used this way are tracked for search and file updates; Focusnotes does not scan your home folder.
+Names resolve to their exact path: `foo` means the vault-root `foo.md`, even when
+`archive/foo.md` exists. To create a separate numbered note in the same folder, choose
+**Save as New Note** in Actions (⌥⌘↩ on macOS, Ctrl+Alt+Enter on Windows). The editor
+shows **Add to note** when the default save will append; sessions and Browse destinations
+take precedence over the typed name.
 Paths into the reserved `assets/` folder and note names whose final component starts with `~$` are
 rejected.
 

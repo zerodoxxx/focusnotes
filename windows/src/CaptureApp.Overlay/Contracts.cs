@@ -24,7 +24,7 @@ public sealed record InputRequest(string Placeholder, Func<string, IReadOnlyList
     bool SelectionOnly = false, Action<string>? OnAccept = null);
 
 // Stable UI-only contracts for the cards in step 6b, mirroring NoteContracts.swift.
-public enum NoteActionId { NewNote, Browse, Pin, OpenAsNote, CopyMarkdown, DiscardDraft }
+public enum NoteActionId { NewNote, Browse, Pin, OpenAsNote, CopyMarkdown, DiscardDraft, SaveAsNewNote }
 public sealed record BrowseItem(string Id, string Title, string Detail, string SymbolName, bool IsPinned);
 public enum BrowseChoice { Write, Open, Reveal }
 /// <summary>Callbacks for the quick-note panel, mirroring NoteEditorHandlers.</summary>
@@ -32,7 +32,8 @@ public sealed record QuickNoteHandlers(
     Action<string> OnDraft, Action<string> OnSubmit, Action<string> OnNew, Action<string> OnOpenAsNote,
     Func<IReadOnlyList<BrowseItem>> BrowseItems, Action<BrowseItem, BrowseChoice> OnBrowse,
     Func<bool> OnTogglePin, Action OnClose, Action<Exception> OnError,
-    Func<string, string>? TitleForText = null, Action<string>? OnScheduleDraft = null)
+    Func<string, string>? TitleForText = null, Action<string>? OnScheduleDraft = null,
+    Func<string, string?>? ExistingTitleForText = null, Action<string>? OnSaveAsNew = null)
 {
     private static readonly System.Text.RegularExpressions.Regex Marker = new(@"^[ \t]*(?:#+[ \t]+|[-*+][ \t]+(?:\[[ xX]\][ \t]*)?|[0-9]+[.)][ \t]+|>[ \t]*)");
     /// <summary>First non-blank line with leading Markdown markers removed, cut at 60 characters.</summary>

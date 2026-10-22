@@ -5,7 +5,32 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
     private readonly object gate = new();
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly Func<Guid> createId = makeId ?? Guid.NewGuid;
-    private readonly HashSet<string> preparedNoteUrls = new(StringComparer.Ordinal);
+    private readonly ReservedNotes preparedNoteUrls = new();
+
+    // Use a separate lock so the editor can inspect reservations during a disk save.
+    public IReadOnlySet<string> ReservedNoteUrls => preparedNoteUrls.Snapshot;
+
+    private sealed class ReservedNotes
+    {
+        private readonly object gate = new();
+        private readonly HashSet<string> urls = new(StringComparer.OrdinalIgnoreCase);
+
+        internal IReadOnlySet<string> Snapshot
+        {
+            get { lock (gate) { return new HashSet<string>(urls, StringComparer.OrdinalIgnoreCase); } }
+        }
+
+        internal bool Contains(string url) => Match(url, Snapshot) is not null;
+        internal void Add(string url) { lock (gate) { urls.Add(url); } }
+        internal void Remove(string url) { lock (gate) { urls.Remove(url); } }
+
+        internal static string? Match(string url, IEnumerable<string> reserved)
+        {
+            var wanted = Path.GetFullPath(url).Normalize();
+            return reserved.Order(StringComparer.Ordinal).FirstOrDefault(candidate =>
+                string.Equals(Path.GetFullPath(candidate).Normalize(), wanted, StringComparison.OrdinalIgnoreCase));
+        }
+    }
     public SavedCapture SaveText(string text, CaptureSource source, string? noteTitle = null)
     {
         lock (gate)
@@ -41,7 +66,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         }
     }
 
-    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null)
+    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false)
     {
         lock (gate)
         {
@@ -62,18 +87,24 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
 
             var note = new TypedNote(capture.Content.Value, capture.CreatedAt, timeZone, vault.NamingRules);
             var name = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
+            var noteCapture = capture with { Content = CaptureContent.Note(note.Body) };
+            var appendCapture = string.IsNullOrWhiteSpace(note.Body) ? capture : noteCapture;
+            var appendsToMatch = !newNote && !note.IsGeneratedTitle;
+            if (appendsToMatch && AppendTarget(note, preparedNoteUrls.Snapshot, vault) is { } target)
+            {
+                return new(appendCapture, target, NoteMarkerIsIdentity: true);
+            }
+
             var selected = name;
             var location = vault.ResolveNoteName(name);
-            if (!File.Exists(location.Url) && preparedNoteUrls.Contains(location.Url))
+            if (!appendsToMatch && (File.Exists(location.Url) || Directory.Exists(location.Url) || preparedNoteUrls.Contains(location.Url)))
             {
                 var suffix = 2;
                 while (true)
                 {
-                    var components = name.Components.ToArray();
-                    components[^1] = NoteTitle.FileStem($"{name.LeafName} {suffix++}");
-                    var candidateName = NotePathName.Validated(name.Scope, components, vault.NamingRules);
+                    var candidateName = NumberedName(name, suffix++);
                     var candidate = vault.ResolveNoteName(candidateName);
-                    if (!preparedNoteUrls.Contains(candidate.Url) && !File.Exists(candidate.Url))
+                    if (!preparedNoteUrls.Contains(candidate.Url) && !File.Exists(candidate.Url) && !Directory.Exists(candidate.Url))
                     {
                         selected = candidateName;
                         location = candidate;
@@ -82,11 +113,65 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
                 }
             }
 
-            var creates = !File.Exists(location.Url) && !Directory.Exists(location.Url);
-            var target = new Destination(location.Url, ReferenceEquals(selected, name) ? note.Title : selected.DisplayTitle, NoteKind.Note);
-            preparedNoteUrls.Add(target.Url);
-            return new(capture with { Content = CaptureContent.Note(note.Body) }, target, creates ? true : null, true);
+            var destinationNote = new Destination(location.Url, ReferenceEquals(selected, name) ? note.Title : selected.DisplayTitle, NoteKind.Note);
+            preparedNoteUrls.Add(destinationNote.Url);
+            return new(noteCapture, destinationNote, true, true);
         }
+    }
+
+    private NotePathName NumberedName(NotePathName name, int suffix)
+    {
+        var ending = FormattableString.Invariant($" {suffix}");
+        var graphemes = NoteTitle.Graphemes(name.LeafName);
+        for (var length = graphemes.Count; length > 0; length--)
+        {
+            var leaf = string.Concat(graphemes.Take(length)) + ending;
+            // FileStem bounds both graphemes and UTF-8 bytes. Shorten the base
+            // until the complete suffix survives, rather than retrying the same path.
+            if (NoteTitle.FileStem(leaf) != leaf)
+            {
+                continue;
+            }
+
+            var components = name.Components.ToArray();
+            components[^1] = leaf;
+            try
+            {
+                return NotePathName.Validated(name.Scope, components, vault.NamingRules);
+            }
+            catch (NotePathNameException error) when (error.Kind == NotePathNameError.TooLong)
+            {
+                // A near-limit folder path may require a shorter leaf too.
+            }
+        }
+
+        throw new NotePathNameException(NotePathNameError.TooLong);
+    }
+
+    // The editor and default save use the same exact-path lookup. Display titles
+    // and notes in other folders never influence an independent typed save.
+    public static Destination? AppendTarget(TypedNote note, IEnumerable<string> reserved, Vault vault)
+    {
+        if (note.IsGeneratedTitle)
+        {
+            return null;
+        }
+
+        var name = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
+        if (name.Scope == NotePathScope.Vault && name.Components.Count == 1 &&
+            NoteTitle.MatchKey(note.Title) == NoteTitle.MatchKey(Vault.InboxTitle))
+        {
+            return new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+        }
+
+        var location = vault.ResolveNoteName(name);
+        if (File.Exists(location.Url) || Directory.Exists(location.Url))
+        {
+            return new(location.Url, note.Title, NoteKind.Note);
+        }
+
+        var held = ReservedNotes.Match(location.Url, reserved);
+        return held is null ? null : new(held, note.Title, NoteKind.Note);
     }
 
     public SavedCapture Save(PreparedCapture prepared, byte[]? png = null)

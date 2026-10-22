@@ -242,6 +242,13 @@ public static class ControllerSelfTest
                 throw new InvalidOperationException("A typed-note title collision did not append to the existing note.");
             }
 
+            var asNew = await coordinator.AddNoteAsync(rootDraft, newNote: true).ConfigureAwait(false);
+            if (asNew is null || Path.GetFileName(asNew.Destination.Url) != "independentnoteneedle 2.md"
+                || !File.Exists(asNew.Destination.Url) || pipeline.Journal.RecordPaths().Count != 0)
+            {
+                throw new InvalidOperationException("Save as New Note did not create a numbered sibling and clear its journal.");
+            }
+
             await WritePass(output, "controller typed notes").ConfigureAwait(false);
 
             // Accepted termination drains a still-pending default commit and stops the watcher.

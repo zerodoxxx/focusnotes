@@ -132,11 +132,26 @@ internal static class Fixtures
             Require(Math.Abs(v.Height - Tokens.QuickMaxHeight) < Tokens.LayoutTolerance, "quick-long-680: height stops at 680"));
         yield return Quick("quick-actions", "Trip planning\nBook the train", v => { v.SetRevealed(true, false); v.ShowActions(); }, v =>
         {
-            const double expected = Tokens.CardFieldHeight + Tokens.BorderWidth + Tokens.CardVerticalPadding * 2 + 5 * Tokens.MenuRowHeight + Tokens.MenuGroupMargin * 2 + Tokens.BorderWidth;
+            const double expected = Tokens.CardFieldHeight + Tokens.BorderWidth + Tokens.CardVerticalPadding * 2 + 6 * Tokens.MenuRowHeight + Tokens.MenuGroupMargin * 2 + Tokens.BorderWidth;
             Require(v.CardSize is { } size && Math.Abs(size.Width - Tokens.MenuWidth) < Tokens.LayoutTolerance && Math.Abs(size.Height - expected) < Tokens.LayoutTolerance, "quick-actions: card size from tokens");
             Require(v.Height >= Tokens.QuickTopBandHeight + Tokens.CardTopGap + expected + Tokens.CardEdgeMargin - Tokens.LayoutTolerance, "quick-actions: window extends under the card");
         });
         yield return Quick("quick-actions-pinned", "Trip planning", v => { v.SetRevealed(true, false); v.ShowActions(); }, pinned: true);
+        yield return Quick("quick-append-actions", "Trip planning\nBook the train", v =>
+        {
+            v.ExistingTitleForText = _ => "Trip planning";
+            v.SetRevealed(true, false);
+            v.ShowActions();
+        }, v =>
+        {
+            Require(v.AppendsToExisting, "quick-append-actions: typed matches append");
+            Require(ActionItem.Standard(false, true, v.AppendsToExisting).Single(a => a.Id == NoteActionId.SaveAsNewNote).IsEnabled,
+                "quick-append-actions: Save as New Note is available");
+            Require(QuickNoteView.ShortcutAction(System.Windows.Input.Key.Enter, System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Alt) == NoteActionId.SaveAsNewNote,
+                "quick-append-actions: Ctrl+Alt+Enter creates a new note");
+            Require(QuickNoteView.ShortcutAction(System.Windows.Input.Key.Enter, System.Windows.Input.ModifierKeys.Control) is null,
+                "quick-append-actions: Ctrl+Enter keeps the default save");
+        });
         yield return Quick("quick-browse", "Trip planning\nBook the train", v => { v.SetRevealed(true, false); v.BrowseItems = () => BrowseItems; v.ShowBrowse(BrowseItems); }, v =>
         {
             // Two headers and seven visible rows, pinned section first.

@@ -129,8 +129,9 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    (close and open as note on the left; browse, new and trailing ellipsis Actions in one capsule on the
    right) and the footer. Typing alone never reveals them. Text does not move when
    they appear.
-2. **Footer wording:** Outside a session it reads "Create note"; in a session, or
-   after choosing a note in Browse, "Add to note". The footer never repeats the
+2. **Footer wording:** Outside a session it reads "Create note" unless the typed
+   name resolves to an existing or reserved note; then it reads "Add to note".
+   In a session, or after choosing a note in Browse, it reads "Add to note". The footer never repeats the
    note's name; the title line shows it.
 3. **Size:** Width grows with the longest line (400 to 600pt) and never shrinks
    while open. Height grows with the text up to 60% of the screen or 680pt, then
@@ -146,10 +147,16 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    Open a card, then drag by the band: the card closes and the panel moves. Grow the text
    near the bottom of the screen: the panel shifts up to stay fully visible.
 4. **Actions (⌘K):** A card appears at the top right, under the buttons, with the
-   note text still visible behind it. It lists New Note, Add to Pinned/Remove from Pinned | Open as Note, Copy as Markdown and Discard Draft (two groups), with one
+   note text still visible behind it. It lists New Note, Save as New Note,
+   Add to Pinned/Remove from Pinned | Open as Note, Copy as Markdown and Discard Draft (two groups), with one
    keycap box per shortcut key. Inapplicable rows are dimmed and skipped by the
    arrow keys. ⌘K or esc closes the card only; clicking outside it closes it too. Browse is only in the
    top-right capsule; ⌘P from the Actions filter still swaps to Browse.
+   **Save as New Note:** With no session or Browse destination, type an existing
+   exact note path and confirm the row is enabled. ⌥⌘↩ (Ctrl+Alt+Enter on Windows)
+   creates a numbered sibling in that folder and leaves the original intact.
+   Repeat with Windows backslashes and a HOME-relative external note. For a new
+   name or an explicit destination the row is disabled; the shortcut uses the default save.
    **Open-card button:** The Actions ellipsis keeps the circular pressed fill while Actions is open; Browse
    does the same while Browse is open. Try click and ⌘K/⌘P, swap both ways, and hover the on button: its fill
    must stay pressed. Check esc, click-away, resign-key, running a row and dismissing the note all clear the
