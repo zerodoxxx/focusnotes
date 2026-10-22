@@ -93,6 +93,8 @@ internal sealed partial class AppController
     {
         var validation = HotkeyValidator.Validate(chord);
         if (!validation.IsValid) { return validation.Error; }
+        if (folderBindings.Any(binding => binding.Shortcut == chord))
+            return "This combination is already used by a folder shortcut.";
         if (!AltGrGuard.IsSafe(chord))
         {
             var suggestion = AltGrGuard.FindNextFreeLetter(Bindings.Values);

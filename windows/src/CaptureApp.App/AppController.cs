@@ -129,6 +129,7 @@ internal sealed partial class AppController : IDisposable
         Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
         host.OnExpire = Coordinator.ToastExpired;
         LoadBindings();
+        LoadFolderBindings();
         InstallTray();
         InitializeSemantic();
         pipeline.Monitor.RefreshRequested += OnVaultRefresh;

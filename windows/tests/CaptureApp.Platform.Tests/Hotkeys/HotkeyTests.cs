@@ -260,7 +260,7 @@ public sealed class AltGrGuardTests
     }
 }
 
-public sealed class HotkeyRegistrarTests
+public sealed partial class HotkeyRegistrarTests
 {
     [Fact]
     public void ASecondRegistrationReportsAlreadyRegisteredError()

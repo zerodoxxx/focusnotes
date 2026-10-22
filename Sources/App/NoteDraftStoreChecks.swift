@@ -26,6 +26,8 @@ private func waitForSignal(_ semaphore: DispatchSemaphore, timeout: DispatchTime
 
 @MainActor
 func checkNoteDraftStoreScheduling() async throws {
+    try checkDraftFolderContext()
+    try checkDraftCompletionFolderIdentity()
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("draft-store-scheduler-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -164,5 +166,114 @@ func checkNoteDraftStoreScheduling() async throws {
     let recovered = try failed.loadSnapshot()
     guard recovered.text == "latest text after failure", recovered.pinOnSave else {
         throw SelfTestFailure("Failed persistence did not retain the latest draft and pin intent for retry")
+    }
+}
+
+@MainActor
+private func checkDraftCompletionFolderIdentity() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("draft-folder-completion-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NoteDraftStore(stateDirectory: root, debounceInterval: .seconds(60))
+    let original = try NoteFolder(rawValue: "Projects/Original")
+    let newer = try NoteFolder(rawValue: "Projects/Newer")
+    let text = "Same title\nSame body"
+    // A newer scheduled draft must survive replay of identical text for another folder.
+    store.scheduleStore(text, pinOnSave: true, folder: newer)
+    var appliedPin: Bool?
+    try store.completeSave(matching: text, pinOnSave: nil, folder: original) { appliedPin = $0 }
+    let retained = try store.loadSnapshot()
+    guard retained.text == text, retained.folder == newer, retained.pinOnSave, appliedPin == false else {
+        throw SelfTestFailure("Recovery consumed another folder's same-text draft or inherited its pin intent")
+    }
+    // A legacy journal without folder context also cannot consume a scoped draft.
+    appliedPin = nil
+    try store.completeSave(matching: text, pinOnSave: nil) { appliedPin = $0 }
+    guard try store.loadSnapshot().folder == newer, appliedPin == false else {
+        throw SelfTestFailure("Legacy recovery consumed a folder draft or inherited its pin intent")
+    }
+    try store.clear(ifMatching: text, folder: original)
+    guard try store.loadSnapshot().folder == newer else {
+        throw SelfTestFailure("Explicit draft cleanup ignored its folder identity")
+    }
+    appliedPin = nil
+    try store.completeSave(matching: text + "\n", pinOnSave: nil, folder: newer) { appliedPin = $0 }
+    guard appliedPin == true, !FileManager.default.fileExists(atPath: store.url.path) else {
+        throw SelfTestFailure("Matching folder completion did not consume the draft with its pin intent")
+    }
+    try store.store(text, pinOnSave: true)
+    appliedPin = nil
+    try store.completeSave(matching: text, pinOnSave: nil) { appliedPin = $0 }
+    guard appliedPin == true, !FileManager.default.fileExists(atPath: store.url.path) else {
+        throw SelfTestFailure("Legacy ordinary draft completion changed behavior")
+    }
+}
+
+@MainActor
+func checkDraftFolderContext() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("draft-folder-context-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NoteDraftStore(stateDirectory: root, debounceInterval: .seconds(60))
+    let folder = try NoteFolder(rawValue: "Projects/Research")
+    let other = try NoteFolder(rawValue: "Projects/Other")
+
+    store.scheduleStore("first folder draft", pinOnSave: false, folder: folder)
+    store.scheduleStore("latest folder draft", folder: other)
+    try store.setPinOnSave(true)
+    let pending = try store.loadSnapshot()
+    guard pending.text == "latest folder draft", pending.folder == other, pending.pinOnSave else {
+        throw SelfTestFailure("Coalesced draft or pin update lost the newest folder context")
+    }
+    try store.setPinOnSave(false)
+    guard try store.loadSnapshot().folder == other else {
+        throw SelfTestFailure("Updating a persisted draft pin lost its folder context")
+    }
+
+    store.scheduleStore("stale folder draft", folder: other)
+    try store.flushScheduledStore("flushed folder draft", pinOnSave: true, folder: folder)
+    let reopened = NoteDraftStore(stateDirectory: root)
+    let restored = try reopened.loadSnapshot()
+    guard restored.text == "flushed folder draft", restored.folder == folder, restored.pinOnSave else {
+        throw SelfTestFailure("Flushed draft did not durably restore its folder context")
+    }
+
+    try store.store("ordinary draft")
+    guard try store.loadSnapshot().folder == nil else {
+        throw SelfTestFailure("An ordinary draft retained a previous folder context")
+    }
+    store.scheduleStore("folder draft before ordinary edit", folder: folder)
+    store.scheduleStore("ordinary scheduled draft")
+    guard try store.loadSnapshot().folder == nil else {
+        throw SelfTestFailure("A scheduled ordinary draft inherited a pending folder context")
+    }
+    try store.store("folder draft before ordinary flush", folder: folder)
+    try store.flushScheduledStore("ordinary flushed draft")
+    guard try store.loadSnapshot().folder == nil else {
+        throw SelfTestFailure("An ordinary draft flush retained the previous folder context")
+    }
+
+    try store.store("folder draft before blank", folder: folder)
+    try store.store(" \n\t", folder: folder)
+    guard !FileManager.default.fileExists(atPath: store.url.path), try store.loadSnapshot().folder == nil else {
+        throw SelfTestFailure("A blank draft did not clear its durable folder context")
+    }
+
+    try Data("{\"text\":\"legacy JSON draft\",\"pinOnSave\":true}".utf8).write(to: store.url, options: .atomic)
+    let legacy = try store.loadSnapshot()
+    guard legacy.text == "legacy JSON draft", legacy.pinOnSave, legacy.folder == nil else {
+        throw SelfTestFailure("A legacy JSON draft without folder did not load normally")
+    }
+    let invalidFolder = Data(#"{"text":"unsafe folder draft","pinOnSave":true,"folder":{"rawValue":"../escape"}}"#.utf8)
+    try invalidFolder.write(to: store.url, options: .atomic)
+    let recovered = try store.loadSnapshot()
+    let quarantined = store.url.deletingPathExtension().appendingPathExtension("corrupt.json")
+    guard recovered.text.isEmpty, recovered.folder == nil, !recovered.pinOnSave,
+          !FileManager.default.fileExists(atPath: store.url.path),
+          try Data(contentsOf: quarantined) == invalidFolder else {
+        throw SelfTestFailure("An unsafe serialized draft folder did not recover and preserve the corrupt record")
+    }
+    try Data("legacy Markdown draft".utf8).write(to: root.appendingPathComponent("draft-note.md"), options: .atomic)
+    let markdown = try store.loadSnapshot()
+    guard markdown.text == "legacy Markdown draft", markdown.folder == nil else {
+        throw SelfTestFailure("A legacy Markdown draft inherited a folder context")
     }
 }

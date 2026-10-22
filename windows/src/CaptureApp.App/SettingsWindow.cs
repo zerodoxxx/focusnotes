@@ -23,6 +23,7 @@ internal sealed class SettingsWindow : Window
         tabs.Items.Add(new TabItem { Header = "Shortcuts", Content = Scroll(ShortcutsTab()) });
         tabs.Items.Add(new TabItem { Header = "General", Content = Scroll(GeneralTab()) });
         tabs.Items.Add(new TabItem { Header = "Updates", Content = Scroll(UpdatesTab()) });
+        tabs.Items.Add(new TabItem { Header = "Folder Shortcuts", Content = Scroll(new FolderShortcutsPanel(controller)) });
         Content = tabs;
         SelectTab(tab);
     }

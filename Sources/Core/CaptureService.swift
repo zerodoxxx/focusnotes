@@ -113,9 +113,9 @@ public actor CaptureService {
     /// preparation without routing again, even if a file with the same name or a different
     /// session now exists. `outsideSession` bypasses the active session for this preparation
     /// only; explicit Browse destinations still take precedence and session state is untouched.
-    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, outsideSession: Bool = false, calendar: Calendar) async throws -> PreparedCapture {
+    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, outsideSession: Bool = false, folder: NoteFolder? = nil, calendar: Calendar) async throws -> PreparedCapture {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
-        if !outsideSession, let active = await sessions.current() {
+        if folder == nil, !outsideSession, let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: try Router.destination(
                 noteTitle: nil, activeSession: active, notes: [], vault: vault))
         }
@@ -123,9 +123,11 @@ public actor CaptureService {
             return try await prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil)
         }
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
-        guard let pathName = note.pathName else {
+        guard let parsedName = note.pathName else {
             throw note.pathNameError ?? NotePathNameError.invalidComponent
         }
+
+        let pathName = try folder.map { try $0.scoped(parsedName) } ?? parsedName
 
         let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
         // A title-only note has no body, so its text (the title line) is appended instead.
@@ -133,7 +135,7 @@ public actor CaptureService {
         let appendCapture = hasBody ? noteCapture : capture
         let appendsToMatch = !newNote && !note.isGeneratedTitle
         if appendsToMatch {
-            if let target = try Self.appendTarget(for: note, reserved: preparedNoteURLs.snapshot, vault: vault) {
+            if let target = try Self.appendTarget(for: note, reserved: preparedNoteURLs.snapshot, vault: vault, folder: folder) {
                 return PreparedCapture(capture: appendCapture, destination: target, noteMarkerIsIdentity: true)
             }
         }
@@ -165,12 +167,13 @@ public actor CaptureService {
 
     /// The destination a default (not Save as New) typed save would append to, if any: Inbox for a bare
     /// "Inbox", else the exact resolved path when it exists on disk or was reserved. Generated titles never match.
-    public static func appendTarget(for note: TypedNote, reserved: Set<URL>, vault: Vault) throws -> Destination? {
+    public static func appendTarget(for note: TypedNote, reserved: Set<URL>, vault: Vault, folder: NoteFolder? = nil) throws -> Destination? {
         guard !note.isGeneratedTitle else { return nil }
-        guard let pathName = note.pathName else {
+        guard let parsedName = note.pathName else {
             throw note.pathNameError ?? NotePathNameError.invalidComponent
         }
-        if pathName.scope == .vault, pathName.components.count == 1,
+        let pathName = try folder.map { try $0.scoped(parsedName) } ?? parsedName
+        if folder == nil, pathName.scope == .vault, pathName.components.count == 1,
            NoteTitle.matchKey(note.title) == NoteTitle.matchKey(Vault.inboxTitle) {
             return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
         }

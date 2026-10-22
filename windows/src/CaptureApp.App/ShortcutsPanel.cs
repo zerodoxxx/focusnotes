@@ -92,6 +92,11 @@ internal sealed class ShortcutsPanel : StackPanel
 
     private void Toggle(HotkeyAction action, bool wasDisabled)
     {
+        if (wasDisabled && controller.ValidateBinding(action, controller.CurrentBinding(action)) is { } error)
+        {
+            message.Text = "Not enabled: " + error;
+            return;
+        }
         var set = controller.Settings.DisabledShortcuts.ToHashSet(StringComparer.Ordinal);
         if (wasDisabled) { set.Remove(action.ToString()); } else { set.Add(action.ToString()); }
         if (!controller.TrySave(() => controller.Settings.DisabledShortcuts = set)) { Refresh(); return; }
@@ -105,6 +110,7 @@ internal sealed class ShortcutsPanel : StackPanel
     {
         try
         {
+            controller.ValidateFolderBindingsAgainstDefaults();
             controller.BindingStore.Save(HotkeyDefaults.All);
             controller.Settings.DisabledShortcuts = new HashSet<string>(StringComparer.Ordinal);
             controller.RegisterHotkeys();
@@ -113,7 +119,7 @@ internal sealed class ShortcutsPanel : StackPanel
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             controller.ReportSaveFailure(error);
-            message.Text = Strings.CouldNotSaveSettings;
+            message.Text = error is InvalidDataException ? error.Message : Strings.CouldNotSaveSettings;
         }
         Refresh();
         changed();
@@ -174,7 +180,9 @@ internal sealed class ChordRecorder : Window
     private void OnKey(object sender, KeyEventArgs e)
     {
         e.Handled = true;
+        if (e.IsRepeat) return;
         var key = e.Key switch { Key.System => e.SystemKey, Key.ImeProcessed => e.ImeProcessedKey, _ => e.Key };
+        if (key == Key.Escape) { DialogResult = false; return; }
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.None) { return; }
         var modifiers = HotkeyModifiers.None;
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { modifiers |= HotkeyModifiers.Control; }

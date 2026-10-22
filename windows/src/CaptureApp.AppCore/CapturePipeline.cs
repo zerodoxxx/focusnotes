@@ -110,15 +110,15 @@ public sealed class CapturePipeline : IDisposable
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,
-        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false, bool outsideSession = false)
-        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote, outsideSession));
+        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false, bool outsideSession = false, NoteFolder? folder = null)
+        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote, outsideSession, folder));
 
     private CaptureJob PrepareNoteCore(string markdown, CaptureSource source, Destination? destination,
-        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote, bool outsideSession)
+        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote, bool outsideSession, NoteFolder? folder)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Note(markdown), source);
-        return new(Service.PrepareNote(capture, TimeZone, destination, newNote, outsideSession), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession);
+        return new(Service.PrepareNote(capture, TimeZone, destination, newNote, outsideSession, folder), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession, NoteFolder: folder);
     }
 
     public CaptureJob PrepareSubheading(Capture capture, Destination? destination = null) => PrepareLocked(() =>
@@ -187,7 +187,7 @@ public sealed class CapturePipeline : IDisposable
                     pinFailed = true;
                     logger.Error($"Note was saved but could not be pinned: {error}");
                 }
-            });
+            }, folder: job.NoteFolder);
         }
 
         Journal.Remove(saved.CaptureId);

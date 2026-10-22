@@ -110,11 +110,32 @@ public actor SessionStore {
         session
     }
 
+    /// Starts or resumes a named session directly inside Sessions/<folder>.
+    public func start(name: String, in folder: NoteFolder) throws -> Session {
+        let cleaned = NoteTitle.cleanTitle(name)
+        guard !cleaned.isEmpty else { throw NotePathNameError.emptyPath }
+        guard !name.contains("/"), !name.contains("\\"), !name.contains("\0"),
+              !cleaned.hasPrefix("."), !cleaned.hasPrefix("~") else {
+            throw NotePathNameError.invalidComponent
+        }
+        let stem = NoteTitle.fileStem(for: cleaned)
+        let path = try NotePathName.validated(scope: .vault,
+            components: [Vault.sessionsDirectoryName] + folder.components + [stem])
+        try vault.prepare()
+        let location = try vault.resolveNoteName(path)
+        let directory = (location.relativePath as NSString).deletingLastPathComponent
+        let matches = try existingSessions().filter {
+            ($0.notePath as NSString).deletingLastPathComponent.caseInsensitiveCompare(directory) == .orderedSame
+        }
+        return try startFlat(title: cleaned, existingSessions: matches, directory: directory)
+    }
+
     /// Starts a session, resuming a unique matching filename or creating a note.
     /// Qualified names such as `archive/Standup` are rooted inside `Sessions/`.
     public func start(name: String) throws -> Session {
-        try vault.prepare()
         let cleaned = NoteTitle.cleanTitle(name)
+        guard !cleaned.isEmpty else { throw NotePathNameError.emptyPath }
+        try vault.prepare()
 
         if cleaned.contains("/") {
             let parsed: Result<NotePathName, NotePathNameError>
@@ -151,8 +172,8 @@ public actor SessionStore {
         return try startFlat(title: cleaned, existingSessions: existingSessions())
     }
 
-    private func startFlat(title rawTitle: String, existingSessions: [ExistingSession]) throws -> Session {
-        let title = rawTitle.isEmpty ? "Session" : rawTitle
+    private func startFlat(title: String, existingSessions: [ExistingSession], directory: String = Vault.sessionsDirectoryName) throws -> Session {
+        guard !title.isEmpty else { throw NotePathNameError.emptyPath }
         let stem = NoteTitle.fileStem(for: title)
         let matches = existingSessions.filter { note in
             let existingStem = note.note.url.deletingPathExtension().lastPathComponent
@@ -165,7 +186,7 @@ public actor SessionStore {
         }
 
         let existing = matches.first
-        let notePath = existing?.notePath ?? "\(Vault.sessionsDirectoryName)/\(stem).md"
+        let notePath = existing?.notePath ?? "\(directory)/\(stem).md"
         return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
     }
 

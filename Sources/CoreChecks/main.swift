@@ -80,6 +80,7 @@ do {
     try await checkCaptureService()
     try checkNoteParser()
     try await checkTypedNotes()
+    try await checkFolderRoutes()
     try await checkSearchIndex()
     if !CommandLine.arguments.contains("--skip-performance") {
         try await checkSearchIndexPerformance()

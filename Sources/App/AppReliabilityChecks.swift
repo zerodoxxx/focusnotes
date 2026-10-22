@@ -7,6 +7,8 @@ import CaptureKit
 @MainActor
 func checkAppReliability() async throws {
     try checkUnavailableShortcutMenu()
+    try checkFolderShortcuts()
+    try await checkFolderShortcutActions()
     try checkRelaunchLifecycle()
     try await checkNotesFolder()
     try await checkChangesDuringInitialScan()

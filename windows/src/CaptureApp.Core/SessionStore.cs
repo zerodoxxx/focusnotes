@@ -90,13 +90,35 @@ public sealed class SessionStore
         }
     }
 
+    public Session StartInFolder(NoteFolder folder, string name)
+    {
+        lock (gate)
+        {
+            var cleaned = NoteTitle.CleanTitle(name);
+            if (cleaned.Length == 0) throw new NotePathNameException(NotePathNameError.EmptyPath);
+            if (name.Contains('/') || name.Contains('\\') || NoteTitle.ContainsControlCharacters(name) ||
+                cleaned.StartsWith('.') || cleaned.StartsWith('~'))
+                throw new NotePathNameException(NotePathNameError.InvalidComponent);
+            vault.NamingRules.ValidateComponent(cleaned);
+            var path = NotePathName.Validated(NotePathScope.Vault,
+                new[] { Vault.SessionsDirectoryName }.Concat(folder.Components).Append(NoteTitle.FileStem(cleaned)), vault.NamingRules);
+            vault.Prepare();
+            var location = vault.ResolveNoteName(path);
+            var directory = string.Join('/', location.RelativePath.Split('/').SkipLast(1));
+            var existing = Existing().Where(n => string.Equals(
+                string.Join('/', vault.NoteId(n.Url).Split('/').SkipLast(1)), directory, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return StartFlat(cleaned, existing, directory);
+        }
+    }
+
     public Session Start(string name)
     {
         lock (gate)
         {
-            vault.Prepare();
             var raw = vault.NamingRules.WindowsRules ? name.Replace('\\', '/') : name;
             var cleaned = NoteTitle.CleanTitle(raw);
+            if (cleaned.Length == 0) throw new NotePathNameException(NotePathNameError.EmptyPath);
+            vault.Prepare();
             if (cleaned.Contains('/'))
             {
                 NotePathName? parsed = null;
@@ -140,12 +162,12 @@ public sealed class SessionStore
     }
 
     private IReadOnlyList<NoteRef> Existing() => vault.ListNotes().Where(n => n.Kind == NoteKind.Session).ToArray();
-    private Session StartFlat(string rawTitle)
+    private Session StartFlat(string title, IReadOnlyList<NoteRef>? existingSessions = null, string directory = Vault.SessionsDirectoryName)
     {
-        var title = rawTitle.Length == 0 ? "Session" : rawTitle;
+        if (title.Length == 0) throw new NotePathNameException(NotePathNameError.EmptyPath);
         vault.NamingRules.ValidateComponent(title);
         var stem = NoteTitle.FileStem(title);
-        var matches = Existing().Where(n =>
+        var matches = (existingSessions ?? Existing()).Where(n =>
         {
             var existing = System.IO.Path.GetFileNameWithoutExtension(n.Url);
             return existing.Equals(stem, StringComparison.OrdinalIgnoreCase) || Regex.IsMatch(existing, @"^[0-9]{4}-[0-9]{2}-[0-9]{2} ") && existing[11..].Equals(stem, StringComparison.OrdinalIgnoreCase);
@@ -161,7 +183,7 @@ public sealed class SessionStore
         }
 
         var existing = matches.FirstOrDefault();
-        return StartAt(existing?.Title ?? title, existing is null ? Vault.SessionsDirectoryName + "/" + stem + ".md" : vault.NoteId(existing.Url), existing);
+        return StartAt(existing?.Title ?? title, existing is null ? directory + "/" + stem + ".md" : vault.NoteId(existing.Url), existing);
     }
 
     public Session Resume(SessionCandidate candidate)

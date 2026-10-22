@@ -7,6 +7,8 @@ namespace CaptureApp.AppCore;
 public sealed class QuickNoteState
 {
     public Destination? Destination { get; set; }
+    public NoteFolder? Folder { get; }
+    public string? DestinationLabel => Destination?.Title ?? (Folder is { } folder ? "Folder: " + folder.RawValue : null);
     public bool OutsideSession { get; private set; }
     public bool PinOnSave { get; private set; }
     public IReadOnlyList<NoteSuggestion> Suggestions { get; set; } = [];
@@ -25,9 +27,11 @@ public sealed class QuickNoteState
         }
     }
 
-    public QuickNoteState(Destination? destination, bool pinOnSave = false)
+    public QuickNoteState(Destination? destination, bool pinOnSave = false, NoteFolder? folder = null)
     {
         Destination = destination;
+        Folder = folder;
+        OutsideSession = folder is not null;
         PinOnSave = destination is null && pinOnSave;
     }
 
@@ -53,7 +57,7 @@ public sealed class QuickNoteState
 
     public void ReturnToSession(Destination? sessionDestination)
     {
-        OutsideSession = false;
-        Destination = sessionDestination;
+        OutsideSession = Folder is not null;
+        Destination = Folder is null ? sessionDestination : null;
     }
 }

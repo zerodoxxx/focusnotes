@@ -4,6 +4,7 @@ import Core
 struct NoteDraftSnapshot: Codable, Sendable {
     var text: String
     var pinOnSave: Bool
+    var folder: NoteFolder? = nil
 }
 
 /// Text and pin intent share one atomic record. The lock also protects compare-and-clear
@@ -29,6 +30,7 @@ final class NoteDraftStore: @unchecked Sendable {
     private struct PendingWrite: Sendable {
         let text: String
         let pinOnSave: Bool?
+        let folder: NoteFolder?
         let onFailure: (@Sendable (Error) -> Void)?
     }
 
@@ -56,10 +58,11 @@ final class NoteDraftStore: @unchecked Sendable {
     /// Coalesce editor keystrokes and write the newest snapshot away from the main actor.
     /// A one-second max wait bounds crash exposure during continuous typing. Failures leave
     /// the snapshot pending so a synchronous dismissal/commit flush can retry it.
-    func scheduleStore(_ text: String, pinOnSave: Bool? = nil,
+    func scheduleStore(_ text: String, pinOnSave: Bool? = nil, folder: NoteFolder? = nil,
                        onFailure: (@Sendable (Error) -> Void)? = nil) {
         scheduleLock.withLock {
             let pending = PendingWrite(text: text, pinOnSave: pinOnSave ?? pendingWrite?.pinOnSave,
+                                       folder: folder,
                                        onFailure: onFailure)
             scheduleGeneration &+= 1
             scheduledWork?.cancel()
@@ -81,9 +84,9 @@ final class NoteDraftStore: @unchecked Sendable {
     /// Persist the current editor text before dismissal or a save. It invalidates delayed
     /// writes first, then waits behind any write already in progress, so stale text cannot
     /// land after this snapshot. A failure keeps the latest snapshot pending for retry.
-    func flushScheduledStore(_ text: String, pinOnSave: Bool? = nil) throws {
+    func flushScheduledStore(_ text: String, pinOnSave: Bool? = nil, folder: NoteFolder? = nil) throws {
         try mutationLock.withLock {
-            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave)
+            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, folder: folder)
             try persistenceQueue.sync {
                 try writeSnapshot(pending)
                 clearPendingWrite(ifCurrent: generation)
@@ -91,9 +94,9 @@ final class NoteDraftStore: @unchecked Sendable {
         }
     }
 
-    func store(_ text: String, pinOnSave: Bool? = nil) throws {
+    func store(_ text: String, pinOnSave: Bool? = nil, folder: NoteFolder? = nil) throws {
         try mutationLock.withLock {
-            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, keepFailureHandler: false)
+            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, folder: folder, keepFailureHandler: false)
             try persistenceQueue.sync {
                 try writeSnapshot(pending)
                 clearPendingWrite(ifCurrent: generation)
@@ -117,13 +120,14 @@ final class NoteDraftStore: @unchecked Sendable {
             }
         }
     }
-    func clear(ifMatching text: String) throws {
+    func clear(ifMatching text: String, folder: NoteFolder? = nil) throws {
         try mutationLock.withLock {
             let (generation, pending) = supersedeScheduledWrite()
             try persistenceQueue.sync {
                 if let pending { try writeSnapshot(pending) }
                 try lock.withLock {
-                    if CaptureFormat.noteBody(try read().text) == CaptureFormat.noteBody(text) { try remove() }
+                    let draft = try read()
+                    if draft.folder == folder, CaptureFormat.noteBody(draft.text) == CaptureFormat.noteBody(text) { try remove() }
                 }
                 clearPendingWrite(ifCurrent: generation)
             }
@@ -131,14 +135,14 @@ final class NoteDraftStore: @unchecked Sendable {
     }
     /// Apply the current intent before consuming the matching draft. Recovery never
     /// takes intent from a replaced/discarded draft; interactive saves supply their call's intent.
-    func completeSave(matching text: String, pinOnSave: Bool?, applyPin: (Bool) -> Void) throws {
+    func completeSave(matching text: String, pinOnSave: Bool?, folder: NoteFolder? = nil, applyPin: (Bool) -> Void) throws {
         try mutationLock.withLock {
             let (generation, pending) = supersedeScheduledWrite()
             try persistenceQueue.sync {
                 if let pending { try writeSnapshot(pending) }
                 try lock.withLock {
                     let draft = try read()
-                    let matches = CaptureFormat.noteBody(draft.text) == CaptureFormat.noteBody(text)
+                    let matches = draft.folder == folder && CaptureFormat.noteBody(draft.text) == CaptureFormat.noteBody(text)
                     applyPin(pinOnSave ?? (matches && draft.pinOnSave))
                     if matches { try remove() }
                 }
@@ -166,10 +170,11 @@ final class NoteDraftStore: @unchecked Sendable {
         }
     }
 
-    private func replacePendingWrite(text: String, pinOnSave: Bool?, keepFailureHandler: Bool = true) -> (UInt64, PendingWrite) {
+    private func replacePendingWrite(text: String, pinOnSave: Bool?, folder: NoteFolder?, keepFailureHandler: Bool = true) -> (UInt64, PendingWrite) {
         scheduleLock.withLock {
             let previous = pendingWrite
             let pending = PendingWrite(text: text, pinOnSave: pinOnSave ?? previous?.pinOnSave,
+                                       folder: folder,
                                        onFailure: keepFailureHandler ? previous?.onFailure : nil)
             scheduleGeneration &+= 1
             scheduledWork?.cancel()
@@ -188,7 +193,7 @@ final class NoteDraftStore: @unchecked Sendable {
             scheduledWork = nil
             firstPendingAt = nil
             if let pin, let pendingWrite {
-                self.pendingWrite = PendingWrite(text: pendingWrite.text, pinOnSave: pin, onFailure: pendingWrite.onFailure)
+                self.pendingWrite = PendingWrite(text: pendingWrite.text, pinOnSave: pin, folder: pendingWrite.folder, onFailure: pendingWrite.onFailure)
             }
             return (scheduleGeneration, pendingWrite)
         }
@@ -207,7 +212,7 @@ final class NoteDraftStore: @unchecked Sendable {
         try lock.withLock {
             if pending.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try remove(); return }
             let pin = try pending.pinOnSave ?? read().pinOnSave
-            try write(NoteDraftSnapshot(text: pending.text, pinOnSave: pin))
+            try write(NoteDraftSnapshot(text: pending.text, pinOnSave: pin, folder: pending.folder))
         }
     }
     private func read() throws -> NoteDraftSnapshot {

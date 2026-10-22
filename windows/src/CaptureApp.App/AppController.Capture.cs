@@ -130,7 +130,8 @@ internal sealed partial class AppController
     }
 
     private void PresentInput(string placeholder, string? title = null, string? secondary = null,
-        IReadOnlyList<NoteSuggestion>? suggestions = null, Action<string>? onAccept = null, Action<string>? onSubmit = null, Action? onCancel = null)
+        IReadOnlyList<NoteSuggestion>? suggestions = null, Action<string>? onAccept = null, Action<string>? onSubmit = null, Action? onCancel = null,
+        Func<NoteSuggestion, string?>? suggestionValue = null)
     {
         if (Coordinator.IsTerminating) { return; }
         var list = suggestions ?? [];
@@ -144,7 +145,7 @@ internal sealed partial class AppController
                 .Select(s =>
                 {
                     var session = s.Kind == NoteKind.Session;
-                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone), session ? "record.circle" : "doc.text");
+                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
                 }).ToArray();
         }, text => { InputClosed(); onSubmit?.Invoke(text); }, () => { InputClosed(); onCancel?.Invoke(); },
             Title: title, Secondary: secondary, OnAccept: onAccept));

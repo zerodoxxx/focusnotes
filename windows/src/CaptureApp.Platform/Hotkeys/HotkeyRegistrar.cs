@@ -28,6 +28,7 @@ public sealed class HotkeyRegistrar : IDisposable
     private readonly HotkeyNativeMethods.WindowProcedure _windowProcedure;
     private readonly Dictionary<int, Action> _callbacks = [];
     private readonly Dictionary<HotkeyAction, int> _registeredIds = [];
+    private readonly Dictionary<Guid, int> _customIds = [];
     private IntPtr _windowHandle;
     private string? _className;
     private Exception? _startupFailure;
@@ -64,6 +65,45 @@ public sealed class HotkeyRegistrar : IDisposable
 
         return InvokeOnThread(() => RegisterCore(action, chord, callback));
     }
+
+    /// <summary>Registers a folder binding independently of the fixed built-in action identities.</summary>
+    public HotkeyRegistrationResult Register(Guid id, KeyChord chord, Action callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        var validation = HotkeyValidator.Validate(chord);
+        if (id == Guid.Empty || !validation.IsValid)
+            return new(null, chord, false, ErrorInvalidParameter, validation.Error ?? "A shortcut identity is required.");
+        return InvokeOnThread(() =>
+        {
+            if (_customIds.TryGetValue(id, out var previous))
+            {
+                HotkeyNativeMethods.UnregisterHotKey(_windowHandle, previous);
+                _customIds.Remove(id);
+                _callbacks.Remove(previous);
+            }
+            // Built-ins use low enum IDs; the temporary availability probe uses 0x7FFF.
+            var nativeId = Enumerable.Range(1024, TemporaryId - 1024).FirstOrDefault(candidate => !_callbacks.ContainsKey(candidate));
+            if (nativeId == 0) { return new HotkeyRegistrationResult(null, chord, false, ErrorInvalidParameter, "Too many registered shortcuts."); }
+            if (!HotkeyNativeMethods.RegisterHotKey(_windowHandle, nativeId,
+                    (uint)chord.Modifiers | (uint)HotkeyModifiers.NoRepeat, (uint)chord.VirtualKey))
+                return new HotkeyRegistrationResult(null, chord, false, Marshal.GetLastPInvokeError());
+            _customIds[id] = nativeId;
+            _callbacks[nativeId] = callback;
+            return new HotkeyRegistrationResult(null, chord, true, 0);
+        });
+    }
+
+    public bool IsRegistered(Guid id) => InvokeOnThread(() => _customIds.ContainsKey(id));
+
+    public void Unregister(Guid id) => InvokeOnThread(() =>
+    {
+        if (_customIds.Remove(id, out var nativeId))
+        {
+            HotkeyNativeMethods.UnregisterHotKey(_windowHandle, nativeId);
+            _callbacks.Remove(nativeId);
+        }
+        return true;
+    });
 
     /// <summary>Temporarily tries a chord and unregisters it immediately when available.</summary>
     public HotkeyRegistrationResult TestRegisterTemporarily(KeyChord chord)
@@ -104,13 +144,14 @@ public sealed class HotkeyRegistrar : IDisposable
     {
         InvokeOnThread(() =>
         {
-            foreach (var id in _registeredIds.Values)
+            foreach (var id in _registeredIds.Values.Concat(_customIds.Values))
             {
                 HotkeyNativeMethods.UnregisterHotKey(_windowHandle, id);
                 _callbacks.Remove(id);
             }
 
             _registeredIds.Clear();
+            _customIds.Clear();
             return true;
         });
     }
@@ -284,12 +325,13 @@ public sealed class HotkeyRegistrar : IDisposable
 
         InvokeOnThread(() =>
         {
-            foreach (var id in _registeredIds.Values)
+            foreach (var id in _registeredIds.Values.Concat(_customIds.Values))
             {
                 HotkeyNativeMethods.UnregisterHotKey(_windowHandle, id);
             }
 
             _registeredIds.Clear();
+            _customIds.Clear();
             _callbacks.Clear();
             HotkeyNativeMethods.DestroyWindow(_windowHandle);
             return true;

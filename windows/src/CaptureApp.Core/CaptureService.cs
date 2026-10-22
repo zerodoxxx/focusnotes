@@ -75,7 +75,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         }
     }
 
-    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false, bool outsideSession = false)
+    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false, bool outsideSession = false, NoteFolder? folder = null)
     {
         lock (gate)
         {
@@ -84,7 +84,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
                 return new(capture, destination);
             }
 
-            if (!outsideSession && sessions.Current() is { } active)
+            if (folder is null && !outsideSession && sessions.Current() is { } active)
             {
                 return new(capture, Router.Destination(null, active, [], vault));
             }
@@ -95,11 +95,12 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
             }
 
             var note = new TypedNote(capture.Content.Value, capture.CreatedAt, timeZone, vault.NamingRules);
-            var name = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
+            var parsedName = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
+            var name = folder?.Scoped(parsedName, vault.NamingRules) ?? parsedName;
             var noteCapture = capture with { Content = CaptureContent.Note(note.Body) };
             var appendCapture = string.IsNullOrWhiteSpace(note.Body) ? capture : noteCapture;
             var appendsToMatch = !newNote && !note.IsGeneratedTitle;
-            if (appendsToMatch && AppendTarget(note, preparedNoteUrls.Snapshot, vault) is { } target)
+            if (appendsToMatch && AppendTarget(note, preparedNoteUrls.Snapshot, vault, folder) is { } target)
             {
                 return new(appendCapture, target, NoteMarkerIsIdentity: true);
             }
@@ -159,15 +160,16 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
 
     // The editor and default save use the same exact-path lookup. Display titles
     // and notes in other folders never influence an independent typed save.
-    public static Destination? AppendTarget(TypedNote note, IEnumerable<string> reserved, Vault vault)
+    public static Destination? AppendTarget(TypedNote note, IEnumerable<string> reserved, Vault vault, NoteFolder? folder = null)
     {
         if (note.IsGeneratedTitle)
         {
             return null;
         }
 
-        var name = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
-        if (name.Scope == NotePathScope.Vault && name.Components.Count == 1 &&
+        var parsedName = note.PathName ?? throw new NotePathNameException(note.PathNameError ?? NotePathNameError.InvalidComponent);
+        var name = folder?.Scoped(parsedName, vault.NamingRules) ?? parsedName;
+        if (folder is null && name.Scope == NotePathScope.Vault && name.Components.Count == 1 &&
             NoteTitle.MatchKey(note.Title) == NoteTitle.MatchKey(Vault.InboxTitle))
         {
             return new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);

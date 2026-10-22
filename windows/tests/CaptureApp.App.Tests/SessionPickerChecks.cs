@@ -93,6 +93,64 @@ internal static class SessionPickerChecks
             }
             finally { controller.InputForChecks?.Dismiss(animated: false); }
 
+            // Folder actions prompt rather than generating an unnamed session or ending the active one.
+            var activeTask = controller.Coordinator.StartSessionAsync("Still active");
+            UiWait.Pump(activeTask, TimeSpan.FromSeconds(5));
+            var active = activeTask.GetAwaiter().GetResult();
+            var sessionCount = pipeline.Vault.ListNotes().Count(note => note.Kind == NoteKind.Session);
+            void ShowFolderPrompt()
+            {
+                // Real hotkeys enter through the WPF dispatcher. Calling an async UI method directly on this
+                // test's STA before pumping has no DispatcherSynchronizationContext to capture after its await.
+                var presented = app.Dispatcher.InvokeAsync(() => controller.PresentFolderSessionInputAsync("Work/Calls")).Task.Unwrap();
+                UiWait.Pump(presented, TimeSpan.FromSeconds(5));
+                Assert.True(presented.IsCompleted, "Folder session prompt did not finish presenting");
+                presented.GetAwaiter().GetResult();
+                Assert.True(controller.InputForChecks?.IsVisible);
+            }
+            for (var cancelWithEscape = 0; cancelWithEscape < 2; cancelWithEscape++)
+            {
+                ShowFolderPrompt();
+                var prompt = Assert.IsType<InputPanelController>(controller.InputForChecks);
+                Assert.Equal("", prompt.ViewForChecks!.Field.Text);
+                if (cancelWithEscape == 0) prompt.HandleInput(Key.Enter);
+                else prompt.HandleInput(Key.Escape);
+                Settle();
+                Assert.Equal(active, pipeline.Sessions.Current());
+                Assert.Equal(sessionCount, pipeline.Vault.ListNotes().Count(note => note.Kind == NoteKind.Session));
+                controller.InputForChecks?.Dismiss(animated: false);
+            }
+            ShowFolderPrompt();
+            var namedPrompt = Assert.IsType<InputPanelController>(controller.InputForChecks);
+            namedPrompt.ViewForChecks!.Field.Text = "Customer call";
+            namedPrompt.HandleInput(Key.Enter);
+            Settle();
+            var folderSubmitted = new TaskCompletionSource();
+            controller.Coordinator.Enqueue(_ => { folderSubmitted.SetResult(); return Task.CompletedTask; });
+            UiWait.Pump(folderSubmitted.Task, TimeSpan.FromSeconds(5));
+            Assert.Equal("Customer call", pipeline.Sessions.Current()!.Name);
+            Assert.StartsWith("Sessions/Work/Calls/", pipeline.Sessions.Current()!.NotePath);
+
+            var datedPath = "Sessions/Work/Calls/2026-10-21 Review.md";
+            var datedUrl = pipeline.Vault.ManagedUrl(datedPath);
+            File.WriteAllText(datedUrl, "# Existing review\n\nPreserve this session body.\n");
+            pipeline.Index.Reindex(datedUrl);
+            var datedBefore = File.ReadAllBytes(datedUrl);
+            ShowFolderPrompt();
+            var selectExisting = Assert.IsType<InputPanelController>(controller.InputForChecks);
+            selectExisting.ViewForChecks!.Field.Text = "Existing review";
+            selectExisting.HandleInput(Key.Down);
+            Assert.NotNull(selectExisting.SelectedValueForChecks);
+            selectExisting.HandleInput(Key.Enter);
+            Settle();
+            var existingSelected = new TaskCompletionSource();
+            controller.Coordinator.Enqueue(_ => { existingSelected.SetResult(); return Task.CompletedTask; });
+            UiWait.Pump(existingSelected.Task, TimeSpan.FromSeconds(5));
+            Assert.Equal(datedPath, pipeline.Sessions.Current()!.NotePath);
+            Assert.True(pipeline.Sessions.Current()!.Resumed);
+            Assert.Equal(datedBefore, File.ReadAllBytes(datedUrl));
+            Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Work/Calls/Existing review.md")));
+
             var generic = new InputPanelController();
             var alternate = false;
             generic.Present(new InputRequest("name", _ => [], _ => { }, () => { }, InitialText: "prefilled",

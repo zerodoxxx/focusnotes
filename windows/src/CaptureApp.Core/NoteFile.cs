@@ -251,6 +251,24 @@ public static partial class NoteFile
         }
     }
 
+    /// Atomically installs a fresh file, returning false for an existing safe target.
+    public static bool TryCreateNew(byte[] data, string root, string relativePath)
+    {
+        var path = SafePath(root, relativePath);
+        lock (Gate(path))
+        {
+            if (FileMetadata.At(path) is not null) return false;
+            try { AtomicWrite(data, root, relativePath, overwrite: false); }
+            catch (IOException) when (FileMetadata.At(path) is not null)
+            {
+                // Validate again so a collision cannot hide a newly inserted link.
+                _ = SafePath(root, relativePath);
+                return false;
+            }
+            return true;
+        }
+    }
+
     public static void Create(byte[] data, string root, string relativePath)
     {
         var path = SafePath(root, relativePath);

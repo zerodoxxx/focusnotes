@@ -29,12 +29,14 @@ internal sealed partial class AppController
 
     private bool IsPinned(Destination? destination, bool fallback) => NoteId(destination) is { } id ? pipeline.Pins.IsPinned(id) : fallback;
 
-    private void OpenNoteEditor()
+    private void OpenNoteEditor() => OpenNoteEditor(null);
+
+    private void OpenNoteEditor(string? requestedFolder)
     {
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
-            if (quickNote.IsVisible)
+            if (requestedFolder is null && quickNote.IsVisible)
             {
                 // Visible but inactive re-activates in place; active closes and keeps the draft.
                 if (quickNote.IsActive) { quickNote.Dismiss(); } else { quickNote.Focus(); }
@@ -55,19 +57,23 @@ internal sealed partial class AppController
             if (c.IsTerminating) { return; }
 
             Destination? sessionDestination;
+            NoteDraftSnapshot restored;
+            NoteFolder? folder;
             try
             {
+                restored = pipeline.Drafts.LoadSnapshot();
+                folder = requestedFolder is null ? restored.Folder : new NoteFolder(requestedFolder);
                 var active = await Task.Run(() => pipeline.Sessions.Current());
-                sessionDestination = active is null ? null : Router.Destination(null, active, [], pipeline.Vault);
+                sessionDestination = folder is not null || active is null ? null : Router.Destination(null, active, [], pipeline.Vault);
             }
             catch (Exception error) { c.Report(error, Strings.CouldNotResolveDestination); return; }
 
             try
             {
-                var restored = pipeline.Drafts.LoadSnapshot();
-                var state = new QuickNoteState(sessionDestination, restored.PinOnSave);
+                var state = new QuickNoteState(sessionDestination, restored.PinOnSave, folder);
+                pipeline.Drafts.Store(restored.Text, state.PinOnSave, folder: folder);
                 quickNote.PositionStore ??= new SettingsPanelPositionStore(Settings);
-                quickNote.Present(sessionDestination?.Title, IsPinned(sessionDestination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination));
+                quickNote.Present(state.DestinationLabel, IsPinned(sessionDestination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination));
                 _ = Task.Run(async () =>
                 {
                     var list = await c.SuggestionSnapshotAsync(false);
@@ -86,14 +92,14 @@ internal sealed partial class AppController
     private QuickNoteHandlers NoteHandlers(CaptureCoordinator c, QuickNoteState state, Destination? sessionDestination)
     {
         var zone = pipeline.TimeZone;
-        void RefreshDestination() => quickNote.SetDestination(state.Destination?.Title, IsPinned(state.Destination, state.PinOnSave));
-        Task<SavedCapture?> Save(string text, bool newNote = false) => c.AddNoteAsync(text, state.Destination, state.PinOnSave, newNote, state.OutsideSession);
+        void RefreshDestination() => quickNote.SetDestination(state.DestinationLabel, IsPinned(state.Destination, state.PinOnSave));
+        Task<SavedCapture?> Save(string text, bool newNote = false) => c.AddNoteAsync(text, state.Destination, state.PinOnSave, newNote, state.OutsideSession, state.Folder);
 
         return new QuickNoteHandlers(
             OnDraft: text =>
             {
                 var blank = string.IsNullOrWhiteSpace(text);
-                pipeline.Drafts.FlushScheduledStore(text, blank ? false : state.PinOnSave);
+                pipeline.Drafts.FlushScheduledStore(text, blank ? false : state.PinOnSave, folder: state.Folder);
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
             },
             OnSubmit: text => c.Enqueue(async inner =>
@@ -108,13 +114,13 @@ internal sealed partial class AppController
                     try { state.ResetPinOnSave(pipeline.Drafts); }
                     catch (Exception error) { c.Report(error, Strings.CouldNotResetDraftPin); return; }
                     state.ReturnToSession(sessionDestination);
-                    quickNote.SetDestination(sessionDestination?.Title, IsPinned(sessionDestination, false));
+                    RefreshDestination();
                     return;
                 }
 
                 c.Enqueue(async inner =>
                 {
-                    try { await Save(text); OpenNoteEditor(); }
+                    try { await Save(text); OpenNoteEditor(state.Folder?.RawValue); }
                     catch (Exception error) { inner.ReportUserSaveFailure(error, Strings.CouldNotAddNote); }
                 });
             },
@@ -191,7 +197,7 @@ internal sealed partial class AppController
             {
                 var blank = string.IsNullOrWhiteSpace(text);
                 pipeline.Drafts.ScheduleStore(text, blank ? false : state.PinOnSave,
-                    error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)));
+                    error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)), folder: state.Folder);
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
             },
             ExistingTitleForText: text =>
@@ -201,7 +207,7 @@ internal sealed partial class AppController
                 try
                 {
                     var note = new TypedNote(text, DateTimeOffset.Now, zone, pipeline.Vault.NamingRules);
-                    return CaptureService.AppendTarget(note, pipeline.Service.ReservedNoteUrls, pipeline.Vault)?.Title;
+                    return CaptureService.AppendTarget(note, pipeline.Service.ReservedNoteUrls, pipeline.Vault, folder: state.Folder)?.Title;
                 }
                 catch (Exception) { return null; } // Invalid or unavailable paths are reported when saving.
             },

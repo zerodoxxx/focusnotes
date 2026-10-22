@@ -156,12 +156,22 @@ func checkSessionStore() async throws {
     let qualifiedBytes = try checkRead(ambiguousVault.sessionsURL.appendingPathComponent("new-group/Planning.md"))
     try require(qualifiedBytes == "# Planning\n", "a qualified session note must use its leaf name as the title")
 
-    let blank = try await store.start(name: "   ")
-    try require(blank.name == "Session", "a blank name should become Session, got \(blank.name)")
-    try require(
-        blank.notePath == "Sessions/Session.md",
-        "blank session note path was \(blank.notePath)"
-    )
+    let beforeBlank = await store.current()
+    let stateBeforeBlank = try Data(contentsOf: stateFile)
+    for blank in ["", "   ", "\n\t"] {
+        do {
+            _ = try await store.start(name: blank)
+            throw CheckFailure.failed("A blank session name was accepted")
+        } catch let error as NotePathNameError {
+            try require(error == .emptyPath, "A blank session name reports missing input")
+        }
+    }
+    let afterBlank = await store.current()
+    let stateAfterBlank = try Data(contentsOf: stateFile)
+    try require(afterBlank == beforeBlank && stateBeforeBlank == stateAfterBlank,
+                "Blank session input must preserve the active session and durable state")
+    try require(!FileManager.default.fileExists(atPath: vault.sessionsURL.appendingPathComponent("Session.md").path),
+                "Blank session input must not create a fallback note")
 
     try await store.end()
     let ended = await store.current()

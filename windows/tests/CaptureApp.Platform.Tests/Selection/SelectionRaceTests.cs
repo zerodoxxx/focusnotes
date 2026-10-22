@@ -102,6 +102,64 @@ public sealed class SelectionRaceTests
         Assert.Equal(0, services.Injections);
     }
 
+    [Theory]
+    [InlineData(0x11)]
+    [InlineData(0x12)]
+    public async Task ModifierReleaseAfterNormalHotkeyHoldCapturesAndRestoresClipboard(int key)
+    {
+        await using var desktop = await DesktopProbe.RequireAsync();
+        await using var target = await HelperTarget.StartAsync();
+        await target.CommandAsync("seed");
+        var original = await target.CommandAsync("dump");
+        await target.FocusAsync();
+        var token = TestContext.Current.CancellationToken;
+        var services = new InstrumentedServices();
+        Task? release = null;
+        var injectionsBeforeRelease = -1;
+        var held = Stopwatch.StartNew();
+        TimeSpan heldFor = default;
+        services.Hook = async point =>
+        {
+            if (point != SelectionCheckpoint.AfterUia) return;
+            // Start the physical hold after initial UIA setup, so slow fixture startup
+            // cannot accidentally release the key before the modifier wait is exercised.
+            await target.CommandAsync("modifiers", key.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Assert.True(services.ModifiersHeld, "The native keydown must be visible to GetAsyncKeyState.");
+            held.Restart();
+            release = ReleaseLaterAsync();
+        };
+        async Task ReleaseLaterAsync()
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(450), token);
+            injectionsBeforeRelease = Volatile.Read(ref services.Injections);
+            heldFor = held.Elapsed;
+            await target.CommandAsync("release-modifiers");
+        }
+
+        SelectionResult result;
+        try
+        {
+            result = await new SelectionReader(services).ReadAsync(true, target.Context, token);
+            if (release is not null) await release;
+        }
+        finally
+        {
+            // Always release our synthetic modifier, including assertion/cancellation failures.
+            try { if (release is not null) await release; }
+            finally { await target.CommandAsync("release-modifiers"); }
+        }
+        Assert.NotNull(release);
+        Assert.True(heldFor >= TimeSpan.FromMilliseconds(400), "Exercise a natural hold beyond the former 200 ms deadline.");
+        Assert.Equal(0, injectionsBeforeRelease);
+        Assert.True(result.IsSuccess, $"Selection refused after modifier release: {result.Failure} at {result.Detail}.");
+        Assert.Equal("first selected text", result.Capture?.Text);
+        Assert.Equal(SelectionMethod.Clipboard, result.Capture?.Method);
+        Assert.Equal(1, services.Injections);
+        Assert.False(services.ModifiersHeld);
+        AssertSnapshot(original, await target.CommandAsync("dump"));
+        Assert.True(Assert.Single(services.Restorations).Restored);
+    }
+
     [Fact]
     public async Task D_DelayedCopyCapturesTextAndRestoresEveryNativeFormat()
     {

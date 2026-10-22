@@ -442,10 +442,10 @@ public sealed class CaptureCoordinator
 
     // Notes and subheadings.
     public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false,
-        bool newNote = false, bool outsideSession = false)
+        bool newNote = false, bool outsideSession = false, NoteFolder? folder = null)
     {
         if (IsTerminating) { return null; }
-        Pipeline.Drafts.Store(rawText, pinOnSave);
+        Pipeline.Drafts.Store(rawText, pinOnSave, folder: folder);
         var text = CaptureFormat.NoteBody(rawText);
         if (string.IsNullOrWhiteSpace(text)) { return null; }
         var pendingCommit = CommitPending();
@@ -466,7 +466,7 @@ public sealed class CaptureCoordinator
                 : job.Prepared.Capture.Content == CaptureContent.Note(text);
             if (sameText)
             {
-                if (job.NoteOutsideSession != outsideSession ||
+                if (job.NoteOutsideSession != outsideSession || job.NoteFolder != folder ||
                     destination is not null && job.Prepared.Destination != destination ||
                     newNote && job.Prepared.CreatesNote != true)
                 {
@@ -486,7 +486,7 @@ public sealed class CaptureCoordinator
             lock (gate) { preparedJobs.Remove(key); }
         }
 
-        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote, outsideSession: outsideSession));
+        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote, outsideSession: outsideSession, folder: folder));
         var prepared = (await preparation.ConfigureAwait(false)).Prepared;
         var noteId = prepared.Capture.Id;
         Task<SavedCapture> task;
@@ -569,6 +569,15 @@ public sealed class CaptureCoordinator
 
     // Sessions.
     public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.Start(name)));
+
+    public Task<Session> StartFolderSessionAsync(string folder, string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.StartInFolder(new NoteFolder(folder), name)));
+
+    public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
+    {
+        var parent = "Sessions/" + new NoteFolder(folder).RawValue;
+        return (await SuggestionSnapshotAsync(true).ConfigureAwait(false)).Where(s =>
+            string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
 
     public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.Sessions.Resume(candidate)));
 

@@ -123,9 +123,9 @@ struct CapturePipeline: Sendable {
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 
-    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool, outsideSession: Bool = false) async throws -> PreparedCapture {
+    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool, outsideSession: Bool = false, folder: NoteFolder? = nil) async throws -> PreparedCapture {
         try await recoverSessionIdentity()
-        return try await service.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, calendar: calendar)
+        return try await service.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, folder: folder, calendar: calendar)
     }
 
     func prepareCapture(_ capture: Capture, destination: Destination?) async throws -> PreparedCapture {
@@ -333,7 +333,7 @@ struct CapturePipeline: Sendable {
     private func completeNoteSave(_ job: CaptureJob, saved: SavedCapture, pinOnSave: Bool?) throws -> Bool? {
         guard case .note(let text) = job.prepared.capture.content else { return nil }
         var pinFailed = false
-        try drafts.completeSave(matching: job.noteDraft ?? text, pinOnSave: pinOnSave) { intent in
+        try drafts.completeSave(matching: job.noteDraft ?? text, pinOnSave: pinOnSave, folder: job.noteFolder) { intent in
             guard intent else { return }
             let noteID: String
             do { noteID = try (noteIDForPin ?? { try vault.noteID(for: $0) })(saved.destination.url) }

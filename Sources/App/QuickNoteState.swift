@@ -5,13 +5,20 @@ import Core
 @MainActor
 final class QuickNoteState {
     var destination: Destination?
+    let folder: NoteFolder?
+    var destinationLabel: String? { destination?.title ?? folder.map { "Folder: \($0.rawValue)" } }
     var outsideSession = false
     var pinOnSave = false
     var suggestions: [NoteSuggestion] = []
     var kinds: [String: NoteKind] {
         Dictionary(suggestions.map { ($0.path, $0.kind) }, uniquingKeysWith: { first, _ in first })
     }
-    init(destination: Destination?, pinOnSave: Bool = false) { self.destination = destination; self.pinOnSave = destination == nil && pinOnSave }
+    init(destination: Destination?, pinOnSave: Bool = false, folder: NoteFolder? = nil) {
+        self.destination = destination
+        self.folder = folder
+        self.outsideSession = folder != nil
+        self.pinOnSave = destination == nil && pinOnSave
+    }
     func togglePinOnSave(in drafts: NoteDraftStore) throws -> Bool {
         try drafts.setPinOnSave(!pinOnSave)
         pinOnSave.toggle()
@@ -28,7 +35,7 @@ final class QuickNoteState {
     }
     func restoreSessionDestination(_ sessionDestination: Destination?, drafts: NoteDraftStore) throws {
         try resetPinOnSave(in: drafts)
-        outsideSession = false
-        destination = sessionDestination
+        outsideSession = folder != nil
+        destination = folder == nil ? sessionDestination : nil
     }
 }

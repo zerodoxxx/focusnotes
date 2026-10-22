@@ -7,12 +7,13 @@ namespace CaptureApp.AppCore;
 
 public sealed record NoteDraftSnapshot(
     [property: JsonPropertyName("text")] string Text,
-    [property: JsonPropertyName("pinOnSave")] bool PinOnSave);
+    [property: JsonPropertyName("pinOnSave")] bool PinOnSave,
+    [property: JsonPropertyName("folder")] NoteFolder? Folder = null);
 
 /// Stores the editor text and pin intent as one atomically replaced snapshot.
 public sealed class NoteDraftStore : IDisposable
 {
-    private sealed record PendingWrite(string Text, bool? PinOnSave, Action<Exception>? OnFailure);
+    private sealed record PendingWrite(string Text, bool? PinOnSave, Action<Exception>? OnFailure, NoteFolder? Folder);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -64,13 +65,13 @@ public sealed class NoteDraftStore : IDisposable
         }
     }
 
-    public void ScheduleStore(string text, bool? pinOnSave = null, Action<Exception>? onFailure = null)
+    public void ScheduleStore(string text, bool? pinOnSave = null, Action<Exception>? onFailure = null, NoteFolder? folder = null)
     {
         lock (gate)
         {
             ThrowIfDisposed();
             var previous = pendingWrite;
-            pendingWrite = new(text, pinOnSave ?? previous?.PinOnSave, onFailure);
+            pendingWrite = new(text, pinOnSave ?? previous?.PinOnSave, onFailure, folder);
             generation++;
             firstPendingAt ??= DateTimeOffset.UtcNow;
             scheduledWrite?.Dispose();
@@ -84,24 +85,24 @@ public sealed class NoteDraftStore : IDisposable
         }
     }
 
-    public void FlushScheduledStore(string text, bool? pinOnSave = null)
+    public void FlushScheduledStore(string text, bool? pinOnSave = null, NoteFolder? folder = null)
     {
         lock (gate)
         {
             ThrowIfDisposed();
-            var pending = ReplacePendingWrite(text, pinOnSave);
+            var pending = ReplacePendingWrite(text, pinOnSave, folder);
             var writeGeneration = generation;
             WriteSnapshot(pending);
             ClearPendingWrite(writeGeneration);
         }
     }
 
-    public void Store(string text, bool? pinOnSave = null)
+    public void Store(string text, bool? pinOnSave = null, NoteFolder? folder = null)
     {
         lock (gate)
         {
             ThrowIfDisposed();
-            var pending = ReplacePendingWrite(text, pinOnSave, keepFailureHandler: false);
+            var pending = ReplacePendingWrite(text, pinOnSave, folder, keepFailureHandler: false);
             var writeGeneration = generation;
             WriteSnapshot(pending);
             ClearPendingWrite(writeGeneration);
@@ -131,28 +132,7 @@ public sealed class NoteDraftStore : IDisposable
         }
     }
 
-    public void ClearIfMatching(string text)
-    {
-        lock (gate)
-        {
-            ThrowIfDisposed();
-            var writeGeneration = SupersedeScheduledWrite();
-            if (pendingWrite is { } pending)
-            {
-                WriteSnapshot(pending);
-            }
-
-            if (CaptureFormat.NoteBody(Read().Text) == CaptureFormat.NoteBody(text))
-            {
-                Remove();
-            }
-
-            ClearPendingWrite(writeGeneration);
-        }
-    }
-
-    /// Applies the save's explicit intent or the intent on the matching current draft, then consumes it.
-    public void CompleteSave(string matchingText, bool? pinOnSave, Action<bool> applyPin)
+    public void ClearIfMatching(string text, NoteFolder? folder = null)
     {
         lock (gate)
         {
@@ -164,7 +144,29 @@ public sealed class NoteDraftStore : IDisposable
             }
 
             var draft = Read();
-            var matches = CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(matchingText);
+            if (draft.Folder == folder && CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(text))
+            {
+                Remove();
+            }
+
+            ClearPendingWrite(writeGeneration);
+        }
+    }
+
+    /// Applies the save's explicit intent or the intent on the matching current draft, then consumes it.
+    public void CompleteSave(string matchingText, bool? pinOnSave, Action<bool> applyPin, NoteFolder? folder = null)
+    {
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            var writeGeneration = SupersedeScheduledWrite();
+            if (pendingWrite is { } pending)
+            {
+                WriteSnapshot(pending);
+            }
+
+            var draft = Read();
+            var matches = draft.Folder == folder && CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(matchingText);
             applyPin(pinOnSave ?? (matches && draft.PinOnSave));
             if (matches)
             {
@@ -210,11 +212,11 @@ public sealed class NoteDraftStore : IDisposable
         }
     }
 
-    private PendingWrite ReplacePendingWrite(string text, bool? pinOnSave, bool keepFailureHandler = true)
+    private PendingWrite ReplacePendingWrite(string text, bool? pinOnSave, NoteFolder? folder, bool keepFailureHandler = true)
     {
         var previous = pendingWrite;
         var pending = new PendingWrite(text, pinOnSave ?? previous?.PinOnSave,
-            keepFailureHandler ? previous?.OnFailure : null);
+            keepFailureHandler ? previous?.OnFailure : null, folder);
         generation++;
         scheduledWrite?.Dispose();
         scheduledWrite = null;
@@ -259,7 +261,7 @@ public sealed class NoteDraftStore : IDisposable
         }
 
         var pin = pending.PinOnSave ?? Read().PinOnSave;
-        Write(new(pending.Text, pin));
+        Write(new(pending.Text, pin, pending.Folder));
     }
 
     private NoteDraftSnapshot Read()

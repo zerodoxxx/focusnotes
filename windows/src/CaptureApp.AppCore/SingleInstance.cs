@@ -1,6 +1,9 @@
 using System.IO.Pipes;
+using System.Runtime.CompilerServices;
 using System.Text;
 using CaptureApp.Core;
+
+[assembly: InternalsVisibleTo("CaptureApp.AppCore.Tests")]
 
 namespace CaptureApp.AppCore;
 
@@ -16,18 +19,23 @@ public sealed class SingleInstance : IAsyncDisposable
     public string StateDirectory { get; }
     public string PipeName { get; }
 
-    private SingleInstance(string stateDirectory, FileStream lockFile, Action? onShow)
+    private SingleInstance(string stateDirectory, FileStream lockFile, Action? onShow, string pipeName)
     {
         StateDirectory = stateDirectory;
         this.lockFile = lockFile;
         this.onShow = onShow;
-        PipeName = CurrentPipeName();
+        PipeName = pipeName;
         logger = new(stateDirectory, "single-instance");
         pipeServer = Task.Run(ListenAsync);
     }
 
     /// Returns a handle for the primary process, or null after sending "show" to the existing process.
-    public static async Task<SingleInstance?> StartAsync(string stateDirectory, Action? onShow = null,
+    public static Task<SingleInstance?> StartAsync(string stateDirectory, Action? onShow = null,
+        CancellationToken cancellationToken = default)
+        => StartAsync(stateDirectory, CurrentPipeName(), onShow, cancellationToken);
+
+    // Tests supply an isolated handoff pipe without contacting a running desktop instance.
+    internal static async Task<SingleInstance?> StartAsync(string stateDirectory, string pipeName, Action? onShow = null,
         CancellationToken cancellationToken = default)
     {
         var fullPath = Path.GetFullPath(stateDirectory);
@@ -43,7 +51,7 @@ public sealed class SingleInstance : IAsyncDisposable
             if (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
             try
             {
-                await SendShowAsync(CurrentPipeName(), cancellationToken).ConfigureAwait(false);
+                await SendShowAsync(pipeName, cancellationToken).ConfigureAwait(false);
                 return null;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -59,7 +67,7 @@ public sealed class SingleInstance : IAsyncDisposable
 
         try
         {
-            return new(fullPath, lockFile, onShow);
+            return new(fullPath, lockFile, onShow, pipeName);
         }
         catch
         {
