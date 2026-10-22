@@ -180,15 +180,17 @@ to build from source. Any Windows installers published in the future will be sig
 
 ### Shortcuts on Windows
 
+Windows uses Alt+Shift for global shortcuts, matching the Option+Shift modifier pair on macOS.
+
 | Action | Windows | Mac |
 | --- | --- | --- |
-| Capture selected text | <kbd>Ctrl+Alt+Shift+Q</kbd> | <kbd>⌥⇧C</kbd> |
-| Capture an area of the screen | <kbd>Ctrl+Alt+Shift+G</kbd> | <kbd>⌥⇧S</kbd> |
-| Write a quick note | <kbd>Ctrl+Alt+Shift+W</kbd> | <kbd>⌥⇧N</kbd> |
-| Search notes | <kbd>Ctrl+Alt+Shift+F</kbd> | <kbd>⌥⇧F</kbd> |
-| Start or end a session | <kbd>Ctrl+Alt+Shift+A</kbd> | <kbd>⌥⇧A</kbd> |
-| Add a subheading | <kbd>Ctrl+Alt+Shift+H</kbd> | <kbd>⌥⇧H</kbd> |
-| Open the notes folder | <kbd>Ctrl+Alt+Shift+E</kbd> | <kbd>⌥⇧L</kbd> |
+| Capture selected text | <kbd>Alt+Shift+Q</kbd> | <kbd>⌥⇧C</kbd> |
+| Capture an area of the screen | <kbd>Alt+Shift+G</kbd> | <kbd>⌥⇧S</kbd> |
+| Write a quick note | <kbd>Alt+Shift+W</kbd> | <kbd>⌥⇧N</kbd> |
+| Search notes | <kbd>Alt+Shift+F</kbd> | <kbd>⌥⇧F</kbd> |
+| Start or end a session | <kbd>Alt+Shift+A</kbd> | <kbd>⌥⇧A</kbd> |
+| Add a subheading | <kbd>Alt+Shift+H</kbd> | <kbd>⌥⇧H</kbd> |
+| Open the notes folder | <kbd>Alt+Shift+E</kbd> | <kbd>⌥⇧L</kbd> |
 
 These defaults are provisional until they are tested against common apps on real devices. Rebind any of them in
 **Settings… → Shortcuts**. In the quick note, <kbd>Ctrl+Enter</kbd> saves, <kbd>Ctrl+K</kbd> opens actions,

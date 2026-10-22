@@ -344,7 +344,7 @@ internal static class Program
             case "toast": case "success": case "warning": case "session": case "copied":
                 var toast = new ToastController { OnExpire = Finish }; liveController = toast;
                 var style = Enum.TryParse<ToastStyle>(component, true, out var parsed) ? parsed : ToastStyle.Success;
-                toast.Show(new Toast(style, "Capture saved", "Added to System Design", new ToastHint("Ctrl+Alt+Shift+Q", "name"))); break;
+                toast.Show(new Toast(style, "Capture saved", "Added to System Design", new ToastHint("Alt+Shift+Q", "name"))); break;
             case "search":
                 var search = new SearchPanelController(); liveController = search;
                 search.Present((text, _) => Task.FromResult<IReadOnlyList<SearchSection>>(text.Length == 0 ? Fixtures.Recent : Fixtures.Matches.Where(s => s.Rows.Any(r => r.Title.Contains(text, StringComparison.OrdinalIgnoreCase))).ToArray()),

@@ -25,14 +25,14 @@ public sealed class TrayMenuModelTests
     {
         var model = new TrayMenuModel(
         [
-            new TrayMenuItem("capture", "Capture Area", "Ctrl+Alt+Shift+G", Enabled: true),
+            new TrayMenuItem("capture", "Capture Area", "Alt+Shift+G", Enabled: true),
             TrayMenuItem.Separator(),
             new TrayMenuItem("setup", "Setup…", Checked: true,
                 Children: [new TrayMenuItem("shortcuts", "Shortcuts", Enabled: false)])
         ]);
 
         Assert.Equal(3, model.Items.Count);
-        Assert.Equal("Ctrl+Alt+Shift+G", model.Items[0].ShortcutText);
+        Assert.Equal("Alt+Shift+G", model.Items[0].ShortcutText);
         Assert.True(model.Items[1].IsSeparator);
         Assert.Equal("shortcuts", model.Items[2].Children![0].Id);
         Assert.True(model.Items[2].Checked);

@@ -204,7 +204,7 @@ public sealed class TrayMenuTests
 {
     private static MenuState State(bool consent = true, int attention = 0, string? session = null, int failed = 0,
         SemanticMenuState? semantic = null, UpdateMenuState? update = null) =>
-        new(consent, attention, session, new Dictionary<string, string> { [MenuIds.Search] = "Ctrl+Alt+Shift+F" }, failed,
+        new(consent, attention, session, new Dictionary<string, string> { [MenuIds.Search] = "Alt+Shift+F" }, failed,
             semantic ?? new(SemanticMenuPhase.NotInstalled), update ?? new(UpdateMenuKind.Idle));
 
     private static string[] Ids(IEnumerable<MenuEntry> entries) => entries.Select(e => e.IsSeparator ? "-" : e.Id).ToArray();
@@ -221,7 +221,7 @@ public sealed class TrayMenuTests
     {
         var items = TrayMenuBuilder.Build(State(session: "Standup"));
         Assert.Equal("End Session “Standup”", items.Single(i => i.Id == MenuIds.Session).Title);
-        Assert.Equal("Ctrl+Alt+Shift+F", items.Single(i => i.Id == MenuIds.Search).Shortcut);
+        Assert.Equal("Alt+Shift+F", items.Single(i => i.Id == MenuIds.Search).Shortcut);
         Assert.Equal("Enable Semantic Search…", items.Single(i => i.Id == MenuIds.Semantic).Title);
         Assert.Equal("Start Session…", TrayMenuBuilder.Build(State()).Single(i => i.Id == MenuIds.Session).Title);
     }
@@ -274,8 +274,8 @@ public sealed class StringTableTests
     public void MappedWording()
     {
         Assert.Equal("Open the tray icon → Setup", Strings.OpenTraySetup);
-        Assert.Equal("Select text first, or use Ctrl+Alt+Shift+G for an area", Strings.NoTextSelectedSubtitle("Ctrl+Alt+Shift+G"));
-        Assert.Equal("Captures go here until Ctrl+Alt+Shift+A", Strings.SessionCapturesGoHere("Ctrl+Alt+Shift+A"));
+        Assert.Equal("Select text first, or use Alt+Shift+G for an area", Strings.NoTextSelectedSubtitle("Alt+Shift+G"));
+        Assert.Equal("Captures go here until Alt+Shift+A", Strings.SessionCapturesGoHere("Alt+Shift+A"));
         Assert.Equal("Session resumed · X", Strings.SessionStarted("X", true));
         Assert.Equal("1 capture", Strings.CaptureCount(1));
         Assert.Equal("3 captures", Strings.CaptureCount(3));

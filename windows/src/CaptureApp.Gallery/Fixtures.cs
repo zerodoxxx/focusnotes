@@ -32,7 +32,7 @@ internal static class Fixtures
         foreach (var hasSubtitle in new[] { false, true })
         foreach (var hasHint in new[] { false, true })
         {
-            ToastView Create() => new(new Toast(style, title, hasSubtitle ? subtitle : null, hasHint ? new ToastHint("Ctrl+Alt+Shift+Q", "name") : null));
+            ToastView Create() => new(new Toast(style, title, hasSubtitle ? subtitle : null, hasHint ? new ToastHint("Alt+Shift+Q", "name") : null));
             // Toast width follows measured text, within the token bounds.
             var sample = Create();
             yield return new Fixture($"toast-{stem}-{(hasSubtitle ? "subtitle" : "plain")}-{(hasHint ? "hint" : "no-hint")}", Create, sample.Width, Tokens.ToastHeight);

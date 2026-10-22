@@ -257,8 +257,8 @@ target, build and result for each item.
    where a new icon first appears and that Setup explains how to show it. Check light and dark taskbar themes and the
    attention variant.
 6. **Hotkey conflicts:** With PowerToys, Teams, VS Code, Chrome, Firefox, Zoom and Discord installed and running,
-   press each default shortcut with each app focused. The app's action runs and the other app does not also react.
-   Record any app that shadows a default; rebinding must fix it.
+   press each Alt+Shift default shortcut with each app focused. The app's action runs and the other app does not also react.
+   Repeat with multiple Windows input languages enabled. Record any app that shadows a default; rebinding must fix it.
 7. **AltGr layouts:** Add the Polish (Programmers) and German keyboard layouts. In Settings → Shortcuts, try a
    Ctrl+Alt+Shift+letter combination that types a character on that layout: it is refused with a suggested free letter.
 8. **IME:** With a Japanese IME, compose text in the quick note and press Return during composition: it confirms the
