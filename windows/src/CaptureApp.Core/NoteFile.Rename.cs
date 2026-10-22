@@ -8,7 +8,7 @@ public static partial class NoteFile
 {
     // The callback persists the rename intent after validation and before either name changes.
     internal static void RenameSession(string root, string oldPath, string newPath, string title,
-        Action<VaultFileSnapshot, byte[]>? beforeRename = null, Action? beforeReplace = null)
+        Action<VaultFileSnapshot, byte[], SessionRenameStage>? beforeRename = null, Action? beforeReplace = null)
     {
         var oldParts = PathComponents(oldPath);
         var newParts = PathComponents(newPath);
@@ -49,7 +49,8 @@ public static partial class NoteFile
                 }
 
                 var temporaryIdentity = FileMetadata.At(temporary)!;
-                beforeRename?.Invoke(snapshot, rewritten);
+                beforeRename?.Invoke(snapshot, rewritten, new(new(temporaryIdentity.Device, temporaryIdentity.Inode),
+                    string.Join('/', oldParts.SkipLast(1).Append(temporaryName))));
                 ancestors.Validate();
                 EnsureOriginal(source, opened);
                 EnsureRenameTarget(source, target);
@@ -70,7 +71,7 @@ public static partial class NoteFile
                 if (OperatingSystem.IsWindows()) { File.Replace(temporary, target, null); }
                 else { File.Move(temporary, target, true); }
             }
-            catch
+            catch (Exception error)
             {
                 if (moved)
                 {
@@ -86,14 +87,23 @@ public static partial class NoteFile
                             if (OperatingSystem.IsWindows()) { RenameByHandle(original.SafeFileHandle, source); }
                             else { File.Move(target, source, false); }
                         }
+                        else { throw new IOException("The old session name is occupied; rollback cannot replace it."); }
                     }
-                    catch (Exception rollback) when (rollback is IOException or UnauthorizedAccessException) { }
+                    catch (Exception rollback) when (rollback is IOException or UnauthorizedAccessException)
+                    {
+                        throw new SessionRenamePendingException(error, rollback);
+                    }
                 }
                 throw;
             }
             finally
             {
-                if (File.Exists(temporary)) { File.Delete(temporary); }
+                try { if (File.Exists(temporary)) { File.Delete(temporary); } }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+                {
+                    // The durable staging identity allows later cleanup. Preserve the transaction's real error.
+                    System.Diagnostics.Trace.TraceError($"Session staging cleanup failed: {cleanup}");
+                }
             }
         }
     }
@@ -104,9 +114,10 @@ public static partial class NoteFile
         var length = newline < 0 ? contents.Length : newline;
         var bom = contents.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF });
         var offset = bom ? 3 : 0;
-        var first = Utf8.GetString(contents, offset, Math.Max(0, length - offset));
-        var hasHeading = first.StartsWith("# ", StringComparison.Ordinal);
-        var ending = first.EndsWith('\r') ? "\r\n" : "\n";
+        var hasHeading = contents.AsSpan(offset).StartsWith(new byte[] { (byte)'#', (byte)' ' });
+        var ending = hasHeading
+            ? length > offset && contents[length - 1] == '\r' ? "\r\n" : "\n"
+            : contents.AsSpan().IndexOf(new byte[] { (byte)'\r', (byte)'\n' }) >= 0 ? "\r\n" : "\n";
         var header = Utf8.GetBytes("# " + title + (hasHeading ? newline < 0 ? "" : ending : ending + ending));
         var tail = hasHeading ? (newline < 0 ? contents.Length : newline + 1) : offset;
         return [.. contents.AsSpan(0, offset), .. header, .. contents.AsSpan(tail)];
@@ -115,12 +126,37 @@ public static partial class NoteFile
     private static void EnsureRenameTarget(string source, string target)
     {
         if (string.Equals(source, target, StringComparison.Ordinal)) { return; }
+        if (source.Normalize().Equals(target.Normalize(), StringComparison.OrdinalIgnoreCase))
+            throw new SessionStoreException(SessionStoreError.CaseOnlyRename, path: target);
         var wanted = Path.GetFileName(target).Normalize();
         if (Directory.EnumerateFileSystemEntries(Path.GetDirectoryName(source)!).Any(path =>
             Path.GetFileName(path).Normalize().Equals(wanted, StringComparison.OrdinalIgnoreCase)))
         {
             throw new SessionStoreException(SessionStoreError.NameAlreadyExists, path: target);
         }
+    }
+
+    internal static void RemoveSessionTemporary(string root, SessionRenameStage stage)
+    {
+        var parts = PathComponents(stage.TemporaryPath);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(parts[^1], @"^\.pending-[0-9a-f]{32}$"))
+            throw new VaultFileException(VaultFileError.InvalidFileName);
+        using var ancestors = RenameAncestors.Lock(root, parts);
+        var path = SafePath(root, stage.TemporaryPath);
+        if (FileMetadata.At(path) is null) return;
+        using var stream = OpenRenameSource(path);
+        var current = FileMetadata.Of(stream);
+        current.Validate();
+        if (current.Device != stage.Identity.Device || current.Inode != stage.Identity.Inode) return;
+        ancestors.Validate();
+        if (!OperatingSystem.IsWindows()) { File.Delete(path); return; }
+        var disposition = Marshal.AllocHGlobal(1);
+        try
+        {
+            Marshal.WriteByte(disposition, 1);
+            if (!RenameNative.SetInformation(stream.SafeFileHandle, 4, disposition, 1)) throw RenameError();
+        }
+        finally { Marshal.FreeHGlobal(disposition); }
     }
 
     private static void EnsureOriginal(string path, FileMetadata expected)

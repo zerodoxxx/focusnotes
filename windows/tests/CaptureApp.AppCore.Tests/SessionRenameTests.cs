@@ -8,6 +8,128 @@ namespace CaptureApp.AppCore.Tests;
 
 public sealed class SessionRenameTests
 {
+    [Fact]
+    public void FailedMoveImmediatelyClearsIntentBeforeLaterSourceEdits()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var session = pipeline.Sessions.Start("Standup");
+        var oldUrl = pipeline.Vault.ManagedUrl(session.NotePath);
+        Assert.Throws<SessionStoreException>(() => pipeline.RenameSession(Candidate(session), "Daily sync", afterIntent: plan =>
+        {
+            File.WriteAllText(pipeline.Vault.ManagedUrl(plan.Target.NotePath), "# Occupied\nkeep\n");
+        }));
+        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        File.AppendAllText(oldUrl, "user edit\n");
+        Assert.Contains("user edit", File.ReadAllText(oldUrl), StringComparison.Ordinal);
+        pipeline.Commit(pipeline.PrepareText("next capture", new CaptureSource()));
+        Assert.Contains("next capture", File.ReadAllText(oldUrl), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StartupRemovesOnlyTheRecordedStagingOrphan()
+    {
+        using var temp = new TempDirectory();
+        string stagedPath;
+        using (var pipeline = Open(temp))
+        {
+            var session = pipeline.Sessions.Start("Standup");
+            SessionRenamePlan? recorded = null;
+            var heldPath = Path.Combine(pipeline.StateDirectory, "held-staging.md");
+            Assert.Throws<InvalidOperationException>(() => pipeline.Service.RenameSession(Candidate(session), "Daily sync", plan =>
+            {
+                recorded = plan;
+                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                    JsonSerializer.SerializeToUtf8Bytes(new { Plan = plan, CaptureIds = Array.Empty<Guid>() }));
+                File.Move(pipeline.Vault.ManagedUrl(plan.Installation!.TemporaryPath), heldPath);
+                throw new InvalidOperationException("simulated crash with a retained staging inode");
+            }));
+            Assert.NotNull(recorded);
+            stagedPath = pipeline.Vault.ManagedUrl(recorded.Installation!.TemporaryPath);
+            File.Move(heldPath, stagedPath); // Same inode, restored to the exact crash checkpoint name.
+        }
+        using var reopened = Open(temp);
+        Assert.False(File.Exists(stagedPath));
+        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        Assert.True(File.Exists(reopened.Vault.ManagedUrl("Sessions/Standup.md")));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void StartupRecoversContentDriftOrAbandonsAnUncommittedRename(bool replacementFinished, bool sourceUnmoved)
+    {
+        using var temp = new TempDirectory();
+        string path;
+        using (var pipeline = Open(temp))
+        {
+            var session = pipeline.Sessions.Start("Standup");
+            SessionRenamePlan? plan = null;
+            void SaveIntent(SessionRenamePlan value)
+            {
+                plan = value;
+                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                    JsonSerializer.SerializeToUtf8Bytes(new { Plan = value, CaptureIds = Array.Empty<Guid>() }));
+                if (!replacementFinished) throw new InvalidOperationException("interrupted before move");
+            }
+            if (replacementFinished) pipeline.Service.RenameSession(Candidate(session), "Daily sync", SaveIntent);
+            else Assert.Throws<InvalidOperationException>(() => pipeline.Service.RenameSession(Candidate(session), "Daily sync", SaveIntent));
+            Assert.NotNull(plan);
+            path = sourceUnmoved ? session.NotePath : plan.Target.NotePath;
+            if (!sourceUnmoved && !replacementFinished)
+                File.Move(pipeline.Vault.ManagedUrl(session.NotePath), pipeline.Vault.ManagedUrl(path));
+            File.AppendAllText(pipeline.Vault.ManagedUrl(path), "external edit after interruption\n");
+        }
+        using var reopened = Open(temp);
+        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        Assert.Contains("external edit after interruption", File.ReadAllText(reopened.Vault.ManagedUrl(path)), StringComparison.Ordinal);
+        Assert.Equal(path, reopened.Sessions.Current()?.NotePath);
+        reopened.Commit(reopened.PrepareText("works after recovery", new CaptureSource()));
+        Assert.Contains("works after recovery", File.ReadAllText(reopened.Vault.ManagedUrl(path)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnrelatedTargetDoesNotBlockStartupOrChangeItsBytes()
+    {
+        using var temp = new TempDirectory();
+        using (var pipeline = Open(temp))
+        {
+            var session = pipeline.Sessions.Start("Standup");
+            pipeline.Service.RenameSession(Candidate(session), "Daily sync", plan =>
+                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                    JsonSerializer.SerializeToUtf8Bytes(new { Plan = plan, CaptureIds = Array.Empty<Guid>() })));
+            var target = pipeline.Vault.ManagedUrl("Sessions/Daily sync.md");
+            File.Move(target, target + ".backup");
+            File.WriteAllText(target, "# Unrelated\nkeep these bytes\n");
+        }
+        using var reopened = Open(temp);
+        Assert.Equal("# Unrelated\nkeep these bytes\n", File.ReadAllText(reopened.Vault.ManagedUrl("Sessions/Daily sync.md")));
+        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+    }
+
+    [Fact]
+    public void FailedRollbackReturnsPendingOutcomeAndRecoveryKeepsTheOccupiedOldName()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var session = pipeline.Sessions.Start("Standup");
+        var oldUrl = pipeline.Vault.ManagedUrl(session.NotePath);
+        var job = pipeline.PrepareText("pending capture", new CaptureSource());
+        pipeline.Stage(job);
+        var outcome = pipeline.RenameSession(Candidate(session), "Daily sync", beforeReplace: () =>
+        {
+            File.WriteAllText(oldUrl, "# Other\noccupied old name\n");
+            throw new IOException("injected replacement failure");
+        });
+        Assert.True(outcome.IdentityUpdatePending);
+        var saved = pipeline.Commit(job);
+        Assert.Equal(pipeline.Vault.ManagedUrl(outcome.Session.NotePath), saved.Destination.Url);
+        Assert.Equal("# Other\noccupied old name\n", File.ReadAllText(oldUrl));
+        Assert.StartsWith("# Daily sync\n", File.ReadAllText(saved.Destination.Url), StringComparison.Ordinal);
+        Assert.Contains("rollback failed", string.Join('\n', Directory.EnumerateFiles(Path.Combine(pipeline.StateDirectory, "logs"))
+            .Select(File.ReadAllText)), StringComparison.OrdinalIgnoreCase);
+    }
     private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
         Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 
@@ -31,7 +153,9 @@ public sealed class SessionRenameTests
         pipeline.Index.Sync();
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
 
-        var renamed = await coordinator.RenameSessionAsync(Candidate(original), "Daily sync");
+        var outcome = await coordinator.RenameSessionAsync(Candidate(original), "Daily sync");
+        Assert.False(outcome.IdentityUpdatePending);
+        var renamed = outcome.Session;
 
         Assert.Equal("Sessions/archive/Daily sync.md", renamed.NotePath);
         Assert.Equal(renamed, coordinator.ActiveSession);
@@ -139,7 +263,7 @@ public sealed class SessionRenameTests
         File.Delete(pipeline.Sessions.StateFileUrl);
         Directory.CreateDirectory(pipeline.Sessions.StateFileUrl);
 
-        Assert.NotNull(Record.Exception(() => pipeline.RenameSession(Candidate(original), "Daily sync")));
+        Assert.True(pipeline.RenameSession(Candidate(original), "Daily sync").IdentityUpdatePending);
         var newPath = "Sessions/Daily sync.md";
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl(original.NotePath)));
         Assert.True(File.Exists(pipeline.Vault.ManagedUrl(newPath)));
@@ -171,7 +295,7 @@ public sealed class SessionRenameTests
         File.Move(pipeline.Pins.Url, pinBackup);
         Directory.CreateDirectory(pipeline.Pins.Url);
 
-        Assert.NotNull(Record.Exception(() => pipeline.RenameSession(Candidate(original), "Daily sync")));
+        Assert.True(pipeline.RenameSession(Candidate(original), "Daily sync").IdentityUpdatePending);
         Assert.True(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl(original.NotePath)));
         Assert.NotNull(Record.Exception(() => pipeline.Commit(job)));

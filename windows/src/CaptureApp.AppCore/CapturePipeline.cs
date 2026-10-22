@@ -196,14 +196,16 @@ public sealed class CapturePipeline : IDisposable
         return saved;
     }
 
-    public Session RenameSession(SessionCandidate candidate, string newName)
+    public SessionRenameOutcome RenameSession(SessionCandidate candidate, string newName, Action? beforeReplace = null,
+        Action<SessionRenamePlan>? afterIntent = null)
     {
         lock (captureGate)
         {
             ThrowIfDisposed();
             RecoverPendingRename();
             RenameIntent? intent = null;
-            var session = Service.RenameSession(candidate, newName, plan =>
+            Session session;
+            try { session = Service.RenameSession(candidate, newName, plan =>
             {
                 var oldUrl = Vault.ManagedUrl(plan.OldPath);
                 var ids = Journal.CaptureIdsTargeting(oldUrl)
@@ -211,9 +213,44 @@ public sealed class CapturePipeline : IDisposable
                     .Distinct().ToArray();
                 intent = new(plan, ids);
                 AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
-            });
-            if (intent is not null) FinishRename(intent);
-            return session;
+                afterIntent?.Invoke(plan);
+            }, beforeReplace); }
+            catch (Exception error)
+            {
+                if (error is SessionRenamePendingException pending)
+                    logger.Error($"Session rename rollback failed: {pending.RollbackError}; original error: {pending.InnerException}");
+                if (intent is null) throw;
+                try
+                {
+                    var source = Vault.FileSnapshot(intent.Plan.OldPath, false);
+                    if (intent.Plan.OldPath != intent.Plan.Target.NotePath && source is not null && intent.Plan.Source.Matches(source))
+                    {
+                        AbandonRename(intent, "Rename failed before moving the source, or rollback restored it.");
+                        throw;
+                    }
+                    var target = Vault.FileSnapshot(intent.Plan.Target.NotePath, false);
+                    if (target is null || !KnownTarget(intent.Plan, target)) throw;
+                }
+                catch (Exception cleanup) when (!ReferenceEquals(cleanup, error))
+                {
+                    logger.Error($"Rename failure cleanup also failed: {cleanup}");
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+                    throw;
+                }
+                // The move committed. Surface an explicit pending outcome instead of a failed-rename toast.
+                logger.Error($"Session rename committed with follow-up pending: {error}");
+                return new(intent.Plan.Target, true);
+            }
+            try
+            {
+                if (intent is not null) FinishRename(intent);
+                return new(session, false);
+            }
+            catch (Exception error)
+            {
+                logger.Error($"Session renamed; identity migration will retry: {error}");
+                return new(session, true);
+            }
         }
     }
 
@@ -222,20 +259,52 @@ public sealed class CapturePipeline : IDisposable
         if (!File.Exists(RenameIntentPath)) return;
         var intent = JsonSerializer.Deserialize<RenameIntent>(File.ReadAllBytes(RenameIntentPath))
             ?? throw new IOException("The pending session rename state is empty.");
-        if (intent.Plan.OldPath != intent.Plan.Target.NotePath && Vault.FileSnapshot(intent.Plan.OldPath) is { } original)
+        var targetSnapshot = Vault.FileSnapshot(intent.Plan.Target.NotePath, false);
+        if (intent.Plan.OldPath != intent.Plan.Target.NotePath && Vault.FileSnapshot(intent.Plan.OldPath) is { } original &&
+            (intent.Plan.Source.Matches(original) || targetSnapshot is null || !KnownTarget(intent.Plan, targetSnapshot)))
         {
-            // The exclusive move did not happen, or was rolled back. Keep every old identity.
-            // A different file reusing the source name is ambiguous and must not receive old captures.
-            if (original.Device != intent.Plan.SourceDevice || original.Inode != intent.Plan.SourceInode ||
-                Convert.ToHexString(SHA256.HashData(original.Contents!)) != intent.Plan.OriginalSha256)
-                throw new IOException("The pending session rename source changed.");
-            File.Delete(RenameIntentPath);
+            AbandonRename(intent, intent.Plan.Source.Matches(original)
+                ? "Source remains at the old name; abandon the uncommitted rename, preserving any user edits."
+                : "Source was replaced; abandon the stale rename without modifying either note.");
             return;
         }
 
         // Core verifies the target's source identity or the exact rewritten content digest.
-        Sessions.CompleteRename(intent.Plan);
+        try
+        {
+            Sessions.CompleteRename(intent.Plan, repaired =>
+            {
+                CleanupRenameTemporary(intent.Plan);
+                intent = intent with { Plan = repaired };
+                AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
+            });
+        }
+        catch (Exception error) when (error is VaultFileException { Kind: VaultFileError.Changed } or FileNotFoundException)
+        {
+            AbandonRename(intent, $"Renamed target no longer has a known identity: {error.Message}");
+            return;
+        }
         FinishRename(intent);
+    }
+
+    private static bool KnownTarget(SessionRenamePlan plan, VaultFileSnapshot snapshot) =>
+        plan.Source.Matches(snapshot) || plan.Installation?.Identity.Matches(snapshot) == true;
+
+    private void AbandonRename(RenameIntent intent, string reason)
+    {
+        logger.Notice(reason);
+        CleanupRenameTemporary(intent.Plan);
+        File.Delete(RenameIntentPath);
+    }
+
+    private void CleanupRenameTemporary(SessionRenamePlan plan)
+    {
+        try { Sessions.CleanupRename(plan); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Orphan cleanup must not turn an otherwise completed/abandoned rename into a startup blocker.
+            logger.Error($"Session staging cleanup will be left to the vault sweep: {error}");
+        }
     }
 
     private void FinishRename(RenameIntent intent)
@@ -248,6 +317,7 @@ public sealed class CapturePipeline : IDisposable
             if (preparedDestinations.ContainsKey(id)) preparedDestinations[id] = destination;
         }
         Pins.Move(intent.Plan.OldPath, target.NotePath);
+        CleanupRenameTemporary(intent.Plan);
         try { Index.Sync(); }
         catch (Exception error)
         {

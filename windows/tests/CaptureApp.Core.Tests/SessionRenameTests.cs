@@ -53,6 +53,20 @@ public sealed class SessionRenameTests
     }
 
     [Fact]
+    public void HeadingRewritePreservesInvalidUtf8AndFindsCrLfBeyondTheFirstLine()
+    {
+        Assert.Equal(new byte[] { 35, 32, 78, 101, 119, 10, 254 },
+            NoteFile.RewriteHeading([35, 32, 255, 10, 254], "New"));
+        Assert.Equal(new byte[] { 35, 32, 78, 101, 119, 10, 10, 255, 10, 254 },
+            NoteFile.RewriteHeading([255, 10, 254], "New"));
+        Assert.Equal(NoteFile.Utf8.GetBytes("# New\r\n\r\nfirst\nlater\r\n"),
+            NoteFile.RewriteHeading(NoteFile.Utf8.GetBytes("first\nlater\r\n"), "New"));
+        Assert.Equal(NoteFile.Utf8.GetBytes("# New\n\n"), NoteFile.RewriteHeading([], "New"));
+        Assert.Equal(NoteFile.Utf8.GetBytes("# New\n\n#body\n"),
+            NoteFile.RewriteHeading(NoteFile.Utf8.GetBytes("#body\n"), "New"));
+    }
+
+    [Fact]
     public void SamePathRewritesOnlyHeadingAndCaseOnlyRenameIsACollision()
     {
         using var e = new CheckVault();
@@ -61,7 +75,7 @@ public sealed class SessionRenameTests
         var renamed = e.Service.RenameSession(Candidate("Sessions/A-B.md", "A:B"), "A-B");
         Assert.Equal("Sessions/A-B.md", renamed.NotePath);
         Assert.Equal("# A-B\n\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(renamed.NotePath)));
-        Assert.Equal(SessionStoreError.NameAlreadyExists,
+        Assert.Equal(SessionStoreError.CaseOnlyRename,
             Assert.Throws<SessionStoreException>(() => e.Service.RenameSession(Candidate(renamed.NotePath), "a-b")).Kind);
         Assert.Equal(renamed, e.Sessions.Current());
     }
@@ -117,7 +131,7 @@ public sealed class SessionRenameTests
         var old = e.Write(Candidate().NotePath, "# Standup\noriginal\n");
         var next = "Sessions/archive/Daily sync.md";
         Assert.Throws<SessionStoreException>(() => NoteFile.RenameSession(e.Vault.Root, Candidate().NotePath, next, "Daily sync",
-            (_, _) => e.Write(next, "racing file")));
+            (_, _, _) => e.Write(next, "racing file")));
         Assert.Equal("# Standup\noriginal\n", CheckVault.Read(old));
         Assert.Equal("racing file", CheckVault.Read(e.Vault.UrlForRelativePath(next)));
         File.Delete(e.Vault.UrlForRelativePath(next));
@@ -154,7 +168,7 @@ public sealed class SessionRenameTests
         var next = "Sessions/archive/Daily sync.md";
         var target = e.Vault.UrlForRelativePath(next);
         var savedOriginal = target + ".saved";
-        Assert.Throws<VaultFileException>(() => NoteFile.RenameSession(e.Vault.Root, Candidate().NotePath, next, "Daily sync",
+        Assert.Throws<SessionRenamePendingException>(() => NoteFile.RenameSession(e.Vault.Root, Candidate().NotePath, next, "Daily sync",
             beforeReplace: () =>
             {
                 File.Move(target, savedOriginal);
@@ -206,8 +220,8 @@ public sealed class SessionRenameTests
         var original = e.Vault.FileSnapshot(Candidate().NotePath)!;
         var target = new Session("Daily sync", "Sessions/archive/Daily sync.md", CheckVault.Now, true);
         var rewritten = NoteFile.RewriteHeading(original.Contents!, target.Name);
-        var plan = new SessionRenamePlan(Candidate().NotePath, target, original.Device, original.Inode,
-            Convert.ToHexString(SHA256.HashData(original.Contents!)), Convert.ToHexString(SHA256.HashData(rewritten)));
+        var plan = new SessionRenamePlan(Candidate().NotePath, target, new(original.Device, original.Inode),
+            new() { Original = Convert.ToHexString(SHA256.HashData(original.Contents!)), Rewritten = Convert.ToHexString(SHA256.HashData(rewritten)) });
         File.Move(old, e.Vault.UrlForRelativePath(target.NotePath));
         Assert.Equal(target, e.Sessions.CompleteRename(plan));
         Assert.Equal("# Daily sync\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));

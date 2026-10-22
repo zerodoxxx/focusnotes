@@ -556,13 +556,21 @@ public sealed class CaptureCoordinator
 
     public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.Sessions.Resume(candidate)));
 
-    public Task<Session> RenameSessionAsync(SessionCandidate candidate, string newName) => Task.Run(() =>
+    public Task<SessionRenameOutcome> RenameSessionAsync(SessionCandidate candidate, string newName) => Task.Run(() =>
     {
-        try { return ActivateSession(Pipeline.RenameSession(candidate, newName)); }
+        try
+        {
+            var outcome = Pipeline.RenameSession(candidate, newName);
+            ActiveSession = outcome.Session;
+            host.StatusChanged();
+            if (outcome.IdentityUpdatePending)
+                ShowToast(new(AppToastStyle.Warning, $"Session rename pending · {outcome.Session.Name}", "State updates will retry before the next save."));
+            else ActivateSession(outcome.Session);
+            return outcome;
+        }
         finally
         {
             // Disk rename can succeed before a later state/cache write fails. Keep tray state in sync.
-            ActiveSession = Pipeline.Sessions.Current();
             host.StatusChanged();
         }
     });

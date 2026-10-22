@@ -466,6 +466,13 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func waitForCommits() async { _ = try? await commitTail?.value }
 
+    private func drainCaptures() async {
+        _ = commitPending()
+        await processingTail?.value
+        _ = commitPending()
+        await waitForCommits()
+    }
+
     /// Keep the main actor running while acquisitions and journaled writes drain.
     func beginTermination(timeout: Duration = .seconds(5)) -> Task<Bool, Never> {
         if let shutdownTask { return shutdownTask }
@@ -624,9 +631,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func toggleSession() {
         enqueue { controller in
-            _ = controller.commitPending()
-            await controller.processingTail?.value
-            _ = controller.commitPending()
+            await controller.drainCaptures()
             guard await controller.closePanels() else { return }
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
@@ -690,7 +695,9 @@ final class AppController: NSObject, NSMenuDelegate {
         return session
     }
 
-    private func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
+    var inputForChecks: InputPanelController? { input }
+
+    func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
         let calendar = pipeline.calendar
         let choices = candidates.map {
             Suggestion(title: $0.name,
@@ -738,10 +745,7 @@ final class AppController: NSObject, NSMenuDelegate {
                       onSubmit: { [weak self] name in
             self?.inputClosed()
             self?.enqueue { controller in
-                _ = controller.commitPending()
-                await controller.processingTail?.value
-                _ = controller.commitPending()
-                await controller.waitForCommits()
+                await controller.drainCaptures()
                 guard !controller.isTerminating else { return }
                 do { _ = try await controller.renameSession(candidate, to: name) }
                 catch {
@@ -991,9 +995,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     func openSubheading() {
         enqueue { controller in
-            _ = controller.commitPending()
-            await controller.processingTail?.value
-            _ = controller.commitPending()
+            await controller.drainCaptures()
             guard await controller.closePanels() else { return }
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
@@ -1051,9 +1053,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func openSearch() {
         enqueue { controller in
-            _ = controller.commitPending()
-            await controller.processingTail?.value
-            _ = controller.commitPending()
+            await controller.drainCaptures()
             guard await controller.closePanels() else { return }
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }

@@ -40,21 +40,20 @@ public sealed class CaptureJournal
 
     public void Store(CaptureJob job)
     {
-        lock (gate) { StoreLocked(ResolveLocked(job)); }
-    }
-
-    private void StoreLocked(CaptureJob job)
-    {
-        Directory.CreateDirectory(DirectoryPath);
-        var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
-        if (job.Png is not null)
+        lock (gate)
         {
-            AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
-        }
+            job = Resolve(job);
+            Directory.CreateDirectory(DirectoryPath);
+            var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
+            if (job.Png is not null)
+            {
+                AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
+            }
 
-        var record = new JournalRecord(job.Prepared, job.Png is not null, job.Ocr, job.NoteDraft);
-        AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".json"), JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions));
-        logger.Debug($"Stored capture journal record {stem}.");
+            var record = new JournalRecord(job.Prepared, job.Png is not null, job.Ocr, job.NoteDraft);
+            AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".json"), JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions));
+            logger.Debug($"Stored capture journal record {stem}.");
+        }
     }
 
     public IReadOnlyList<string> RecordPaths()
@@ -70,72 +69,71 @@ public sealed class CaptureJournal
 
     public CaptureJob Load(string recordPath)
     {
-        lock (gate) { return ResolveLocked(LoadLocked(recordPath)); }
-    }
-
-    private CaptureJob LoadLocked(string recordPath)
-    {
-        var bytes = File.ReadAllBytes(recordPath);
-        JournalRecord record;
-        try
+        lock (gate)
         {
-            record = JsonSerializer.Deserialize<JournalRecord>(bytes, JsonOptions)
-                ?? throw new RecordException("The journal record is empty.");
-        }
-        catch (RecordException) { throw; }
-        catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException)
-        {
-            throw new RecordException("The journal record could not be decoded.", error);
-        }
-
-        if (record.Prepared is null || record.Prepared.Capture is null || record.Prepared.Destination is null)
-            throw new RecordException("The journal record is missing capture or destination data.");
-        var stem = Path.GetFileNameWithoutExtension(recordPath);
-        if (!string.Equals(stem, record.Prepared.Capture.Id.ToString("D").ToLowerInvariant(), StringComparison.Ordinal))
-        {
-            throw new RecordException("The journal filename does not match its capture identity.");
-        }
-
-        byte[]? png = null;
-        if (record.HasPNG)
-        {
-            try { png = File.ReadAllBytes(Path.Combine(DirectoryPath, stem + ".png")); }
-            catch (FileNotFoundException)
+            var bytes = File.ReadAllBytes(recordPath);
+            JournalRecord record;
+            try
             {
-                if (string.IsNullOrWhiteSpace(record.Ocr))
-                {
-                    throw new RecordException("The journal image is missing and has no OCR recovery text.");
-                }
-
-                var original = record.Prepared;
-                var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
-                var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
-                return new(recovered);
+                record = JsonSerializer.Deserialize<JournalRecord>(bytes, JsonOptions)
+                    ?? throw new RecordException("The journal record is empty.");
             }
-            catch (DirectoryNotFoundException)
+            catch (RecordException) { throw; }
+            catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException)
             {
-                if (string.IsNullOrWhiteSpace(record.Ocr))
-                {
-                    throw new RecordException("The journal image is missing and has no OCR recovery text.");
-                }
-
-                var original = record.Prepared;
-                var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
-                var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
-                return new(recovered);
+                throw new RecordException("The journal record could not be decoded.", error);
             }
-        }
 
-        return new(record.Prepared, png, record.Ocr, record.NoteDraft);
+            if (record.Prepared is null || record.Prepared.Capture is null || record.Prepared.Destination is null)
+                throw new RecordException("The journal record is missing capture or destination data.");
+            var stem = Path.GetFileNameWithoutExtension(recordPath);
+            if (!string.Equals(stem, record.Prepared.Capture.Id.ToString("D").ToLowerInvariant(), StringComparison.Ordinal))
+            {
+                throw new RecordException("The journal filename does not match its capture identity.");
+            }
+
+            byte[]? png = null;
+            if (record.HasPNG)
+            {
+                try { png = File.ReadAllBytes(Path.Combine(DirectoryPath, stem + ".png")); }
+                catch (FileNotFoundException)
+                {
+                    if (string.IsNullOrWhiteSpace(record.Ocr))
+                    {
+                        throw new RecordException("The journal image is missing and has no OCR recovery text.");
+                    }
+
+                    var original = record.Prepared;
+                    var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
+                    var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
+                    return Resolve(new(recovered));
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    if (string.IsNullOrWhiteSpace(record.Ocr))
+                    {
+                        throw new RecordException("The journal image is missing and has no OCR recovery text.");
+                    }
+
+                    var original = record.Prepared;
+                    var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
+                    var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
+                    return Resolve(new(recovered));
+                }
+            }
+
+            return Resolve(new(record.Prepared, png, record.Ocr, record.NoteDraft));
+        }
     }
 
     public CaptureJob Resolve(CaptureJob job)
     {
-        lock (gate) { return ResolveLocked(job); }
+        lock (gate)
+        {
+            return redirects.TryGetValue(job.Prepared.Capture.Id, out var destination)
+                ? job with { Prepared = job.Prepared with { Destination = destination } } : job;
+        }
     }
-
-    private CaptureJob ResolveLocked(CaptureJob job) => redirects.TryGetValue(job.Prepared.Capture.Id, out var destination)
-        ? job with { Prepared = job.Prepared with { Destination = destination } } : job;
 
     public IReadOnlyList<Guid> CaptureIdsTargeting(string noteUrl)
     {
@@ -146,7 +144,7 @@ public sealed class CaptureJournal
             {
                 try
                 {
-                    var job = ResolveLocked(LoadLocked(path));
+                    var job = Resolve(Load(path));
                     if (SameUrl(job.Prepared.Destination.Url, noteUrl)) ids.Add(job.Prepared.Capture.Id);
                 }
                 catch (RecordException) { /* Startup replay quarantines malformed captures independently. */ }
@@ -169,7 +167,7 @@ public sealed class CaptureJournal
             {
                 var path = Path.Combine(DirectoryPath, id.ToString("D").ToLowerInvariant() + ".json");
                 if (!File.Exists(path)) continue;
-                try { StoreLocked(ResolveLocked(LoadLocked(path))); }
+                try { Store(Resolve(Load(path))); }
                 catch (RecordException) { /* Preserve it for the normal replay quarantine path. */ }
             }
         }
@@ -180,27 +178,25 @@ public sealed class CaptureJournal
 
     public void Quarantine(string recordPath)
     {
-        lock (gate) { QuarantineLocked(recordPath); }
-    }
-
-    private void QuarantineLocked(string recordPath)
-    {
-        var corrupt = Path.Combine(DirectoryPath, "corrupt");
-        System.IO.Directory.CreateDirectory(corrupt);
-        var stem = Path.GetFileNameWithoutExtension(recordPath);
-        var targetStem = File.Exists(Path.Combine(corrupt, stem + ".json"))
-            ? stem + "-" + Guid.NewGuid().ToString("N")
-            : stem;
-        foreach (var extension in new[] { ".json", ".png" })
+        lock (gate)
         {
-            var source = Path.Combine(DirectoryPath, stem + extension);
-            if (File.Exists(source))
+            var corrupt = Path.Combine(DirectoryPath, "corrupt");
+            System.IO.Directory.CreateDirectory(corrupt);
+            var stem = Path.GetFileNameWithoutExtension(recordPath);
+            var targetStem = File.Exists(Path.Combine(corrupt, stem + ".json"))
+                ? stem + "-" + Guid.NewGuid().ToString("N")
+                : stem;
+            foreach (var extension in new[] { ".json", ".png" })
             {
-                File.Move(source, Path.Combine(corrupt, targetStem + extension));
+                var source = Path.Combine(DirectoryPath, stem + extension);
+                if (File.Exists(source))
+                {
+                    File.Move(source, Path.Combine(corrupt, targetStem + extension));
+                }
             }
-        }
 
-        logger.Notice($"Quarantined corrupt capture journal record {stem}.");
+            logger.Notice($"Quarantined corrupt capture journal record {stem}.");
+        }
     }
 
     public void Remove(Guid id)

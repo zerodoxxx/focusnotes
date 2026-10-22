@@ -52,6 +52,7 @@ public sealed class SetupWindowTests
                 Assert.True(close.IsDefault);
                 Assert.False(next.IsDefault);
                 Assert.Equal(0, close.Margin.Right);
+                SessionPickerChecks.Run(app);
 
                 var gallery = Environment.GetEnvironmentVariable("FOCUSNOTES_SETUP_GALLERY_OUT");
                 if (!string.IsNullOrWhiteSpace(gallery))

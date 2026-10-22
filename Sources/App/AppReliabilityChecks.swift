@@ -1,7 +1,7 @@
 import AppKit
 import CaptureKit
-import Core
-import OverlayKit
+@_spi(Checks) import Core
+@_spi(Checks) import OverlayKit
 
 /// Regressions that run without OCR, model downloads, or system permission prompts.
 @MainActor
@@ -11,6 +11,111 @@ func checkAppReliability() async throws {
     try await checkChangesDuringInitialScan()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
+    try await checkSessionRenameCrashBoundaries()
+    try await checkSessionPickerEscapeRestoresSelection()
+}
+
+private enum RenameCheckError: Error { case originalFailure }
+
+@MainActor
+private func checkSessionRenameCrashBoundaries() async throws {
+    for checkpoint in ["after-swap", "after-move", "unrelated-target", "cleanup-error"] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-checkpoint-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+        let pipeline = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
+        let source = try await pipeline.sessions.start(name: "archive/Standup")
+        let candidate = SessionCandidate(name: source.name, notePath: source.notePath, modifiedAt: .distantPast)
+        let oldURL = vault.appendingPathComponent(source.notePath)
+        let body = "\noriginal bytes\n![](../../assets/screen.png)\n"
+        let writer = try FileHandle(forWritingTo: oldURL)
+        try writer.seekToEnd(); try writer.write(contentsOf: Data(body.utf8)); try writer.close()
+        let destination = try await pipeline.sessions.renameDestination(candidate, to: "Daily sync")
+        let targetURL = vault.appendingPathComponent(destination.notePath)
+        if checkpoint == "cleanup-error" {
+            let intentURL = state.appendingPathComponent("session-rename.json")
+            do {
+                _ = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [], beforeInstall: { _ in
+                    try Data("{invalid JSON".utf8).write(to: intentURL, options: .atomic)
+                    throw RenameCheckError.originalFailure
+                })
+                throw SelfTestFailure("Rename hid its original staging failure")
+            } catch RenameCheckError.originalFailure {}
+            guard try String(contentsOf: oldURL, encoding: .utf8) == "# Standup\n" + body else {
+                throw SelfTestFailure("Failure cleanup altered the source bytes")
+            }
+            continue
+        }
+        let intent = try await pipeline.journal.beginSessionRename(oldPath: source.notePath, session: destination,
+                                                                  vault: pipeline.vault, preparedJobs: [])
+        let recorder = await pipeline.journal.installationRecorder(for: intent)
+        if checkpoint == "after-swap" {
+            do {
+                _ = try await pipeline.sessions.rename(candidate, to: "Daily sync", beforeInstall: recorder,
+                                                       afterSwap: { throw SessionRenameInterruption.afterSwap })
+                throw SelfTestFailure("The simulated crash checkpoint did not interrupt rename")
+            } catch SessionRenameInterruption.afterSwap {}
+            let pending = try FileManager.default.contentsOfDirectory(atPath: oldURL.deletingLastPathComponent().path)
+            guard pending.contains(where: { $0.hasPrefix(".session-") }), !FileManager.default.fileExists(atPath: targetURL.path) else {
+                throw SelfTestFailure("Swap checkpoint did not retain the original backup and old filename")
+            }
+        } else {
+            _ = try await pipeline.sessions.rename(candidate, to: "Daily sync", beforeInstall: recorder)
+        }
+        if checkpoint == "unrelated-target" {
+            let unrelated = "# Other owner\nkeep every byte\n"
+            try Data(unrelated.utf8).write(to: targetURL, options: .atomic)
+            do {
+                _ = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
+                throw SelfTestFailure("Recovery adopted an unrelated target inode")
+            } catch SessionRenameRecoveryError.changedFile {}
+            guard try String(contentsOf: targetURL, encoding: .utf8) == unrelated else {
+                throw SelfTestFailure("Rejected recovery changed the unrelated target")
+            }
+            continue
+        }
+        let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
+        let again = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
+        let bytes = try String(contentsOf: targetURL, encoding: .utf8)
+        let pending = try FileManager.default.contentsOfDirectory(atPath: targetURL.deletingLastPathComponent().path)
+        guard bytes == "# Daily sync\n" + body, !pending.contains(where: { $0.hasPrefix(".session-") }),
+              await reopened.sessions.current()?.notePath == destination.notePath,
+              await again.sessions.current()?.notePath == destination.notePath,
+              try await again.journal.pendingSessionRename() == nil else {
+            throw SelfTestFailure("Checkpoint recovery lost bytes, left an orphan, or was not idempotent")
+        }
+    }
+}
+
+@MainActor
+private func checkSessionPickerEscapeRestoresSelection() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("session-picker-escape-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let first = try await pipeline.sessions.start(name: "Standup")
+    let second = try await pipeline.sessions.start(name: "archive/Standup")
+    try await pipeline.sessions.end()
+    let candidates = [first, second].map { SessionCandidate(name: $0.name, notePath: $0.notePath, modifiedAt: .distantPast) }
+    let controller = AppController(pipeline: pipeline, presentsUI: false)
+    controller.presentSessionCandidates(candidates)
+    defer { controller.inputForChecks?.dismiss() }
+    func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) throws {
+        guard let input = controller.inputForChecks,
+              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                                          windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+            throw SelfTestFailure("Session-picker controller did not present input")
+        }
+        _ = input.handleKeyForChecks(event)
+    }
+    try key(125); try key(125)
+    guard controller.inputForChecks?.selectedValueForChecks == second.notePath else { throw SelfTestFailure("Second same-title session was not highlighted") }
+    try key(36, modifiers: .command)
+    try await Task.sleep(for: .milliseconds(350))
+    try key(53)
+    try await Task.sleep(for: .milliseconds(350))
+    guard controller.inputForChecks?.selectedValueForChecks == second.notePath, await pipeline.sessions.current() == nil else {
+        throw SelfTestFailure("Escape from rename did not restore the original picker selection without activating a session")
+    }
 }
 
 @MainActor
@@ -143,15 +248,21 @@ private func checkSessionRenameIdentity() async throws {
     do {
         _ = try await finished.prepare(pendingCapture, noteTitle: nil)
         throw SelfTestFailure("Capture preparation routed around an unfinished rename")
-    } catch is SelfTestFailure { throw SelfTestFailure("Capture preparation routed around an unfinished rename") } catch {}
+    } catch let error as CocoaError {
+        guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
+    }
     do {
         _ = try await finished.prepareNote(directCapture, destination: nil, newNote: false)
         throw SelfTestFailure("Typed-note preparation routed around an unfinished rename")
-    } catch is SelfTestFailure { throw SelfTestFailure("Typed-note preparation routed around an unfinished rename") } catch {}
+    } catch let error as CocoaError {
+        guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
+    }
     do {
         _ = try await finished.prepareCapture(directCapture, destination: nil)
         throw SelfTestFailure("Subheading preparation routed around an unfinished rename")
-    } catch is SelfTestFailure { throw SelfTestFailure("Subheading preparation routed around an unfinished rename") } catch {}
+    } catch let error as CocoaError {
+        guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
+    }
     try FileManager.default.removeItem(at: finished.pins.url)
     try FileManager.default.moveItem(at: pinBackup, to: finished.pins.url)
     let afterRepair = try await finished.prepare(pendingCapture, noteTitle: nil)
@@ -174,8 +285,7 @@ private func checkSessionRenameIdentity() async throws {
     do {
         _ = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
         throw SelfTestFailure("Rename recovery accepted a modified original inode")
-    } catch is SelfTestFailure { throw SelfTestFailure("Rename recovery accepted a modified original inode") }
-    catch {}
+    } catch SessionRenameRecoveryError.changedFile {}
     guard FileManager.default.fileExists(atPath: changedURL.path),
           !FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent(changedTarget.notePath).path),
           try String(contentsOf: changedURL, encoding: .utf8).contains("external edit after intent") else {

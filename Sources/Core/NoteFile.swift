@@ -468,7 +468,8 @@ enum NoteFile {
     /// so a collision can restore the original bytes atomically.
     static func renameSession(in root: VaultDirectoryAnchor, relativePath: String,
                               newName: String, title: String,
-                              beforeInstall: @Sendable (UInt64, UInt64) throws -> Void) throws {
+                              beforeInstall: @Sendable (SessionRenameStage) throws -> Void,
+                              afterSwap: (@Sendable () throws -> Void)? = nil) throws {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard !newName.isEmpty, !newName.contains("/"), !newName.contains("\\"),
               !newName.contains("\0"), newName != ".", newName != ".." else { throw POSIXError(.EPERM) }
@@ -487,27 +488,31 @@ enum NoteFile {
             let contents = try readAll(descriptor)
             let rewritten = try sessionHeading(title, replacing: contents)
             let directory = (relativePath as NSString).deletingLastPathComponent
-            let names = try listManagedDirectoryNames(in: root, relativePath: directory)
-            guard !names.contains(where: { $0 != location.name && $0.caseInsensitiveCompare(newName) == .orderedSame }) else {
-                throw POSIXError(.EEXIST)
-            }
             if newName != location.name, newName.caseInsensitiveCompare(location.name) == .orderedSame {
-                throw POSIXError(.EEXIST)
+                throw SessionStoreError.caseOnlyRename
             }
+            func collides(_ names: [String]) -> Bool {
+                names.contains { $0 != location.name && $0.caseInsensitiveCompare(newName) == .orderedSame }
+            }
+            guard !collides(try listManagedDirectoryNames(in: root, relativePath: directory)) else { throw POSIXError(.EEXIST) }
             let temporaryName = ".session-\(UUID().uuidString).pending"
             let temporary = FileLocation(directories: location.directories, name: temporaryName)
             let temporaryDescriptor = openat(location.parentDescriptor, temporaryName,
                                              O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
             guard temporaryDescriptor >= 0 else { throw posixError() }
-            defer { _ = unlinkat(location.parentDescriptor, temporaryName, 0) }
+            var retainTemporary = false
+            defer { if !retainTemporary { _ = unlinkat(location.parentDescriptor, temporaryName, 0) } }
             try withLockedDescriptor(temporaryDescriptor) {
                 _ = try validateManagedFile(temporaryDescriptor)
                 try writeAll(rewritten, to: temporaryDescriptor)
                 guard fsync(temporaryDescriptor) == 0 else { throw posixError() }
                 let staged = try validateManagedFile(temporaryDescriptor)
-                try beforeInstall(UInt64(truncatingIfNeeded: staged.st_dev), UInt64(truncatingIfNeeded: staged.st_ino))
+                try beforeInstall(SessionRenameStage(
+                    original: ManagedFileIdentity(device: UInt64(truncatingIfNeeded: initial.device), inode: UInt64(truncatingIfNeeded: initial.inode)),
+                    installed: ManagedFileIdentity(device: UInt64(truncatingIfNeeded: staged.st_dev), inode: UInt64(truncatingIfNeeded: staged.st_ino)),
+                    temporaryName: temporaryName))
                 let finalNames = try listManagedDirectoryNames(in: root, relativePath: directory)
-                guard !finalNames.contains(where: { $0 != location.name && $0.caseInsensitiveCompare(newName) == .orderedSame }) else {
+                guard !collides(finalNames) else {
                     throw POSIXError(.EEXIST)
                 }
                 _ = try validateManagedFile(descriptor)
@@ -519,6 +524,7 @@ enum NoteFile {
                 // The rewritten descriptor is now the visible note; the original
                 // remains locked at the temporary name until the transaction ends.
                 do {
+                    try afterSwap?()
                     guard try isCurrent(temporaryDescriptor, at: location),
                           try isCurrent(descriptor, at: temporary) else { throw POSIXError(.EAGAIN) }
                     _ = try validateManagedFile(temporaryDescriptor)
@@ -532,16 +538,34 @@ enum NoteFile {
                         throw POSIXError(.EAGAIN)
                     }
                 } catch {
+                    if error is SessionRenameInterruption { retainTemporary = true; throw error }
                     // Never overwrite a replacement made by a non-cooperating editor.
                     if (try? isCurrent(temporaryDescriptor, at: location)) == true,
                        (try? isCurrent(descriptor, at: temporary)) == true {
                         guard renameatx_np(location.parentDescriptor, temporaryName,
                                            location.parentDescriptor, location.name, UInt32(RENAME_SWAP)) == 0 else { throw posixError() }
-                    }
+                    } else { retainTemporary = true }
                     throw error
                 }
                 _ = fsync(location.parentDescriptor)
             }
+        }
+    }
+
+    static func removeSessionTemporary(in root: VaultDirectoryAnchor, relativePath: String,
+                                       identities: [ManagedFileIdentity]) throws {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        guard location.name.hasPrefix(".session-"), location.name.hasSuffix(".pending"),
+              UUID(uuidString: String(location.name.dropFirst(9).dropLast(8))) != nil else { throw POSIXError(.EPERM) }
+        let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT { return }
+        guard descriptor >= 0 else { throw posixError() }
+        try withLockedDescriptor(descriptor) {
+            let value = try validateManagedFile(descriptor)
+            let identity = ManagedFileIdentity(device: UInt64(truncatingIfNeeded: value.st_dev), inode: UInt64(truncatingIfNeeded: value.st_ino))
+            guard identities.contains(identity) else { return }
+            guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+            guard unlinkat(location.parentDescriptor, location.name, 0) == 0 else { throw posixError() }
         }
     }
 

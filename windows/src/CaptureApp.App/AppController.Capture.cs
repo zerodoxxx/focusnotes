@@ -216,7 +216,9 @@ internal sealed partial class AppController
         });
     }
 
-    private void PresentSessionCandidates(IReadOnlyList<SessionCandidate> candidates, string? selectedPath = null)
+    internal InputPanelController? InputForChecks => input;
+
+    internal void PresentSessionCandidates(IReadOnlyList<SessionCandidate> candidates, string? selectedPath = null)
     {
         if (Coordinator.IsTerminating) { return; }
         var zone = pipeline.TimeZone;
@@ -267,10 +269,8 @@ internal sealed partial class AppController
                 catch (Exception error)
                 {
                     c.Report(error, Strings.CouldNotRenameSession);
-                    // A failed validation or exclusive move keeps the original and the editable name.
-                    // If the file already moved, the durable intent completes identity recovery.
-                    if (pipeline.Vault.FileSnapshot(candidate.NotePath, includingContents: false) is not null)
-                        PresentSessionRename(candidates, candidate, name, Strings.RenameSessionFailureHint);
+                    // A committed move returns SessionRenameOutcome, including pending migration.
+                    PresentSessionRename(candidates, candidate, name, error.Message);
                 }
             });
         }, InputClosed, InitialText: initialText ?? candidate.Name, Title: Strings.RenameSessionTitle,

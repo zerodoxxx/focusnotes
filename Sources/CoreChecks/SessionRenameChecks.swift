@@ -1,4 +1,4 @@
-import Core
+@_spi(Checks) import Core
 import Darwin
 import Foundation
 
@@ -32,8 +32,7 @@ func checkSessionRename() async throws {
         do {
             _ = try await store.rename(selected, to: invalid)
             throw CheckFailure.failed("unsafe rename was accepted: \(invalid.debugDescription)")
-        } catch is CheckFailure { throw CheckFailure.failed("unsafe rename was accepted: \(invalid.debugDescription)") }
-        catch {}
+        } catch SessionStoreError.invalidRename {}
         let unchanged = try Data(contentsOf: target)
         try require(unchanged == bytes, "invalid rename must leave the source unchanged")
     }
@@ -43,7 +42,8 @@ func checkSessionRename() async throws {
         do {
             _ = try await store.rename(selected, to: name)
             throw CheckFailure.failed("case-insensitive collision was accepted")
-        } catch SessionStoreError.renameConflict {} catch is CheckFailure { throw CheckFailure.failed("case-insensitive collision was accepted") }
+        } catch SessionStoreError.renameConflict where name == "occupied" {}
+        catch SessionStoreError.caseOnlyRename where name == "daily sync" {}
     }
     let conflictBytes = try checkRead(conflict)
     let afterCollision = try Data(contentsOf: target)
@@ -53,7 +53,7 @@ func checkSessionRename() async throws {
     // folded-name check without changing the source or the new owner's bytes.
     let racedTarget = vault.root.appendingPathComponent("Sessions/archive/Raced.md")
     do {
-        _ = try await store.rename(selected, to: "Raced", beforeInstall: { _, _ in
+        _ = try await store.rename(selected, to: "Raced", beforeInstall: { _ in
             try Data("racing owner".utf8).write(to: racedTarget)
         })
         throw CheckFailure.failed("racing destination was overwritten")
@@ -64,7 +64,7 @@ func checkSessionRename() async throws {
 
     let mixedCaseTarget = vault.root.appendingPathComponent("Sessions/archive/rAcEd mixed.md")
     do {
-        _ = try await store.rename(selected, to: "Raced mixed", beforeInstall: { _, _ in
+        _ = try await store.rename(selected, to: "Raced mixed", beforeInstall: { _ in
             try Data("mixed-case owner".utf8).write(to: mixedCaseTarget)
         })
         throw CheckFailure.failed("a late case-insensitive collision was accepted")
@@ -84,7 +84,9 @@ func checkSessionRename() async throws {
         do {
             _ = try await store.rename(SessionCandidate(name: "Unsafe", notePath: path, modifiedAt: .distantPast), to: "Escape")
             throw CheckFailure.failed("linked file was renamed")
-        } catch is CheckFailure { throw CheckFailure.failed("linked file was renamed") } catch {}
+        } catch SessionStoreError.candidateNoLongerExists(let missing) {
+            try require(missing == path, "a linked candidate must be rejected at its exact path")
+        }
     }
     let outsideBytes = try checkRead(outside)
     try require(outsideBytes == "# Outside\n", "rename must not rewrite a linked file outside the vault")
@@ -92,15 +94,98 @@ func checkSessionRename() async throws {
     // A non-cooperating editor replacing the source during staging must keep
     // its own bytes and must never publish our stale snapshot at the new name.
     do {
-        _ = try await store.rename(selected, to: "Stale", beforeInstall: { _, _ in
+        _ = try await store.rename(selected, to: "Stale", beforeInstall: { _ in
             try Data("# External edit\nkeep me\n".utf8).write(to: target, options: .atomic)
         })
         throw CheckFailure.failed("replaced source snapshot was renamed")
-    } catch is CheckFailure { throw CheckFailure.failed("replaced source snapshot was renamed") } catch {}
+    } catch let error as POSIXError where error.code == .EAGAIN {}
     let external = try checkRead(target)
     try require(external == "# External edit\nkeep me\n" && !FileManager.default.fileExists(atPath: vault.root.appendingPathComponent("Sessions/archive/Stale.md").path),
                 "source identity changes must preserve the editor's replacement and reject stale output")
     let directoryNames = try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path)
     try require(!directoryNames.contains(where: { $0.hasPrefix(".session-") }), "renames must remove temporary snapshots")
+    try await checkSessionRenameEdgeCases(base: base, vault: vault, store: store, state: state)
     print("Session rename checks passed.")
+}
+
+private func checkSessionRenameEdgeCases(base: URL, vault: Vault, store: SessionStore, state: URL) async throws {
+    let cases: [(Data, Data)] = [
+        (Data("body\n".utf8), Data("# New\n\nbody\n".utf8)),
+        (Data("first\nlater\r\n".utf8), Data("# New\r\n\r\nfirst\nlater\r\n".utf8)),
+        (Data(), Data("# New\n\n".utf8)),
+        (Data("# Old".utf8), Data("# New".utf8)),
+        (Data("#body\n".utf8), Data("# New\n\n#body\n".utf8)),
+        (Data([0x23, 0x20, 0xFF, 0x0A, 0xFE]), Data([0x23, 0x20, 0x4E, 0x65, 0x77, 0x0A, 0xFE])),
+        (Data([0xFF, 0x0A, 0xFE]), Data("# New\n\n".utf8) + Data([0xFF, 0x0A, 0xFE]))
+    ]
+    for (i, pair) in cases.enumerated() {
+        let path = "Sessions/edge-\(i)/Old.md"
+        let source = vault.root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try pair.0.write(to: source)
+        let renamed = try await store.rename(SessionCandidate(name: "Old", notePath: path, modifiedAt: .distantPast), to: "New")
+        let result = try Data(contentsOf: vault.root.appendingPathComponent(renamed.notePath))
+        try require(result == pair.1, "heading edge case \(i) must preserve exact bytes")
+    }
+
+    let sourcePath = "Sessions/edge-directory/Old.md"
+    let source = vault.root.appendingPathComponent(sourcePath)
+    try checkWrite("# Old\nkeep\n", to: source)
+    let candidate = SessionCandidate(name: "Old", notePath: sourcePath, modifiedAt: .distantPast)
+    let occupied = source.deletingLastPathComponent().appendingPathComponent("Occupied.md")
+    try FileManager.default.createDirectory(at: occupied, withIntermediateDirectories: false)
+    do {
+        _ = try await store.rename(candidate, to: "Occupied")
+        throw CheckFailure.failed("a directory occupying the target was replaced")
+    } catch SessionStoreError.renameConflict {}
+
+    let outside = base.appendingPathComponent("linked-ancestor")
+    try checkWrite("# Outside\nkeep\n", to: outside.appendingPathComponent("Old.md"))
+    let link = vault.root.appendingPathComponent("Sessions/ancestor-link")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+    do {
+        _ = try await store.rename(SessionCandidate(name: "Old", notePath: "Sessions/ancestor-link/Old.md", modifiedAt: .distantPast), to: "New")
+        throw CheckFailure.failed("a symlinked ancestor was accepted")
+    } catch SessionStoreError.candidateNoLongerExists(let path) {
+        try require(path == "Sessions/ancestor-link/Old.md", "linked ancestor must reject the selected path")
+    }
+    let outsideBytes = try checkRead(outside.appendingPathComponent("Old.md"))
+    try require(outsideBytes == "# Outside\nkeep\n", "linked ancestor must leave outside bytes intact")
+
+    let stateFile = state.appendingPathComponent("session.json")
+    try FileManager.default.removeItem(at: stateFile)
+    try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+    do {
+        _ = try await store.rename(candidate, to: "Persisted later")
+        throw CheckFailure.failed("state persistence unexpectedly succeeded over a directory")
+    } catch let error as CocoaError {
+        try require(error.code == .fileWriteFileExists || error.code == .fileWriteUnknown || error.code == .fileWriteNoPermission,
+                    "state persistence must report a write error, got \(error.code)")
+    }
+    let current = await store.current()
+    let newFile = source.deletingLastPathComponent().appendingPathComponent("Persisted later.md")
+    let newBytes = try checkRead(newFile)
+    try require(current?.notePath == "Sessions/edge-directory/Persisted later.md" && newBytes == "# Persisted later\nkeep\n",
+                "a persistence failure must retain the committed file and in-memory session")
+    try FileManager.default.removeItem(at: stateFile)
+
+    // An editor replacing the swapped-in note must survive the rollback guard.
+    let rollbackPath = "Sessions/edge-rollback/Old.md"
+    let rollbackSource = vault.root.appendingPathComponent(rollbackPath)
+    let original = "# Old\noriginal body\n"
+    try checkWrite(original, to: rollbackSource)
+    do {
+        _ = try await store.rename(SessionCandidate(name: "Old", notePath: rollbackPath, modifiedAt: .distantPast), to: "New",
+                                   afterSwap: {
+            try Data("# Unrelated\neditor bytes\n".utf8).write(to: rollbackSource, options: .atomic)
+            throw POSIXError(.EAGAIN)
+        })
+        throw CheckFailure.failed("post-swap source replacement was accepted")
+    } catch let error as POSIXError where error.code == .EAGAIN {}
+    let unrelated = try checkRead(rollbackSource)
+    let pending = try FileManager.default.contentsOfDirectory(at: rollbackSource.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+        .filter { $0.lastPathComponent.hasPrefix(".session-") }
+    try require(unrelated == "# Unrelated\neditor bytes\n" && pending.count == 1, "rollback must preserve editor bytes and the original backup")
+    let backup = try checkRead(pending[0])
+    try require(backup == original, "the retained backup must preserve every original byte")
 }
