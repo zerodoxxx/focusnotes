@@ -26,7 +26,7 @@ refresh whenever the menu opens.
    and press Enter. The panel says “Add subheading” and “In Demo Session” (or “In
    Inbox” with no session). A pending capture saves first, then `## Tradeoffs` is
    appended. Escape cancels, and empty input does nothing.
-5. Press **⌥⇧N** (or **Write a Note…**, right before **Add Subheading…**).
+5. Press **⌥⇧N** (or **Quick-note**, right before **Quick-note Outside Session** and **Add Subheading…**).
    The floating editor shows only your text; hover it to reveal the buttons and a footer
    reading **Add to note** (the faded title above names **Demo Session**), or
    **Create note** without an active session. Try **⌘P** to open the Browse card and pick a note, **⇧⌘P** to add/remove it from Browse’s Pinned section, **⌘O** to open as a note, **⌘N** for a
@@ -61,7 +61,7 @@ refresh whenever the menu opens.
    or replaced drafts do not pin older recovered jobs. A pin-storage error produces one warning toast,
    **Note saved, but not pinned**, with the destination title below it, while the note save succeeds and clears
    its draft. A success toast must not replace that warning.
-   A pending capture commits before a new editor opens. Inside a session, saves append Markdown and show **Note added**.
+   A pending capture commits before a new editor opens. Inside a session, saves append Markdown and show **Saved to <session>**.
    Outside a session, they create a root note and show **Note created** with its title.
    The title is the first non-empty line stripped of heading/list/task/quote syntax,
    emphasis, code delimiters, links (keeping their labels), and HTML comments, with

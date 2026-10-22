@@ -8,16 +8,19 @@ final class QuickNoteState {
     let folder: NoteFolder?
     var destinationLabel: String? { destination?.title ?? folder.map { "Folder: \($0.rawValue)" } }
     var outsideSession = false
+    /// Opened by the outside-session shortcut; blank ⌘N returns here instead of to the session.
+    let launchedOutside: Bool
     var pinOnSave = false
     var suggestions: [NoteSuggestion] = []
     var kinds: [String: NoteKind] {
         Dictionary(suggestions.map { ($0.path, $0.kind) }, uniquingKeysWith: { first, _ in first })
     }
-    init(destination: Destination?, pinOnSave: Bool = false, folder: NoteFolder? = nil) {
-        self.destination = destination
+    init(destination: Destination?, pinOnSave: Bool = false, folder: NoteFolder? = nil, outsideSession launchedOutside: Bool = false) {
+        self.destination = launchedOutside ? nil : destination
         self.folder = folder
-        self.outsideSession = folder != nil
-        self.pinOnSave = destination == nil && pinOnSave
+        self.launchedOutside = launchedOutside
+        self.outsideSession = folder != nil || launchedOutside
+        self.pinOnSave = self.destination == nil && pinOnSave
     }
     func togglePinOnSave(in drafts: NoteDraftStore) throws -> Bool {
         try drafts.setPinOnSave(!pinOnSave)
@@ -35,7 +38,7 @@ final class QuickNoteState {
     }
     func restoreSessionDestination(_ sessionDestination: Destination?, drafts: NoteDraftStore) throws {
         try resetPinOnSave(in: drafts)
-        outsideSession = folder != nil
-        destination = folder == nil ? sessionDestination : nil
+        outsideSession = folder != nil || launchedOutside
+        destination = outsideSession ? nil : sessionDestination
     }
 }

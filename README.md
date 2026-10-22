@@ -36,7 +36,8 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
 | <kbd>⌥⇧S</kbd> | Capture an area of the screen |
 | <kbd>⌃⇧C</kbd> | Capture selected text outside the session; choose a note |
 | <kbd>⌃⇧S</kbd> | Capture an area outside the session; choose a note |
-| <kbd>⌥⇧N</kbd> | Write a quick note |
+| <kbd>⌥⇧N</kbd> | Write a quick note (appends to the active session) |
+| <kbd>⌃⇧N</kbd> | Write a quick note outside the session |
 | <kbd>⌥⇧F</kbd> | Search notes |
 | <kbd>⌥⇧A</kbd> | Start or end a session |
 | <kbd>⌥⇧H</kbd> | Add a subheading |
@@ -46,6 +47,8 @@ In the quick note: <kbd>⌘↩</kbd> saves, <kbd>⌘K</kbd> opens actions, <kbd>
 closes it and keeps your draft. While a session is active, <kbd>⇧⌘N</kbd> toggles **Write outside session**:
 the first nonblank line names a new or existing note, including folder and `/` home paths. Browse and
 Save as New Note still work. Press it again, or <kbd>⌘N</kbd> on a blank editor, to return to the session.
+<kbd>⌃⇧N</kbd> (**Quick-note Outside Session** in the menu) opens the quick note with **Write outside session**
+already on; <kbd>⇧⌘N</kbd> still switches it back to the session, and <kbd>⌘N</kbd> on a blank editor keeps it outside.
 Saving or closing resets that destination; the next quick note or normal capture uses the session again.
 
 Outside-session capture shortcuts open **Add to note…** immediately, even without a session; <kbd>esc</kbd>
@@ -221,6 +224,7 @@ Outside-session captures use Ctrl+Shift on both platforms.
 | Capture selected text outside the session | <kbd>Ctrl+Shift+Q</kbd> | <kbd>⌃⇧C</kbd> |
 | Capture an area outside the session | <kbd>Ctrl+Shift+G</kbd> | <kbd>⌃⇧S</kbd> |
 | Write a quick note | <kbd>Alt+Shift+W</kbd> | <kbd>⌥⇧N</kbd> |
+| Write a quick note outside the session | <kbd>Ctrl+Shift+W</kbd> | <kbd>⌃⇧N</kbd> |
 | Search notes | <kbd>Alt+Shift+F</kbd> | <kbd>⌥⇧F</kbd> |
 | Start or end a session | <kbd>Alt+Shift+A</kbd> | <kbd>⌥⇧A</kbd> |
 | Add a subheading | <kbd>Alt+Shift+H</kbd> | <kbd>⌥⇧H</kbd> |
@@ -230,8 +234,9 @@ These defaults are provisional until they are tested against common apps on real
 **Settings… → Shortcuts**. In the quick note, <kbd>Ctrl+Enter</kbd> saves, <kbd>Ctrl+K</kbd> opens actions,
 <kbd>Ctrl+P</kbd> browses notes, <kbd>Ctrl+Shift+N</kbd> toggles **Write outside session** while a session
 is active, and <kbd>Esc</kbd> closes it and keeps your draft. <kbd>Ctrl+N</kbd> on a blank editor returns
-to the session. Outside-session captures open the same note picker; <kbd>Esc</kbd> saves to Inbox.
-Both outside-session capture commands are also available from the tray menu, including when their shortcuts are turned off or unavailable.
+to the session. <kbd>Ctrl+Shift+W</kbd> (**Quick-note Outside Session** in the tray) opens the quick note with
+**Write outside session** already on. Outside-session captures open the same note picker; <kbd>Esc</kbd> saves to Inbox.
+Both outside-session capture commands and Quick-note Outside Session are also available from the tray menu, including when their shortcuts are turned off or unavailable.
 After an upgrade, existing custom shortcuts take priority over new defaults. Settings shows any replacement needed for a conflict or a combination newly reserved by the editor; use **Change…** to choose another shortcut.
 Windows Setup and Settings customize the built-in shortcuts and provide folder-bound Quick Note and Start Session shortcuts.
 

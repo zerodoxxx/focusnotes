@@ -38,6 +38,7 @@ internal static class AppSelfTest
             [MenuIds.Search] = HotkeyDefaults.For(HotkeyAction.SearchNotes).DisplayString,
             [MenuIds.Session] = HotkeyDefaults.For(HotkeyAction.ToggleSession).DisplayString,
             [MenuIds.WriteNote] = HotkeyDefaults.For(HotkeyAction.WriteNote).DisplayString,
+            [MenuIds.WriteNoteOutsideSession] = HotkeyDefaults.For(HotkeyAction.WriteNoteOutsideSession).DisplayString,
             [MenuIds.AddSubheading] = HotkeyDefaults.For(HotkeyAction.AddSubheading).DisplayString,
             [MenuIds.OpenFolder] = HotkeyDefaults.For(HotkeyAction.OpenNotesFolder).DisplayString
         };

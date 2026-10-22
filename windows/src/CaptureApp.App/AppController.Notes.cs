@@ -31,12 +31,12 @@ internal sealed partial class AppController
 
     private void OpenNoteEditor() => OpenNoteEditor(null);
 
-    private void OpenNoteEditor(string? requestedFolder)
+    private void OpenNoteEditor(string? requestedFolder, bool outsideSession = false)
     {
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
-            if (requestedFolder is null && quickNote.IsVisible)
+            if (requestedFolder is null && !outsideSession && quickNote.IsVisible)
             {
                 // Visible but inactive re-activates in place; active closes and keeps the draft.
                 if (quickNote.IsActive) { quickNote.Dismiss(); } else { quickNote.Focus(); }
@@ -70,10 +70,10 @@ internal sealed partial class AppController
 
             try
             {
-                var state = new QuickNoteState(sessionDestination, restored.PinOnSave, folder);
+                var state = new QuickNoteState(sessionDestination, restored.PinOnSave, folder, outsideSession);
                 pipeline.Drafts.Store(restored.Text, state.PinOnSave, folder: folder);
                 quickNote.PositionStore ??= new SettingsPanelPositionStore(Settings);
-                quickNote.Present(state.DestinationLabel, IsPinned(sessionDestination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination));
+                quickNote.Present(state.DestinationLabel, IsPinned(state.Destination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination, outsideSession));
                 _ = Task.Run(async () =>
                 {
                     var list = await c.SuggestionSnapshotAsync(false);
@@ -89,7 +89,7 @@ internal sealed partial class AppController
         });
     }
 
-    private QuickNoteHandlers NoteHandlers(CaptureCoordinator c, QuickNoteState state, Destination? sessionDestination)
+    private QuickNoteHandlers NoteHandlers(CaptureCoordinator c, QuickNoteState state, Destination? sessionDestination, bool outsideLaunch = false)
     {
         var zone = pipeline.TimeZone;
         void RefreshDestination() => quickNote.SetDestination(state.DestinationLabel, IsPinned(state.Destination, state.PinOnSave));
@@ -120,7 +120,7 @@ internal sealed partial class AppController
 
                 c.Enqueue(async inner =>
                 {
-                    try { await Save(text); OpenNoteEditor(state.Folder?.RawValue); }
+                    try { await Save(text); OpenNoteEditor(state.Folder?.RawValue, outsideLaunch); }
                     catch (Exception error) { inner.ReportUserSaveFailure(error, Strings.CouldNotAddNote); }
                 });
             },

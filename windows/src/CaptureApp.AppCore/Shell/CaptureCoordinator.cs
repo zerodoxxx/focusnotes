@@ -429,6 +429,10 @@ public sealed class CaptureCoordinator
         {
             ShowToast(new(AppToastStyle.Success, Strings.SessionStillActive(Strings.SavedTo(saved.Destination.Title), Pipeline.Sessions.Current()?.Name)));
         }
+        else if (created is false && text is not null && saved.Destination.Kind == NoteKind.Session)
+        {
+            ShowToast(new(AppToastStyle.Success, Strings.SavedTo(saved.Destination.Title), PendingCaptures.FirstLine(text)));
+        }
         else if (created is { } made && text is not null)
         {
             ShowToast(new(AppToastStyle.Success, Strings.NoteCreatedOrAdded(made),

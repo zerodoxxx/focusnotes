@@ -138,7 +138,8 @@ public static class Strings
     public const string MenuCaptureAreaOutsideSession = "Capture Area Outside Session…";
     public const string MenuSearch = "Search Notes…";
     public const string MenuStartSession = "Start Session…";
-    public const string MenuWriteNote = "Write a Note…";
+    public const string MenuWriteNote = "Quick-note";
+    public const string MenuWriteNoteOutsideSession = "Quick-note Outside Session";
     public const string MenuAddSubheading = "Add Subheading…";
     public const string MenuRetryShortcuts = "Retry Shortcuts";
     public const string MenuOpenFolder = "Open Notes Folder";

@@ -213,7 +213,7 @@ public sealed class TrayMenuTests
     public void DefaultOrderMatchesTheMacMenu()
     {
         Assert.Equal(["capture-selection", "capture-area", "capture-selection-outside-session", "capture-area-outside-session",
-            "search", "session", "write-note", "add-subheading", "-", "open-folder", "choose-folder",
+            "search", "session", "write-note", "write-note-outside-session", "add-subheading", "-", "open-folder", "choose-folder",
             "semantic", "setup", "settings", "check-updates", "-", "quit"], Ids(TrayMenuBuilder.Build(State())));
     }
 
@@ -223,7 +223,7 @@ public sealed class TrayMenuTests
     public void OutsideSessionCommandsRemainAvailableWithoutWorkingShortcuts(string? session, int failed)
     {
         var items = TrayMenuBuilder.Build(State(session: session, failed: failed));
-        foreach (var id in new[] { MenuIds.CaptureSelectionOutsideSession, MenuIds.CaptureAreaOutsideSession })
+        foreach (var id in new[] { MenuIds.CaptureSelectionOutsideSession, MenuIds.CaptureAreaOutsideSession, MenuIds.WriteNoteOutsideSession })
         {
             var command = Assert.Single(items, item => item.Id == id);
             Assert.True(command.Enabled);
@@ -239,7 +239,8 @@ public sealed class TrayMenuTests
             Bindings = new Dictionary<string, string>
             {
                 [MenuIds.CaptureSelectionOutsideSession] = "Alt+Shift+D",
-                [MenuIds.CaptureAreaOutsideSession] = "Alt+Shift+J"
+                [MenuIds.CaptureAreaOutsideSession] = "Alt+Shift+J",
+                [MenuIds.WriteNoteOutsideSession] = "Ctrl+Shift+W"
             }
         };
         var items = TrayMenuBuilder.Build(state);
@@ -249,6 +250,9 @@ public sealed class TrayMenuTests
         Assert.Equal("Alt+Shift+D", selection.Shortcut);
         Assert.Equal("Capture Area Outside Session…", area.Title);
         Assert.Equal("Alt+Shift+J", area.Shortcut);
+        var note = Assert.Single(items, item => item.Id == MenuIds.WriteNoteOutsideSession);
+        Assert.Equal("Quick-note Outside Session", note.Title);
+        Assert.Equal("Ctrl+Shift+W", note.Shortcut);
     }
 
     [Fact]
@@ -260,6 +264,7 @@ public sealed class TrayMenuTests
         Assert.Equal("Enable Semantic Search…", items.Single(i => i.Id == MenuIds.Semantic).Title);
         Assert.Equal("Start Session…", TrayMenuBuilder.Build(State()).Single(i => i.Id == MenuIds.Session).Title);
         Assert.Equal("Choose Notes Folder…", items.Single(i => i.Id == MenuIds.ChooseFolder).Title);
+        Assert.Equal("Quick-note", items.Single(i => i.Id == MenuIds.WriteNote).Title);
         Assert.True(items.Single(i => i.Id == MenuIds.ChooseFolder).Enabled);
     }
 

@@ -19,6 +19,7 @@ internal sealed class ShortcutsPanel : StackPanel
         (HotkeyAction.SearchNotes, "Search Notes"),
         (HotkeyAction.ToggleSession, "Start or End Session"),
         (HotkeyAction.WriteNote, "Quick Note"),
+        (HotkeyAction.WriteNoteOutsideSession, "Quick Note outside session"),
         (HotkeyAction.AddSubheading, "Add Subheading"),
         (HotkeyAction.OpenNotesFolder, "Open Notes Folder")
     ];

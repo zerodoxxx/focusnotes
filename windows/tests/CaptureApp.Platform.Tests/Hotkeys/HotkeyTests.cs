@@ -17,6 +17,7 @@ public sealed class HotkeyDefaultsTests
     [InlineData(HotkeyAction.SearchNotes, "Alt+Shift+F")]
     [InlineData(HotkeyAction.ToggleSession, "Alt+Shift+A")]
     [InlineData(HotkeyAction.WriteNote, "Alt+Shift+W")]
+    [InlineData(HotkeyAction.WriteNoteOutsideSession, "Ctrl+Shift+W")]
     [InlineData(HotkeyAction.AddSubheading, "Alt+Shift+H")]
     [InlineData(HotkeyAction.OpenNotesFolder, "Alt+Shift+E")]
     public void DefaultsPassRebindingGuards(HotkeyAction action, string expected)
@@ -156,6 +157,45 @@ public sealed class HotkeyBindingStoreTests
         Assert.Equal(KeyChord.Parse("Ctrl+Shift+Q"), bindings[HotkeyAction.SearchNotes]);
         Assert.Equal(KeyChord.Parse("Ctrl+Shift+F22"), bindings[HotkeyAction.CaptureSelectionOutsideSession]);
         Assert.Empty(store.Adjustments);
+    }
+
+    [Fact]
+    public void SavedBindingsWithoutOutsideQuickNoteUpgradeToItsDefault()
+    {
+        using var directory = new TemporaryDirectory();
+        var settingsPath = Path.Combine(directory.Path, "settings.json");
+        const string original = """
+            {"shortcuts":{"CaptureSelection":"Alt+Shift+Q","WriteNote":"Alt+Shift+D","CaptureSelectionOutsideSession":"Ctrl+Shift+Q"}}
+            """;
+        File.WriteAllText(settingsPath, original);
+        var store = new HotkeyBindingStore(settingsPath);
+
+        var bindings = store.Load();
+
+        Assert.Equal(KeyChord.Parse("Ctrl+Shift+W"), bindings[HotkeyAction.WriteNoteOutsideSession]);
+        Assert.Equal(KeyChord.Parse("Alt+Shift+D"), bindings[HotkeyAction.WriteNote]);
+        Assert.Equal(HotkeyDefaults.All.Count, bindings.Count);
+        Assert.Empty(store.Adjustments);
+        Assert.Equal(original, File.ReadAllText(settingsPath));
+    }
+
+    [Fact]
+    public void OutsideQuickNoteDefaultYieldsToASavedBindingUsingIt()
+    {
+        using var directory = new TemporaryDirectory();
+        var settingsPath = Path.Combine(directory.Path, "settings.json");
+        File.WriteAllText(settingsPath, """
+            {"shortcuts":{"SearchNotes":"Ctrl+Shift+W"}}
+            """);
+        var store = new HotkeyBindingStore(settingsPath);
+
+        var bindings = store.Load();
+
+        Assert.Equal(KeyChord.Parse("Ctrl+Shift+W"), bindings[HotkeyAction.SearchNotes]);
+        Assert.Equal(KeyChord.Parse("Alt+Shift+D"), bindings[HotkeyAction.WriteNoteOutsideSession]);
+        var adjustment = Assert.Single(store.Adjustments);
+        Assert.Equal(HotkeyAction.WriteNoteOutsideSession, adjustment.Action);
+        Assert.Equal(bindings.Count, bindings.Values.Distinct().Count());
     }
 
     [Theory]

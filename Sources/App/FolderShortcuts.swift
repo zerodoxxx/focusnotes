@@ -72,7 +72,7 @@ struct FolderShortcutStore {
         func reject(_ message: String) throws { throw FolderShortcutValidationError(message: message) }
         guard bindings.count <= maximumBindings else { try reject("You can add up to \(maximumBindings) folder shortcuts."); return }
         let builtIns: Set<Hotkey> = [.captureSelection, .captureRegion, .captureSelectionOutsideSession,
-            .captureRegionOutsideSession, .search, .toggleSession, .writeNote, .addSubheading, .openLibrary]
+            .captureRegionOutsideSession, .search, .toggleSession, .writeNote, .writeNoteOutsideSession, .addSubheading, .openLibrary]
         let allowed: Hotkey.Modifiers = [.command, .option, .control, .shift]
         let required: Hotkey.Modifiers = [.command, .option, .control]
         // Modifier, caps lock, and function keys are not shortcut trigger keys.

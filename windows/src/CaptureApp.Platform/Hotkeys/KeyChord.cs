@@ -13,7 +13,8 @@ public enum HotkeyAction
     AddSubheading,
     OpenNotesFolder,
     CaptureSelectionOutsideSession,
-    CaptureAreaOutsideSession
+    CaptureAreaOutsideSession,
+    WriteNoteOutsideSession
 }
 
 [Flags]
@@ -195,6 +196,7 @@ public static class HotkeyDefaults
             [HotkeyAction.SearchNotes] = new(Modifiers, 'F'),
             [HotkeyAction.ToggleSession] = new(Modifiers, 'A'),
             [HotkeyAction.WriteNote] = new(Modifiers, 'W'),
+            [HotkeyAction.WriteNoteOutsideSession] = new(HotkeyModifiers.Control | HotkeyModifiers.Shift, 'W'),
             [HotkeyAction.AddSubheading] = new(Modifiers, 'H'),
             [HotkeyAction.OpenNotesFolder] = new(Modifiers, 'E')
         });
