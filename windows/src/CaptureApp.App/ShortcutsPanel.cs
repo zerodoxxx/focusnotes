@@ -14,6 +14,8 @@ internal sealed class ShortcutsPanel : StackPanel
     [
         (HotkeyAction.CaptureSelection, "Capture Selection"),
         (HotkeyAction.CaptureArea, "Capture Area"),
+        (HotkeyAction.CaptureSelectionOutsideSession, "Capture Selection outside session"),
+        (HotkeyAction.CaptureAreaOutsideSession, "Capture Area outside session"),
         (HotkeyAction.SearchNotes, "Search Notes"),
         (HotkeyAction.ToggleSession, "Start or End Session"),
         (HotkeyAction.WriteNote, "Quick Note"),

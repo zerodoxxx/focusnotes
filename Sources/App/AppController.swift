@@ -128,6 +128,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var inputCloseWaiters: [CheckedContinuation<Void, Never>] = []
     private var searchCloseWaiters: [CheckedContinuation<Void, Never>] = []
     private var pending: PendingCapture?
+    private var pendingOutsideSession = false
     private var pendingToastID: UUID?
     private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Error>, persistence: Task<Void, Error>)?
     private var commitTail: Task<SavedCapture, Error>?
@@ -136,6 +137,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var acquisitionTask: Task<Void, Never>?
     private var acquisitionGeneration = 0
     private var acquisitionFallback: PendingCapture?
+    private var acquisitionOutsideSession = false
     private var recoveryJobs: [UUID: Task<CaptureJob, Error>] = [:]
     private var recoveryPersistences: [UUID: Task<Void, Error>] = [:]
     private var processingTail: Task<Void, Never>?
@@ -237,6 +239,8 @@ final class AppController: NSObject, NSMenuDelegate {
         let bindings: [(Hotkey, @MainActor @Sendable () -> Void)] = [
             (.captureSelection, { [weak self] in self?.capture(.selection) }),
             (.captureRegion, { [weak self] in self?.capture(.region) }),
+            (.captureSelectionOutsideSession, { [weak self] in self?.capture(.selection, outsideSession: true) }),
+            (.captureRegionOutsideSession, { [weak self] in self?.capture(.region, outsideSession: true) }),
             (.search, { [weak self] in self?.openSearch() }),
             (.toggleSession, { [weak self] in self?.toggleSession() }),
             (.writeNote, { [weak self] in self?.openNoteEditor() }),
@@ -273,16 +277,16 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func capture(_ trigger: CaptureTrigger, fromHotkey: Bool = true, context suppliedContext: FrontmostContext? = nil) {
+    private func capture(_ trigger: CaptureTrigger, outsideSession: Bool = false, fromHotkey: Bool = true, context suppliedContext: FrontmostContext? = nil) {
         guard !isTerminating, !acquisitionInProgress else { return }
         let context = suppliedContext ?? FrontmostContext.capture()
         guard context.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-        if fromHotkey, let pending, pending.trigger == trigger, pendingToastID == pending.id, toast.isVisible {
+        if !outsideSession, fromHotkey, let pending, pending.trigger == trigger, pendingToastID == pending.id, toast.isVisible {
             showTitlePicker(for: pending.id)
             return
         }
         _ = commitPending()
-        beginAcquisition { [self] in
+        beginAcquisition(outsideSession: outsideSession) { [self] in
             guard await closePanels() else { return nil }
             guard !Task.isCancelled else { return nil }
             switch trigger {
@@ -321,10 +325,11 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     @discardableResult
-    func beginAcquisition(_ operation: @escaping @MainActor () async -> PendingCapture?,
+    func beginAcquisition(outsideSession: Bool = false, _ operation: @escaping @MainActor () async -> PendingCapture?,
                           postprocess: (@Sendable (PendingCapture) async -> PendingCapture)? = nil) -> Bool {
         guard !isTerminating, !acquisitionInProgress else { return false }
         acquisitionInProgress = true
+        acquisitionOutsideSession = outsideSession
         acquisitionGeneration += 1
         let generation = acquisitionGeneration
         acquisitionTask = Task { [self] in
@@ -334,14 +339,14 @@ final class AppController: NSObject, NSMenuDelegate {
             acquisitionInProgress = false
             acquisitionTask = nil
             guard let result else { return }
-            journalAcquisition(result)
+            journalAcquisition(result, outsideSession: outsideSession)
             let processed = Task { await postprocess?(result) ?? result }
             let previous = processingTail
             processingGeneration += 1
             let processingID = processingGeneration
             processingTail = Task { [self] in
                 await previous?.value
-                await stage(processed.value)
+                await stage(processed.value, outsideSession: outsideSession)
                 if processingGeneration == processingID { processingTail = nil }
             }
         }
@@ -350,13 +355,15 @@ final class AppController: NSObject, NSMenuDelegate {
 
     func recordAcquiredImage(_ capture: PendingCapture) {
         acquisitionFallback = capture
-        if isTerminating { journalAcquisition(capture) }
+        if isTerminating { journalAcquisition(capture, outsideSession: acquisitionOutsideSession) }
     }
 
-    private func journalAcquisition(_ capture: PendingCapture) {
+    private func journalAcquisition(_ capture: PendingCapture, outsideSession: Bool = false) {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
-        let preparation = Task.detached(priority: .userInitiated) { try await pipeline.prepare(capture, noteTitle: nil) }
+        let preparation = Task.detached(priority: .userInitiated) {
+            try await pipeline.prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil)
+        }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
             try await pipeline.journal.store(try await preparation.value)
@@ -377,7 +384,7 @@ final class AppController: NSObject, NSMenuDelegate {
         showToast(warning)
     }
 
-    func stage(_ capture: PendingCapture) async {
+    func stage(_ capture: PendingCapture, outsideSession: Bool = false) async {
         guard !shutdownFinished else { return }
         _ = commitPending()
         let pipeline = pipeline
@@ -385,7 +392,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let recovered = try? await recovery?.value
-            return try await pipeline.prepare(capture, noteTitle: nil, destination: recovered?.prepared.destination)
+            return try await pipeline.prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil, destination: recovered?.prepared.destination)
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
@@ -393,6 +400,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         stagedJob = (capture.id, preparation, persistence)
         pending = capture
+        pendingOutsideSession = outsideSession
         // Persist the default job before showing the toast or accepting a note title.
         do { try await persistence.value }
         catch { report(error, title: "Couldn't journal capture") }
@@ -400,6 +408,10 @@ final class AppController: NSObject, NSMenuDelegate {
         if isTerminating { _ = commitPending(); return }
         let session = await pipeline.sessions.current()
         guard presentsUI, pending?.id == capture.id, !isTerminating else { return }
+        if outsideSession {
+            showTitlePicker(for: capture.id)
+            return
+        }
         pendingToastID = capture.id
         toast.show(Toast(style: .success,
                          title: session.map { "Added to \($0.name)" } ?? "Saved to \(Vault.inboxTitle)",
@@ -409,7 +421,9 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func commitPending(noteTitle: String? = nil, announce: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
+        let outsideSession = pendingOutsideSession
         pending = nil
+        pendingOutsideSession = false
         pendingToastID = nil
         if presentsUI { toast.dismiss(expire: false) }
         let previous = commitTail
@@ -424,7 +438,7 @@ final class AppController: NSObject, NSMenuDelegate {
             if let recovery { destination = try? await recovery.value.prepared.destination }
             else if noteTitle == nil { destination = try? await staged?.preparation.value.prepared.destination }
             else { destination = nil }
-            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination)
+            return try await pipeline.prepare(capture, noteTitle: noteTitle ?? (outsideSession ? Vault.inboxTitle : nil), destination: destination)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
@@ -446,13 +460,17 @@ final class AppController: NSObject, NSMenuDelegate {
                 self?.recoveryJobs.removeValue(forKey: capture.id)
                 self?.recoveryPersistences.removeValue(forKey: capture.id)
                 if announce, self?.pending == nil {
-                    self?.showToast(Toast(style: .success, title: "Saved to \(saved.destination.title)", duration: 1.6))
+                    let session = outsideSession ? await pipeline.sessions.current() : nil
+                    let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
+                        + (session.map { " · \($0.name) still active" } ?? "")
+                    if self?.pending == nil { self?.showToast(Toast(style: .success, title: title, duration: 1.6)) }
                 }
             } catch {
                 if noteTitle != nil, case .failure = await preparation.result, let staged {
                     self?.preparedJobs.removeValue(forKey: capture.id)
                     self?.stagedJob = staged
                     self?.pending = capture
+                    self?.pendingOutsideSession = outsideSession
                     self?.pendingToastID = capture.id
                 }
                 self?.reportUserSaveFailure(error, title: "Couldn't save capture")
@@ -495,7 +513,7 @@ final class AppController: NSObject, NSMenuDelegate {
         // OCR already owns pixels. Keep those pixels in a fixed-destination recovery
         // record while waiting, so a deadline cannot discard an unfinished OCR result.
         if let fallback = acquisitionFallback {
-            journalAcquisition(fallback)
+            journalAcquisition(fallback, outsideSession: acquisitionOutsideSession)
         }
         let acquisition = acquisitionTask
         let actions = actionTail
@@ -544,6 +562,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func showTitlePicker(for id: UUID) {
+        let outsideSession = pendingOutsideSession
         pendingToastID = nil
         toast.dismiss(expire: false)
         enqueue { controller in
@@ -556,7 +575,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 _ = controller?.commitPending(noteTitle: noteTitle, announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending()
+                _ = controller?.commitPending(noteTitle: outsideSession ? Vault.inboxTitle : nil, announce: outsideSession)
             })
         }
     }
@@ -809,7 +828,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
                 }
                 @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
-                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote)
+                    return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession)
                 }
                 let initiallyPinned = noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 editor.present(destination: sessionDestination?.title, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
@@ -829,9 +848,8 @@ final class AppController: NSObject, NSMenuDelegate {
                     },
                     onNew: { [weak controller, weak editor] text in
                         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            do { try state.resetPinOnSave(in: pipeline.drafts) }
+                            do { try state.restoreSessionDestination(sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
-                            state.destination = sessionDestination
                             editor?.setDestination(sessionDestination?.title, isPinned: noteID(sessionDestination).map { pipeline.pins.isPinned($0) } ?? false)
                             return
                         }
@@ -908,7 +926,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     },
                     existingTitleForText: { text in
                         // A session or Browse destination takes precedence over typed-name matching, as in prepareNote.
-                        guard sessionDestination == nil, state.destination == nil else { return nil }
+                        guard state.destination == nil, sessionDestination == nil || state.outsideSession else { return nil }
                         let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
                         return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault))?.title
                     },
@@ -916,6 +934,13 @@ final class AppController: NSObject, NSMenuDelegate {
                         controller?.enqueue { controller in
                             do { _ = try await save(text, controller: controller, newNote: true) }
                             catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                        }
+                    },
+                    onWriteOutsideSession: sessionDestination.map { sessionDestination in
+                        { [weak controller, weak editor] in
+                            do { try state.toggleOutsideSession(sessionDestination: sessionDestination, drafts: pipeline.drafts) }
+                            catch { controller?.report(error, title: "Couldn't change note destination"); return }
+                            editor?.setDestination(state.destination?.title, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
@@ -936,7 +961,7 @@ final class AppController: NSObject, NSMenuDelegate {
     /// suspension; failed saves retain the draft and the exact journaled identity.
     /// `newNote` forces a new note (Save as New Note) even when the title names an existing one.
     @discardableResult
-    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false) async throws -> SavedCapture? {
+    func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false, outsideSession: Bool = false) async throws -> SavedCapture? {
         guard !isTerminating else { return nil }
         try pipeline.drafts.store(rawText, pinOnSave: pinOnSave)
         let text = CaptureFormat.noteBody(rawText)
@@ -952,6 +977,10 @@ final class AppController: NSObject, NSMenuDelegate {
         for (key, candidate) in Array(preparedJobs) {
             guard let job = try? await candidate.value else { continue }
             if job.noteDraft.map(CaptureFormat.noteBody) == text || (job.noteDraft == nil && job.prepared.capture.content == .note(text)) {
+                if job.noteOutsideSession != outsideSession || (destination != nil && job.prepared.destination != destination) {
+                    superseded[key] = job.prepared.capture.id
+                    continue
+                }
                 if destination == nil || job.prepared.destination == destination {
                     if newNote && job.prepared.createsNote != true {
                         superseded[key] = job.prepared.capture.id
@@ -961,7 +990,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 }
             }
         }
-        // Save as New Note replaces an earlier unsaved append of the same draft; drop it so a retry or replay can't also append.
+        // A changed route or Save as New Note replaces the earlier job for this draft; replay must not also append it.
         // Remove from the journal first; on failure the draft is kept and the old job stays retryable.
         for (key, id) in superseded {
             try await pipeline.journal.remove(id: id)
@@ -969,19 +998,20 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote)
-            return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText)
+            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession)
+            return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText, noteOutsideSession: outsideSession)
         }
         let preparedNote = try await preparation.value.prepared
         let noteID = preparedNote.capture.id
         preparedJobs[noteID] = preparation
         let previous = commitTail
+        let outsideSessionName = outsideSession ? await pipeline.sessions.current()?.name : nil
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             let job = try await preparation.value
             try await pipeline.journal.store(job)
             _ = try? await previous?.value
             return try await pipeline.commit(job, pinOnSave: pinOnSave) { [weak self] saved, pinFailed in
-                self?.showNoteSaveFeedback(saved, pinFailed: pinFailed, created: job.prepared.createsNote == true, text: text)
+                self?.showNoteSaveFeedback(saved, pinFailed: pinFailed, created: job.prepared.createsNote == true, text: text, outsideSessionName: outsideSessionName)
             }
         }
         commitTail = task
@@ -1176,9 +1206,11 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func showNoteSaveFeedback(_ saved: SavedCapture, pinFailed: Bool, created: Bool? = nil, text: String = "") {
+    private func showNoteSaveFeedback(_ saved: SavedCapture, pinFailed: Bool, created: Bool? = nil, text: String = "", outsideSessionName: String? = nil) {
         if pinFailed {
             showToast(Toast(style: .warning, title: "Note saved, but not pinned", subtitle: saved.destination.title))
+        } else if let outsideSessionName {
+            showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(outsideSessionName) still active"))
         } else if let created {
             showToast(Toast(style: .success, title: created ? "Note created" : "Note added",
                             subtitle: created ? saved.destination.title : CapturePipeline.firstLine(text)))
@@ -1248,6 +1280,8 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.delegate = self
         menu.addItem(menuItem("Capture Selection", hotkey: .captureSelection, action: #selector(menuCaptureSelection)))
         menu.addItem(menuItem("Capture Area", hotkey: .captureRegion, action: #selector(menuCaptureRegion)))
+        menu.addItem(menuItem("Capture Selection Outside Session…", hotkey: .captureSelectionOutsideSession, action: #selector(menuCaptureSelectionOutsideSession)))
+        menu.addItem(menuItem("Capture Area Outside Session…", hotkey: .captureRegionOutsideSession, action: #selector(menuCaptureRegionOutsideSession)))
         menu.addItem(menuItem("Search Notes…", hotkey: .search, action: #selector(menuSearch)))
         let session = menuItem("Start Session…", hotkey: .toggleSession, action: #selector(menuSession))
         sessionItem = session
@@ -1392,6 +1426,16 @@ final class AppController: NSObject, NSMenuDelegate {
         guard !isTerminating, !acquisitionInProgress else { return }
         let context = FrontmostContext.capture()
         afterMenu { [weak self] in self?.capture(.region, fromHotkey: false, context: context) }
+    }
+    @objc private func menuCaptureSelectionOutsideSession() {
+        guard !isTerminating, !acquisitionInProgress else { return }
+        let context = FrontmostContext.capture()
+        afterMenu { [weak self] in self?.capture(.selection, outsideSession: true, fromHotkey: false, context: context) }
+    }
+    @objc private func menuCaptureRegionOutsideSession() {
+        guard !isTerminating, !acquisitionInProgress else { return }
+        let context = FrontmostContext.capture()
+        afterMenu { [weak self] in self?.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
     }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }

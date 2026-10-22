@@ -9,6 +9,17 @@ namespace CaptureApp.App.Tests;
 
 public sealed class WiringTests
 {
+    [Fact]
+    public void OutsideSessionActionUsesControlShiftNAndOnlyAppearsForAnActiveSession()
+    {
+        Assert.Equal(NoteActionId.WriteOutsideSession, QuickNoteView.ShortcutAction(Key.N, ModifierKeys.Control | ModifierKeys.Shift));
+        Assert.Equal(NoteActionId.NewNote, QuickNoteView.ShortcutAction(Key.N, ModifierKeys.Control));
+        Assert.DoesNotContain(ActionItem.Standard(false, true), action => action.Id == NoteActionId.WriteOutsideSession);
+        var action = Assert.Single(ActionItem.Standard(false, true, canWriteOutsideSession: true), item => item.Id == NoteActionId.WriteOutsideSession);
+        Assert.Equal("Write outside session", action.Title);
+        Assert.Equal(new[] { "Ctrl", "Shift", "N" }, action.Keys);
+    }
+
     [Theory]
     [InlineData(ModifierKeys.None, true, InputSubmitAction.Submit)]
     [InlineData(ModifierKeys.Control, true, InputSubmitAction.Alternate)]

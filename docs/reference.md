@@ -1,12 +1,18 @@
 # focusnotes reference
 
-Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+Last Updated: 2026-10-22 (previous commit: `3e925fa`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
 ## Capture and storage
 
 Pressing a capture shortcut again while its toast is visible chooses the destination note.
+To choose before saving, use **⌃⇧C** for selection or **⌃⇧S** for an area. These outside-session
+shortcuts open **Add to note…** immediately, with note suggestions. A chosen title routes to an
+existing note, then a matching session title, then Inbox, or a new root note; folder and `/` home
+paths use the same routing as the re-press picker. Escape saves the capture to Inbox. The shortcuts
+also work without a session. A current session stays active and the toast names it alongside the
+destination; the next normal capture still goes to the session.
 
 Captures append to plain Markdown compatible with Obsidian: `#` contains the note title;
 `##` is a user subheading, and `###` identifies a source. A source heading
@@ -68,7 +74,8 @@ separators, and whitespace adjacent to a slash use the legacy flat filename clea
 malformed leading-slash HOME paths retain strict validation.
 
 Sessions keep their `Sessions/` namespace: a quick note saved while a session is
-active continues to append to that session note. Paths containing traversal
+active appends to that session note unless **Write outside session** is selected.
+That action uses the same standalone paths described above without ending the session. Paths containing traversal
 components such as `..`, paths that cross a symbolic link, and leaves beginning
 with `~$` are rejected. The vault's `assets/` destination is reserved, matched
 case-insensitively; a home-relative path that resolves inside that directory is
@@ -105,10 +112,16 @@ preview. At rest the panel shows only your text; hover it for the top buttons (c
 open as note, actions ⌘K, browse ⌘P, new ⌘N) and the footer. ⌘P browses pinned and recent
 notes (↩ write there, ⌘↩ open, ⌥↩ reveal), ⇧⌘P pins the destination note (app state, never
 written into the Markdown), and ⌘O saves like ⌘↩ then opens the note in your default
-Markdown app. ⌘N saves and opens a blank note. The caret and selection lines show dimmed syntax; other lines render
+Markdown app. ⌘N saves and opens a blank note. During a session, **Write outside session** in Actions
+(⇧⌘N) toggles standalone routing for this note. The title shows its resolved destination, Browse can
+still choose an existing note, and Save as New Note and pin-on-save work as usual. Choose the action
+again, or press ⌘N on a blank editor, to restore the session destination. Saving or closing clears the
+choice; closing keeps the draft text, and the next quick note or normal capture uses the session.
+The caret and selection lines show dimmed syntax; other lines render
 without the syntax. Bullets display as •, and clickable task boxes support undo.
 The stored text stays Markdown. ⌘↩ (including keypad Enter) saves and appends to
-the active session; outside a session the footer says “Create note” and it creates a separate note. Its name comes
+the active session by default. With no session routing or Browse destination, the footer says “Add to note”
+for an existing path or Inbox and “Create note” otherwise. Its name comes
 from the first non-empty line with Markdown removed, or “Note yyyy-MM-dd HH.mm”
 if nothing remains. An unqualified name keeps the 60-character display-title cap
 (then “…”). A path is parsed before display truncation: each component is cleaned
@@ -127,6 +140,8 @@ appear with their note title and time in keyword and semantic search, and do not
 source. A heading typed in a note makes the next capture repeat its source heading.
 Successful saves clear the draft; empty input clears it without appending.
 New notes show “Note created” with their title; session appends show “Note added”.
+An outside-session save names the target and the still-active session, for example
+“Saved to Biology · Thermo still active”.
 The journal retains the chosen path and original draft, so recovery reuses the
 same file and clears the draft after saving, including when the title line was removed.
 
@@ -139,7 +154,7 @@ newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQL
 
 The implemented Windows edition writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. Windows installers are not part of the currently published releases. This section lists where behaviour differs. Everything above applies unless stated here.
 
-- **Keys.** Ctrl replaces ⌘ in the quick note (Ctrl+Enter saves, Ctrl+K Actions, Ctrl+P Browse, Ctrl+N new, Ctrl+O open as note, Ctrl+Shift+P pin, Ctrl+Shift+C copy Markdown, Ctrl+Shift+Backspace discard) and Alt+Enter replaces ⌥↩ ("Show in File Explorer"). The global shortcuts use Alt+Shift, matching the Mac's Option+Shift modifier pair, plus Q, G, F, A, W, H and E (selection, area, search, session, write, subheading, notes folder). They can be rebound in Settings.
+- **Keys.** Ctrl replaces ⌘ in the quick note (Ctrl+Enter saves, Ctrl+K Actions, Ctrl+P Browse, Ctrl+N new, Ctrl+Shift+N Write outside session while a session is active, Ctrl+O open as note, Ctrl+Shift+P pin, Ctrl+Shift+C copy Markdown, Ctrl+Shift+Backspace discard) and Alt+Enter replaces ⌥↩ ("Show in File Explorer"). The global shortcuts use Alt+Shift, matching the Mac's Option+Shift modifier pair, plus Q, G, F, A, W, H and E (selection, area, search, session, write, subheading, notes folder). Outside-session captures use Ctrl+Shift+Q for selection and Ctrl+Shift+G for an area. All global shortcuts can be rebound in Settings.
 - **Paths.** The vault defaults to `Documents\focusnotes` and app state to `%LocalAppData%\com.zerodoxxx.focusnotes`. In a note name, `/` and `\` both separate folders, and a leading `/` resolves from `%USERPROFILE%` instead of the home folder. External-note registry entries are stored `/`-separated and home-relative, as on the Mac. A path that crosses a symbolic link, junction or other reparse point is rejected where the Mac rejects symlinks. Paths longer than 260 characters work.
 - **Reserved names (DV7).** Windows file-name rules are applied on top of the Mac's. Any component is rejected if it is a device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`), also with an extension such as `con.txt`; contains `<`, `>`, `:`, `"`, `|`, `?`, `*` or a control character; or ends with a space or period. Rejection uses the same message as the Mac's reserved-name errors. The Mac accepts some of these names, so a note named `a:b` is valid on the Mac but not on Windows.
 - **Selection capture (DV2, DV6, DV8).** Capture reads the selection through UI Automation. Only if that fails, and only when the clipboard fallback is turned on, it briefly sends Ctrl+C to the app and restores the clipboard. The fallback is stricter than the Mac's: it aborts without injecting if modifier keys are still held after 200 ms ("Release the shortcut keys and try again"), or if the clipboard holds more than 64 MB or a format that cannot be copied safely ("Couldn't capture selection" with "Your clipboard is too large to restore safely"). The clipboard is restored only if nothing newer was copied in the meantime. The target app's own copy can still appear in Windows clipboard history. Apps running as administrator cannot be read: the toast "Can't capture from apps running as administrator" points to Capture Area.

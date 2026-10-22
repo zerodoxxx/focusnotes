@@ -117,9 +117,9 @@ struct CapturePipeline: Sendable {
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 
-    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool) async throws -> PreparedCapture {
+    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool, outsideSession: Bool = false) async throws -> PreparedCapture {
         try await recoverSessionIdentity()
-        return try await service.prepareNote(capture, destination: destination, newNote: newNote, calendar: calendar)
+        return try await service.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, calendar: calendar)
     }
 
     func prepareCapture(_ capture: Capture, destination: Destination?) async throws -> PreparedCapture {

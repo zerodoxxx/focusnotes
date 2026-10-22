@@ -69,6 +69,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     public bool IsPinned => isPinned;
     /// <summary>True when a default save appends by typed name, with no session or Browse destination.</summary>
     public bool AppendsToExisting { get; private set; }
+    public bool CanWriteOutsideSession { get; set; }
     public Func<IReadOnlyList<BrowseItem>> BrowseItems { get; set; } = () => [];
     private Func<string, string> titleForText = QuickNoteHandlers.DefaultTitle;
     private bool constructed;
@@ -323,6 +324,9 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 if (Editor.TextLength > 0) Editor.Replace(0, Editor.TextLength, ""); // Undoable; raises TextChanged.
                 break;
             case NoteActionId.Browse: ToggleBrowse(); break;
+            case NoteActionId.WriteOutsideSession:
+                if (CanWriteOutsideSession) ActionRequested?.Invoke(id);
+                break;
             case NoteActionId.SaveAsNewNote:
                 if (AppendsToExisting) ActionRequested?.Invoke(id);
                 else SaveRequested?.Invoke(); // Nothing to escape: use the default save.
@@ -335,7 +339,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     {
         if (card is NoteActionMenuView) return;
         DetachCard();
-        var menu = new NoteActionMenuView(ActionItem.Standard(isPinned, Editor.TextLength > 0, AppendsToExisting), query, selectedIndex);
+        var menu = new NoteActionMenuView(ActionItem.Standard(isPinned, Editor.TextLength > 0, AppendsToExisting, CanWriteOutsideSession), query, selectedIndex);
         menu.Run += id => { HideActions(); Perform(id); };
         menu.CloseRequested += HideActions;
         Attach(menu);
@@ -440,6 +444,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
             Key.P when shift => NoteActionId.Pin,
             Key.P when ctrl => NoteActionId.Browse,
             Key.N when ctrl => NoteActionId.NewNote,
+            Key.N when shift => NoteActionId.WriteOutsideSession,
             Key.O when ctrl => NoteActionId.OpenAsNote,
             Key.Back when shift => NoteActionId.DiscardDraft,
             Key.Enter when modifiers == (ModifierKeys.Control | ModifierKeys.Alt) => NoteActionId.SaveAsNewNote,
@@ -501,6 +506,7 @@ public sealed class QuickNoteController
         {
             TitleForText = handlers.TitleForText ?? QuickNoteHandlers.DefaultTitle,
             ExistingTitleForText = handlers.ExistingTitleForText ?? (_ => null),
+            CanWriteOutsideSession = handlers.OnToggleOutsideSession is not null,
             BrowseItems = handlers.BrowseItems, WorkAreaHeight = monitor.WorkArea.Height
         };
         var window = new OverlayWindow(content) { IsSticky = true, IsMovable = true, PositionStore = PositionStore };
@@ -540,6 +546,7 @@ public sealed class QuickNoteController
                     if (window.Dismiss()) (handlers.OnSaveAsNew ?? handlers.OnSubmit)(text);
                     break;
                 case NoteActionId.Pin: content.SetDestination(content.Destination, handlers.OnTogglePin()); break;
+                case NoteActionId.WriteOutsideSession: handlers.OnToggleOutsideSession?.Invoke(); break;
             }
         };
         content.BrowseChosen += (item, choice) =>

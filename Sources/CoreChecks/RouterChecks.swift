@@ -52,6 +52,10 @@ func checkRouter() throws {
                "unmatched heading appends to an existing filename rather than replacing it")
     try expect(try route("New Thing", nil), path: "New Thing.md", title: "New Thing", kind: .note,
                "unknown heading targets a new root note")
+    try expect(try route("Biology", standup), path: "Biology.md", title: "Biology", kind: .note,
+               "outside-session capture can create a named note while a session is active")
+    try expect(try route("Bar", standup), path: "Bar.md", title: "Bar", kind: .note,
+               "outside-session capture can append to an existing note while a session is active")
     try expect(try route("2026-10-13 Design", nil), path: "Sessions/2026-10-13 Design.md",
                title: "2026-10-13 Design", kind: .session,
                "heading matches a session note")
@@ -75,12 +79,14 @@ func checkRouter() throws {
                title: "trigonometry", kind: .note, "path heading reuses folders and file case-insensitively")
     try expect(try route("science/math/new branch", nil), path: "Science/Math/new branch.md",
                title: "new branch", kind: .note, "unmatched nested heading resolves beneath existing folders")
+    try expect(try route("science/math/Biology", standup), path: "Science/Math/Biology.md",
+               title: "Biology", kind: .note, "outside-session capture preserves a chosen folder path")
     do {
         _ = try route("science/../escape", nil)
         throw CheckFailure.failed("path traversal heading was accepted")
     } catch is NotePathNameError {}
     let homeHeading = "/CodexRouter-\(UUID().uuidString)/science/math/trigonometry"
-    let homeDestination = try route(homeHeading, nil)
+    let homeDestination = try route(homeHeading, standup)
     try require(homeDestination.url.path.hasPrefix(home.path + "/CodexRouter-"),
                 "leading slash heading should resolve under the user's home directory")
     try require(homeDestination.title == "trigonometry", "home-relative destination title should use its final path component")

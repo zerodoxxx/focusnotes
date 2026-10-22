@@ -48,6 +48,8 @@ public struct Hotkey: Hashable, Sendable {
 
     public static let captureSelection = Self(keyCode: UInt32(kVK_ANSI_C), modifiers: [.option, .shift])
     public static let captureRegion = Self(keyCode: UInt32(kVK_ANSI_S), modifiers: [.option, .shift])
+    public static let captureSelectionOutsideSession = Self(keyCode: UInt32(kVK_ANSI_C), modifiers: [.control, .shift])
+    public static let captureRegionOutsideSession = Self(keyCode: UInt32(kVK_ANSI_S), modifiers: [.control, .shift])
     public static let search = Self(keyCode: UInt32(kVK_ANSI_F), modifiers: [.option, .shift])
     public static let toggleSession = Self(keyCode: UInt32(kVK_ANSI_A), modifiers: [.option, .shift])
     public static let writeNote = Self(keyCode: UInt32(kVK_ANSI_N), modifiers: [.option, .shift])

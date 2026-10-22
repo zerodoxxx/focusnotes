@@ -75,7 +75,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         }
     }
 
-    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false)
+    public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false, bool outsideSession = false)
     {
         lock (gate)
         {
@@ -84,7 +84,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
                 return new(capture, destination);
             }
 
-            if (sessions.Current() is { } active)
+            if (!outsideSession && sessions.Current() is { } active)
             {
                 return new(capture, Router.Destination(null, active, [], vault));
             }

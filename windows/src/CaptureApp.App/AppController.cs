@@ -98,6 +98,7 @@ internal sealed partial class AppController : IDisposable
         host = new UiHost(dispatcher, trigger => BindingText(trigger == CaptureTrigger.Selection ? HotkeyAction.CaptureSelection : HotkeyAction.CaptureArea),
             () => BindingText(HotkeyAction.ToggleSession), RefreshMenu);
         Coordinator = new CaptureCoordinator(pipeline, host);
+        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
         host.OnExpire = Coordinator.ToastExpired;
         LoadBindings();
         InstallTray();

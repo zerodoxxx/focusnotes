@@ -111,14 +111,17 @@ public actor CaptureService {
     /// generated timestamp, a name whose exact path exists, or was reserved earlier in
     /// this process, appends to it. Otherwise a new path is reserved. Replay saves this
     /// preparation without routing again, even if a file with the same name or a different
-    /// session now exists.
-    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, calendar: Calendar) async throws -> PreparedCapture {
+    /// session now exists. `outsideSession` bypasses the active session for this preparation
+    /// only; explicit Browse destinations still take precedence and session state is untouched.
+    public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, outsideSession: Bool = false, calendar: Calendar) async throws -> PreparedCapture {
         if let destination { return PreparedCapture(capture: capture, destination: destination) }
-        if let active = await sessions.current() {
+        if !outsideSession, let active = await sessions.current() {
             return PreparedCapture(capture: capture, destination: try Router.destination(
                 noteTitle: nil, activeSession: active, notes: [], vault: vault))
         }
-        guard case .note(let markdown) = capture.content else { return try await prepare(capture, noteTitle: nil) }
+        guard case .note(let markdown) = capture.content else {
+            return try await prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil)
+        }
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
         guard let pathName = note.pathName else {
             throw note.pathNameError ?? NotePathNameError.invalidComponent

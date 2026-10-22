@@ -14,7 +14,7 @@ public enum CaptureTrigger
 }
 
 public sealed record PendingCapture(Guid Id, DateTimeOffset CreatedAt, CaptureTrigger Trigger, CaptureContent Content,
-    CaptureSource Source, string Subtitle, byte[]? Png = null, string? Ocr = null);
+    CaptureSource Source, string Subtitle, byte[]? Png = null, string? Ocr = null, bool OutsideSession = false);
 
 /// Platform-neutral capture orchestration over Core's vault, writer, session, index, and watcher.
 public sealed class CapturePipeline : IDisposable
@@ -110,15 +110,15 @@ public sealed class CapturePipeline : IDisposable
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,
-        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false)
-        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote));
+        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false, bool outsideSession = false)
+        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote, outsideSession));
 
     private CaptureJob PrepareNoteCore(string markdown, CaptureSource source, Destination? destination,
-        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote)
+        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote, bool outsideSession)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Note(markdown), source);
-        return new(Service.PrepareNote(capture, TimeZone, destination, newNote), NoteDraft: noteDraft ?? markdown);
+        return new(Service.PrepareNote(capture, TimeZone, destination, newNote, outsideSession), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession);
     }
 
     public CaptureJob PrepareSubheading(Capture capture, Destination? destination = null) => PrepareLocked(() =>

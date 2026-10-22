@@ -189,13 +189,15 @@ if CommandLine.arguments.count > 1 {
 
 @MainActor
 func checkHotkeys() throws {
-    let defaults: [Hotkey] = [.captureSelection, .captureRegion, .search, .toggleSession, .writeNote, .addSubheading, .openLibrary]
-    let expected = ["⌥⇧C", "⌥⇧S", "⌥⇧F", "⌥⇧A", "⌥⇧N", "⌥⇧H", "⌥⇧L"]
+    let defaults: [Hotkey] = [.captureSelection, .captureRegion, .search, .toggleSession, .writeNote, .addSubheading, .openLibrary,
+                              .captureSelectionOutsideSession, .captureRegionOutsideSession]
+    let expected = ["⌥⇧C", "⌥⇧S", "⌥⇧F", "⌥⇧A", "⌥⇧N", "⌥⇧H", "⌥⇧L", "⌃⇧C", "⌃⇧S"]
     let expectedDefinitions = [
         Hotkey(keyCode: 8, modifiers: [.option, .shift]), Hotkey(keyCode: 1, modifiers: [.option, .shift]),
         Hotkey(keyCode: 3, modifiers: [.option, .shift]), Hotkey(keyCode: 0, modifiers: [.option, .shift]),
         Hotkey(keyCode: 45, modifiers: [.option, .shift]), Hotkey(keyCode: 4, modifiers: [.option, .shift]),
-        Hotkey(keyCode: 37, modifiers: [.option, .shift])
+        Hotkey(keyCode: 37, modifiers: [.option, .shift]),
+        Hotkey(keyCode: 8, modifiers: [.control, .shift]), Hotkey(keyCode: 1, modifiers: [.control, .shift])
     ]
     for (index, hotkey) in defaults.enumerated() {
         try require(hotkey == expectedDefinitions[index] && hotkey.displayString == expected[index],
@@ -229,7 +231,7 @@ func checkHotkeys() throws {
     if case .failure(let error) = otherCenter.register(testHotkey, id: 2, handler: {}) {
         throw CheckFailure.failed("Unregistered test shortcut was not released: \(error)")
     }
-    print("Hotkeys: PASS (seven production definitions, temporary conflict and unregister).")
+    print("Hotkeys: PASS (nine production definitions, temporary conflict and unregister).")
 }
 
 @MainActor

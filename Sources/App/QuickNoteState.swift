@@ -5,6 +5,7 @@ import Core
 @MainActor
 final class QuickNoteState {
     var destination: Destination?
+    var outsideSession = false
     var pinOnSave = false
     var suggestions: [NoteSuggestion] = []
     var kinds: [String: NoteKind] {
@@ -19,5 +20,15 @@ final class QuickNoteState {
     func resetPinOnSave(in drafts: NoteDraftStore) throws {
         try drafts.setPinOnSave(false)
         pinOnSave = false
+    }
+    func toggleOutsideSession(sessionDestination: Destination, drafts: NoteDraftStore) throws {
+        try resetPinOnSave(in: drafts)
+        outsideSession.toggle()
+        destination = outsideSession ? nil : sessionDestination
+    }
+    func restoreSessionDestination(_ sessionDestination: Destination?, drafts: NoteDraftStore) throws {
+        try resetPinOnSave(in: drafts)
+        outsideSession = false
+        destination = sessionDestination
     }
 }

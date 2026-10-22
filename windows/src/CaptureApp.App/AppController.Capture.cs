@@ -20,7 +20,7 @@ internal sealed partial class AppController
     private readonly SelectionReader selectionReader = new();
 
     /// The two capture hotkeys and their menu twins (AppController.swift:280).
-    private void Capture(CaptureTrigger trigger, bool fromHotkey, FrontmostContext context)
+    private void Capture(CaptureTrigger trigger, bool fromHotkey, FrontmostContext context, bool outsideSession = false)
     {
         if (Coordinator.IsTerminating || Coordinator.AcquisitionInProgress) { return; }
         if (context.ProcessIdentifier == (uint)Environment.ProcessId) { return; }
@@ -34,7 +34,7 @@ internal sealed partial class AppController
             return;
         }
 
-        if (fromHotkey && Coordinator.PendingWithToast is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
+        if (!outsideSession && fromHotkey && Coordinator.PendingWithToast is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
         {
             ShowTitlePicker(pending.Id);
             return;
@@ -51,7 +51,7 @@ internal sealed partial class AppController
                 if (result.Capture is { } captured)
                 {
                     CaptureObserved?.Invoke(CaptureTrigger.Selection, captured.Method == SelectionMethod.Clipboard ? "clipboard fallback" : "UI Automation", true);
-                    return PendingCaptures.Selection(captured.Text, captured.Context.Source);
+                    return PendingCaptures.Selection(captured.Text, captured.Context.Source) with { OutsideSession = outsideSession };
                 }
 
                 SelectionFailed(result);
@@ -62,7 +62,7 @@ internal sealed partial class AppController
             {
                 var png = await new RegionCapturer().CaptureAsync();
                 if (png is null) { return null; }
-                var image = PendingCaptures.Image(png, null, context.Source);
+                var image = PendingCaptures.Image(png, null, context.Source) with { OutsideSession = outsideSession };
                 Coordinator.RecordAcquiredImage(image);
                 return image;
             }
@@ -125,7 +125,7 @@ internal sealed partial class AppController
             PresentInput(Strings.AddToNotePlaceholder, suggestions: suggestions,
                 onAccept: title => { if (c.Pending?.Id == id) { _ = c.CommitPending(title, true); } },
                 onSubmit: _ => { },
-                onCancel: () => { if (c.Pending?.Id == id) { _ = c.CommitPending(); } });
+                onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { _ = c.CommitPending(announce: pending.OutsideSession); } });
         });
     }
 

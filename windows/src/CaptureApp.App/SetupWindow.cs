@@ -377,7 +377,7 @@ internal sealed class SetupWindow : Window
     // Step 2.
     private void Shortcuts(StackPanel body)
     {
-        body.Children.Add(UiKit.Text("All seven shortcuts must be registered, changed, or turned off by you.", 13, false, "TextPrimary", 8));
+        body.Children.Add(UiKit.Text("All shortcuts must be registered, changed, or turned off by you.", 13, false, "TextPrimary", 8));
         ShortcutsPanel? panel = null;
         panel = new ShortcutsPanel(controller, () => { Evaluate(); });
         body.Children.Add(panel);

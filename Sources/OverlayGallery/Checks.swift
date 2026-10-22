@@ -318,6 +318,7 @@ func runBehaviorChecks() async throws {
     try await checkNoteEditorBehavior()
     try await checkNoteOverlays()
     try await checkSaveAsNewShortcut()
+    try await checkOutsideSessionShortcut()
     try checkCardButtonClicks()
     try checkQuickNoteDesign()
     try await checkFloatingCards()
@@ -842,6 +843,60 @@ private func checkSaveAsNewShortcut() async throws {
     try key(36, modifiers: [.command, .option])
     try await settle()
     try require(saved == [text] && !panel.isVisible, "Option-Command-Return must save as a new note and close the editor")
+}
+
+/// The outside-session action is available only for a session, and keeps the current editor and draft.
+@MainActor
+private func checkOutsideSessionShortcut() async throws {
+    let editor = NoteEditorPanel()
+    let draft = "# Biology\nKeep this thought while Thermo continues."
+    var outside = false
+    var toggles = 0
+    var pinToggles = 0
+    func present(_ text: String, withSession: Bool) {
+        outside = false
+        let toggle: (() -> Void)? = withSession ? {
+            outside.toggle(); toggles += 1
+            editor.setDestination(outside ? nil : "Thermo", isPinned: false)
+        } : nil
+        editor.present(destination: withSession ? "Thermo" : nil, isPinned: false, draft: text, handlers: NoteEditorHandlers(
+            onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in outside = false; editor.setDestination("Thermo", isPinned: false) },
+            onOpenAsNote: { _ in }, browseItems: { [BrowseItem(id: "existing", title: "Existing", detail: "Note", symbolName: "doc.text", isPinned: false)] },
+            onBrowse: { item, _ in editor.setDestination(item.title, isPinned: false) },
+            onTogglePin: { pinToggles += 1; return true }, onClose: {}, onError: { _ in }, onWriteOutsideSession: toggle))
+    }
+    func labels() throws -> [String] { descendants(try currentPanel().contentView!).compactMap { $0 as? NSTextField }.map(\.stringValue) }
+    present(draft, withSession: true)
+    try key(45, modifiers: [.command, .shift]); try await settle()
+    try require(editor.isVisible && outside && toggles == 1 && (try labels()).contains("Biology"),
+                "Shift Command N must detach this note, retain the text and show its typed title")
+    try key(45, modifiers: [.command, .shift]); try await settle()
+    try require(!outside && toggles == 2 && (try labels()).contains("Thermo"), "Repeating Shift Command N must restore the session")
+    try key(40, modifiers: .command); try await settle()
+    try require((try labels()).contains("Write outside session"), "Active-session Actions must include Write outside session")
+    let actionField = try field(in: currentPanel())
+    actionField.stringValue = "Write outside session"
+    actionField.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: actionField))
+    try key(36); try await settle()
+    try require(outside && toggles == 3 && editor.isVisible, "The Actions command must toggle the same detached destination")
+    try key(35, modifiers: [.command, .shift]); try await settle()
+    try require(pinToggles == 1 && editor.isVisible, "Pin-on-save must still work after detaching")
+    try key(35, modifiers: .command); try await settle()
+    try key(36); try await settle()
+    try require((try labels()).contains("Existing"), "Browse must still choose a destination after detaching")
+    editor.dismiss(); try await settle()
+    present("", withSession: true)
+    try key(45, modifiers: [.command, .shift]); try await settle()
+    try key(45, modifiers: .command); try await settle()
+    try require(!outside && editor.isVisible && (try labels()).contains("Thermo"), "Command N on a blank editor must restore the session")
+    editor.dismiss(); try await settle()
+    present(draft, withSession: false)
+    let count = toggles
+    try key(45, modifiers: [.command, .shift]); try await settle()
+    try key(40, modifiers: .command); try await settle()
+    try require(toggles == count && editor.isVisible && !(try labels()).contains("Write outside session"),
+                "Without an active session, the detached shortcut must be inert and its action hidden")
+    editor.dismiss(); try await settle()
 }
 
 /// Spec checks for the quick-note surface: title line, top-band chrome, footer copy, caret geometry.

@@ -10,8 +10,8 @@ struct NoteActionItem {
     var group: Int
 
     /// `appendsToExisting`: the typed title names an existing note, so saving would append; the escape row is then live.
-    @MainActor static func standard(isPinned: Bool, hasText: Bool, appendsToExisting: Bool = false) -> [NoteActionItem] {
-        [
+    @MainActor static func standard(isPinned: Bool, hasText: Bool, appendsToExisting: Bool = false, hasActiveSession: Bool = false) -> [NoteActionItem] {
+        var items = [
             NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: "⌘N", isEnabled: true, group: 0),
             NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: "⌥⌘↩",
                            isEnabled: appendsToExisting, group: 0),
@@ -22,6 +22,11 @@ struct NoteActionItem {
             NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: "⇧⌘C", isEnabled: hasText, group: 1),
             NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: "⇧⌘⌫", isEnabled: hasText, group: 1),
         ]
+        if hasActiveSession {
+            items.insert(NoteActionItem(id: .writeOutsideSession, title: "Write outside session", symbolName: "arrow.turn.up.right",
+                                        shortcut: "⇧⌘N", isEnabled: true, group: 0), at: 1)
+        }
+        return items
     }
 }
 

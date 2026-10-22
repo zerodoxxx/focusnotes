@@ -7,6 +7,7 @@ namespace CaptureApp.AppCore;
 public sealed class QuickNoteState
 {
     public Destination? Destination { get; set; }
+    public bool OutsideSession { get; private set; }
     public bool PinOnSave { get; private set; }
     public IReadOnlyList<NoteSuggestion> Suggestions { get; set; } = [];
 
@@ -41,5 +42,18 @@ public sealed class QuickNoteState
     {
         drafts.SetPinOnSave(false);
         PinOnSave = false;
+    }
+
+    public void ToggleOutsideSession(Destination? sessionDestination)
+    {
+        if (sessionDestination is null) return;
+        OutsideSession = !OutsideSession;
+        Destination = OutsideSession ? null : sessionDestination;
+    }
+
+    public void ReturnToSession(Destination? sessionDestination)
+    {
+        OutsideSession = false;
+        Destination = sessionDestination;
     }
 }

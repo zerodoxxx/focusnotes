@@ -2,8 +2,13 @@ name: checks
 
 on:
   workflow_dispatch:
+    inputs:
+      full:
+        description: Full checks (models, performance, UI galleries, packaging and both Windows architectures)
+        type: boolean
+        default: false
   pull_request:
-    types: [labeled]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -12,12 +17,38 @@ env:
   FOCUSNOTES_PERF_GATES: "0"
 
 concurrency:
-  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event.label.id || 'manual' }}
+  # Skip changes cancel requested work. Unrelated label snapshots cannot cancel it or replace required checks.
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'requested' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full') && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      macos: ${{ steps.scope.outputs.macos }}
+      windows: ${{ steps.scope.outputs.windows }}
+      full: ${{ steps.scope.outputs.full }}
+      windows-runners: ${{ steps.scope.outputs.windows-runners }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Keep the PR merge checkout for tests; the selector compares the event's base/head SHAs.
+          fetch-depth: 0
+
+      - name: Check platform selector
+        run: python3 scripts/test-ci-selection.py
+
+      - name: Select platforms and verification level
+        id: scope
+        env:
+          CI_FULL: ${{ inputs.full && 'true' || 'false' }}
+        run: python3 scripts/ci_selection.py
+
   windows-release-gate:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    needs: select
+    if: needs.select.outputs.windows == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,11 +57,25 @@ jobs:
         run: bash scripts/test-windows-release-gate.sh
 
   build:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
-    name: ${{ github.event_name == 'pull_request' && github.event.label.name != 'run-ci' && 'build (run-ci label required)' || 'build' }}
+    needs: select
+    if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (!cancelled() && needs.select.outputs.macos == 'true') || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))) }}
+    # Only a request or intentional skip may publish the ruleset's required check name.
+    # A skipped job allocates no runner and is accepted by GitHub's required-check rules.
+    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'build' || 'build (CI not requested)' }}
     # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
-    runs-on: xcode-27
+    runs-on: ${{ (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))) && 'ubuntu-latest' || 'xcode-27' }}
+    timeout-minutes: 30
     steps:
+      - name: Revoke the intentional skip after skip-cli is removed
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli') }}
+        run: |
+          echo 'skip-cli was removed. Add run-ci or run-ci-full to request verification before merging.' >&2
+          exit 1
+
+      - name: Fail required check when platform selection failed or was cancelled
+        if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled') }}
+        run: exit 1
+
       - uses: actions/checkout@v7
 
       - name: Select Xcode 27 (Swift 6.4)
@@ -56,30 +101,42 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .build
-          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          # Source/mode suffixes let successful incremental builds refresh the immutable cache.
+          key: swiftpm-v2-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}-${{ hashFiles('Sources/**', 'Config/**', 'conformance/**') }}-${{ needs.select.outputs.full }}
           restore-keys: |
-            swiftpm-${{ runner.os }}-${{ runner.arch }}-
+            swiftpm-v2-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}-${{ hashFiles('Sources/**', 'Config/**', 'conformance/**') }}-
+            swiftpm-v2-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved', 'Package.swift') }}-
+
+      - name: Quick build and core checks
+        if: needs.select.outputs.full != 'true'
+        run: |
+          swift build
+          swift run --skip-build CoreChecks --skip-performance
+          bash scripts/test-app-path-safety.sh
 
       # Known flaky: `swift run OverlayGallery --check` (run inside release.sh --adhoc) can fail
       # intermittently. If this step fails there, re-run the job; do not special-case it here.
       - name: Checks and ad-hoc DMG
+        if: needs.select.outputs.full == 'true'
         env:
           # Vision OCR does not work in GitHub's macOS VMs; CaptureChecks then skips only OCR.
           CAPTURE_CHECKS_ALLOW_OCR_SKIP: "1"
         run: scripts/release.sh --adhoc
 
       - name: Upload dist
+        if: needs.select.outputs.full == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: focusnotes-adhoc-dmg
           path: dist/
-          retention-days: 14
+          retention-days: 3
 
   smoke-macos-15:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
-    name: ${{ github.event_name == 'pull_request' && github.event.label.name != 'run-ci' && 'smoke-macos-15 (run-ci label required)' || 'smoke-macos-15' }}
-    needs: build
+    if: needs.select.outputs.full == 'true'
+    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'smoke-macos-15' || 'smoke-macos-15 (CI not requested)' }}
+    needs: [select, build]
     runs-on: macos-15
+    timeout-minutes: 5
     steps:
       - name: Download ad-hoc DMG
         uses: actions/download-artifact@v8
@@ -109,14 +166,16 @@ jobs:
           hdiutil detach "$MNT" -force || true
 
   windows:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    needs: select
+    if: needs.select.outputs.windows == 'true'
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: windows
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        runner: [windows-latest, windows-11-arm]
+        runner: ${{ fromJSON(needs.select.outputs.windows-runners) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -124,14 +183,18 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: windows/global.json
+          cache: true
+          cache-dependency-path: windows/**/packages.lock.json
 
       - name: Cache semantic models
+        if: needs.select.outputs.full == 'true'
         uses: actions/cache@v6
         with:
           path: windows/.semantic-models
           key: semantic-models-${{ runner.os }}-${{ hashFiles('windows/src/CaptureApp.ModelInstall/ModelManifest.cs') }}
 
       - name: Fetch and verify semantic models
+        if: needs.select.outputs.full == 'true'
         shell: pwsh
         run: ./scripts/fetch-semantic-models.ps1
 
@@ -141,16 +204,17 @@ jobs:
       - name: Build
         run: dotnet build CaptureApp.sln -c Release --no-restore -warnaserror
 
-      - name: Test
+      - name: Functional tests
         timeout-minutes: 15
         env:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
-          CAPTUREAPP_MODELS_DIR: ${{ github.workspace }}/windows/.semantic-models
-          CAPTUREAPP_REQUIRE_MODELS: "1"
+          CAPTUREAPP_MODELS_DIR: ${{ needs.select.outputs.full == 'true' && format('{0}/windows/.semantic-models', github.workspace) || '' }}
+          CAPTUREAPP_REQUIRE_MODELS: ${{ needs.select.outputs.full == 'true' && '1' || '0' }}
         # Separate test assemblies otherwise compete with the desktop/UIA fixtures and model inference.
         run: dotnet test CaptureApp.sln -c Release --no-build --filter "Category!=Perf" -m:1 --logger trx --results-directory TestResults/tests
 
       - name: Performance measurements and workload checks
+        if: needs.select.outputs.full == 'true'
         timeout-minutes: 15
         env:
           CAPTUREAPP_REQUIRE_OCR_MODELS: "1"
@@ -165,9 +229,11 @@ jobs:
         with:
           name: test-results-${{ matrix.runner }}
           path: windows/TestResults/
+          retention-days: 3
           if-no-files-found: warn
 
       - name: Publish and self-test
+        if: needs.select.outputs.full == 'true'
         shell: pwsh
         timeout-minutes: 3
         env:
@@ -199,6 +265,7 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/selftest.log" -Pattern "architecture .* \(runtime $rid\)" -Quiet)) { throw "Self-test did not report architecture $rid" }
 
       - name: Gallery
+        if: needs.select.outputs.full == 'true'
         id: gallery
         shell: pwsh
         run: |
@@ -211,10 +278,11 @@ jobs:
         with:
           name: gallery-${{ matrix.runner }}
           path: ${{ runner.temp }}/gallery
+          retention-days: 3
           if-no-files-found: error
 
       - name: Probe runner desktop capabilities
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (failure() || needs.select.outputs.full == 'true') }}
         continue-on-error: true
         timeout-minutes: 2
         shell: pwsh
@@ -224,20 +292,22 @@ jobs:
           Get-Content ../runner-probe.md | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Upload runner capability table
-        if: always()
+        if: ${{ always() && (failure() || needs.select.outputs.full == 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: runner-probe-${{ matrix.runner }}
           path: runner-probe.md
+          retention-days: 3
           if-no-files-found: warn
 
   windows-package:
-    if: github.event_name != 'pull_request' || github.event.label.name == 'run-ci'
+    needs: select
+    if: needs.select.outputs.full == 'true'
     # Packs two CI versions per architecture, then proves install, signed-index update and tamper refusal.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         runner: [windows-latest, windows-11-arm]
     env:
@@ -248,6 +318,8 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: windows/global.json
+          cache: true
+          cache-dependency-path: windows/**/packages.lock.json
 
       - name: Pack two CI versions
         shell: pwsh

@@ -86,8 +86,8 @@ internal sealed partial class AppController
     private QuickNoteHandlers NoteHandlers(CaptureCoordinator c, QuickNoteState state, Destination? sessionDestination)
     {
         var zone = pipeline.TimeZone;
-        void RefreshDestination() => quickNote.SetDestination(state.Destination?.Title, IsPinned(state.Destination, false));
-        Task<SavedCapture?> Save(string text, bool newNote = false) => c.AddNoteAsync(text, state.Destination, state.PinOnSave, newNote);
+        void RefreshDestination() => quickNote.SetDestination(state.Destination?.Title, IsPinned(state.Destination, state.PinOnSave));
+        Task<SavedCapture?> Save(string text, bool newNote = false) => c.AddNoteAsync(text, state.Destination, state.PinOnSave, newNote, state.OutsideSession);
 
         return new QuickNoteHandlers(
             OnDraft: text =>
@@ -107,7 +107,7 @@ internal sealed partial class AppController
                 {
                     try { state.ResetPinOnSave(pipeline.Drafts); }
                     catch (Exception error) { c.Report(error, Strings.CouldNotResetDraftPin); return; }
-                    state.Destination = sessionDestination;
+                    state.ReturnToSession(sessionDestination);
                     quickNote.SetDestination(sessionDestination?.Title, IsPinned(sessionDestination, false));
                     return;
                 }
@@ -197,7 +197,7 @@ internal sealed partial class AppController
             ExistingTitleForText: text =>
             {
                 // Session and Browse destinations take precedence over typed-name matching, as in PrepareNote.
-                if (sessionDestination is not null || state.Destination is not null) return null;
+                if (state.Destination is not null) return null;
                 try
                 {
                     var note = new TypedNote(text, DateTimeOffset.Now, zone, pipeline.Vault.NamingRules);
@@ -209,7 +209,14 @@ internal sealed partial class AppController
             {
                 try { await Save(text, newNote: true); }
                 catch (Exception error) { inner.ReportUserSaveFailure(error, Strings.CouldNotAddNote); }
-            }));
+            }),
+            OnToggleOutsideSession: sessionDestination is null ? null : () =>
+            {
+                try { state.ResetPinOnSave(pipeline.Drafts); }
+                catch (Exception error) { c.Report(error, Strings.CouldNotResetDraftPin); return; }
+                state.ToggleOutsideSession(sessionDestination);
+                RefreshDestination();
+            });
     }
 
     private void OpenNote(string url)

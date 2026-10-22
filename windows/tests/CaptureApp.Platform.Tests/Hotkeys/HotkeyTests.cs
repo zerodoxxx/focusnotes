@@ -11,12 +11,14 @@ public sealed class HotkeyDefaultsTests
     [Theory]
     [InlineData(HotkeyAction.CaptureSelection, "Alt+Shift+Q")]
     [InlineData(HotkeyAction.CaptureArea, "Alt+Shift+G")]
+    [InlineData(HotkeyAction.CaptureSelectionOutsideSession, "Ctrl+Shift+Q")]
+    [InlineData(HotkeyAction.CaptureAreaOutsideSession, "Ctrl+Shift+G")]
     [InlineData(HotkeyAction.SearchNotes, "Alt+Shift+F")]
     [InlineData(HotkeyAction.ToggleSession, "Alt+Shift+A")]
     [InlineData(HotkeyAction.WriteNote, "Alt+Shift+W")]
     [InlineData(HotkeyAction.AddSubheading, "Alt+Shift+H")]
     [InlineData(HotkeyAction.OpenNotesFolder, "Alt+Shift+E")]
-    public void DefaultsUseAltShiftAndPassRebindingGuards(HotkeyAction action, string expected)
+    public void DefaultsPassRebindingGuards(HotkeyAction action, string expected)
     {
         var chord = HotkeyDefaults.For(action);
         Assert.Equal(expected, chord.DisplayString);
@@ -43,6 +45,7 @@ public sealed class KeyChordTests
     [InlineData("Win+Alt+Shift+Q", false)]
     [InlineData("Ctrl+P", false)]
     [InlineData("Ctrl+Shift+Z", false)]
+    [InlineData("Ctrl+Shift+N", false)]
     [InlineData("Escape", false)]
     [InlineData("Shift+Enter", false)]
     [InlineData("Ctrl+Alt+Shift+Q", true)]

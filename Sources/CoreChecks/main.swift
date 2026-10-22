@@ -81,7 +81,9 @@ do {
     try checkNoteParser()
     try await checkTypedNotes()
     try await checkSearchIndex()
-    try await checkSearchIndexPerformance()
+    if !CommandLine.arguments.contains("--skip-performance") {
+        try await checkSearchIndexPerformance()
+    }
     try checkVaultWatcher()
     try await checkExternalNoteRegistry()
     try await checkConformance(writeExpected: false)

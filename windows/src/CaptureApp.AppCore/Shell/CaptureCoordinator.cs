@@ -48,6 +48,7 @@ public sealed class CaptureCoordinator
 
     public CapturePipeline Pipeline { get; }
     public SemanticIndexer? Semantic { get; set; }
+    public Action<Guid>? ChooseNoteRequested { get; set; }
     public Session? ActiveSession { get; private set; }
     public bool IsTerminating { get { lock (gate) { return isTerminating; } } }
     public bool AcquisitionInProgress { get { lock (gate) { return acquisitionInProgress; } } }
@@ -178,7 +179,7 @@ public sealed class CaptureCoordinator
         var capture = fallback;
         try { capture = await processed.ConfigureAwait(true); }
         catch (Exception error) { log.Error($"Capture post-processing failed; keeping the acquired capture: {error.GetType().Name}"); }
-        await StageAsync(capture).ConfigureAwait(true);
+        await StageAsync(capture with { OutsideSession = fallback.OutsideSession }).ConfigureAwait(true);
         lock (gate) { if (processingGeneration == id) { processingTail = null; } }
     }
 
@@ -213,7 +214,7 @@ public sealed class CaptureCoordinator
 
     private CaptureJob Prepare(PendingCapture capture, string? noteTitle, Destination? destination)
     {
-        var route = destination is null ? noteTitle : null;
+        var route = destination is null ? noteTitle ?? (capture.OutsideSession ? Vault.InboxTitle : null) : null;
         var job = capture.Png is not null
             ? Pipeline.PrepareImage(capture.Png, capture.Source, route, capture.Ocr, capture.Id, capture.CreatedAt)
             : Pipeline.PrepareText(capture.Content.Value, capture.Source, route, null, capture.Id, capture.CreatedAt);
@@ -262,6 +263,11 @@ public sealed class CaptureCoordinator
 
         if (!stillPending) { return; }
         if (terminating) { _ = CommitPending(); return; }
+        if (capture.OutsideSession)
+        {
+            ChooseNoteRequested?.Invoke(capture.Id);
+            return;
+        }
         Session? session = null;
         try { session = Pipeline.Sessions.Current(); } catch (Exception error) { log.Error($"Session read failed: {error.GetType().Name}"); }
         lock (gate)
@@ -362,7 +368,9 @@ public sealed class CaptureCoordinator
 
             if (announce && noPending)
             {
-                host.ShowToast(new(AppToastStyle.Success, Strings.SavedTo(saved.Destination.Title), Duration: 1.6));
+                host.ShowToast(new(AppToastStyle.Success, capture.OutsideSession
+                    ? Strings.SessionStillActive(Strings.AddedTo(saved.Destination.Title), Pipeline.Sessions.Current()?.Name)
+                    : Strings.SavedTo(saved.Destination.Title), Duration: 1.6));
             }
         }
         catch (Exception error)
@@ -384,10 +392,10 @@ public sealed class CaptureCoordinator
         lock (gate) { if (commitGeneration == generation) { commitTail = null; } }
     }
 
-    private SavedCapture CommitJob(CaptureJob job, bool? pinOnSave, string? noteText = null)
+    private SavedCapture CommitJob(CaptureJob job, bool? pinOnSave, string? noteText = null, bool outsideSession = false)
     {
         var saved = Pipeline.Commit(job, pinOnSave, (value, pinFailed) =>
-            NoteFeedback(value, pinFailed, job.Prepared.CreatesNote == true, noteText));
+            NoteFeedback(value, pinFailed, job.Prepared.CreatesNote == true, noteText, outsideSession));
         Task<string?>? deferred;
         lock (gate) { deferredOcr.Remove(job.Prepared.Capture.Id, out deferred); }
         if (deferred is not null && job.Png is { } png && job.Prepared.Capture.Content is { Kind: CaptureContentKind.Image } image)
@@ -409,11 +417,15 @@ public sealed class CaptureCoordinator
         return saved;
     }
 
-    private void NoteFeedback(SavedCapture saved, bool pinFailed, bool? created = null, string? text = null)
+    private void NoteFeedback(SavedCapture saved, bool pinFailed, bool? created = null, string? text = null, bool outsideSession = false)
     {
         if (pinFailed)
         {
             ShowToast(new(AppToastStyle.Warning, Strings.NoteNotPinned, saved.Destination.Title));
+        }
+        else if (outsideSession)
+        {
+            ShowToast(new(AppToastStyle.Success, Strings.SessionStillActive(Strings.SavedTo(saved.Destination.Title), Pipeline.Sessions.Current()?.Name)));
         }
         else if (created is { } made && text is not null)
         {
@@ -428,7 +440,7 @@ public sealed class CaptureCoordinator
 
     // Notes and subheadings.
     public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false,
-        bool newNote = false)
+        bool newNote = false, bool outsideSession = false)
     {
         if (IsTerminating) { return null; }
         Pipeline.Drafts.Store(rawText, pinOnSave);
@@ -450,9 +462,11 @@ public sealed class CaptureCoordinator
             var sameText = job.NoteDraft is { } draft
                 ? CaptureFormat.NoteBody(draft) == text
                 : job.Prepared.Capture.Content == CaptureContent.Note(text);
-            if (sameText && (destination is null || job.Prepared.Destination == destination))
+            if (sameText)
             {
-                if (newNote && job.Prepared.CreatesNote != true)
+                if (job.NoteOutsideSession != outsideSession ||
+                    destination is not null && job.Prepared.Destination != destination ||
+                    newNote && job.Prepared.CreatesNote != true)
                 {
                     superseded[key] = job.Prepared.Capture.Id;
                     continue;
@@ -470,7 +484,7 @@ public sealed class CaptureCoordinator
             lock (gate) { preparedJobs.Remove(key); }
         }
 
-        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote));
+        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote, outsideSession: outsideSession));
         var prepared = (await preparation.ConfigureAwait(false)).Prepared;
         var noteId = prepared.Capture.Id;
         Task<SavedCapture> task;
@@ -484,7 +498,7 @@ public sealed class CaptureCoordinator
                 var job = await preparation.ConfigureAwait(false);
                 Pipeline.Journal.Store(job);
                 await TryWait(previous).ConfigureAwait(false);
-                return CommitJob(job, pinOnSave, text);
+                return CommitJob(job, pinOnSave, text, outsideSession);
             });
             commitTail = task;
             generation = ++commitGeneration;

@@ -46,6 +46,8 @@ internal sealed partial class AppController
         {
             [HotkeyAction.CaptureSelection] = () => { var context = FrontmostContext.Capture(); dispatcher.BeginInvoke(() => Capture(CaptureTrigger.Selection, true, context)); },
             [HotkeyAction.CaptureArea] = () => { var context = FrontmostContext.Capture(); dispatcher.BeginInvoke(() => Capture(CaptureTrigger.Region, true, context)); },
+            [HotkeyAction.CaptureSelectionOutsideSession] = () => { var context = FrontmostContext.Capture(); dispatcher.BeginInvoke(() => Capture(CaptureTrigger.Selection, true, context, outsideSession: true)); },
+            [HotkeyAction.CaptureAreaOutsideSession] = () => { var context = FrontmostContext.Capture(); dispatcher.BeginInvoke(() => Capture(CaptureTrigger.Region, true, context, outsideSession: true)); },
             [HotkeyAction.SearchNotes] = () => dispatcher.BeginInvoke(OpenSearch),
             [HotkeyAction.ToggleSession] = () => dispatcher.BeginInvoke(ToggleSession),
             [HotkeyAction.WriteNote] = () => dispatcher.BeginInvoke(OpenNoteEditor),
@@ -115,9 +117,10 @@ internal sealed partial class AppController
                 HotkeyAction.ToggleSession => MenuIds.Session,
                 HotkeyAction.WriteNote => MenuIds.WriteNote,
                 HotkeyAction.AddSubheading => MenuIds.AddSubheading,
-                _ => MenuIds.OpenFolder
+                HotkeyAction.OpenNotesFolder => MenuIds.OpenFolder,
+                _ => null
             };
-            bindings[id] = "";
+            if (id is not null) bindings[id] = "";
         }
 
         return new MenuState(Setup.ConsentAnswered, Setup.AttentionCount, Coordinator?.ActiveSession?.Name, bindings, failures.Count,

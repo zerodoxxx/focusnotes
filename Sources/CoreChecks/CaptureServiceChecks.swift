@@ -155,7 +155,96 @@ func checkCaptureService() async throws {
     let parsedRetry = NoteParser.parse(contents: retryText, notePath: "Retry Destination.md", titleFallback: "", calendar: calendar)
     try require(parsedRetry.blocks.first?.createdAt == now, "retry must preserve the original timestamp")
     try await checkDirectCaptureMethodsRejectLinks(base: base, calendar: calendar, now: now, png: png)
+    try await checkOutsideSessionWrites(base: base, calendar: calendar, now: now, png: png)
     print("CaptureService checks passed (including fixed-destination, idempotent retries).")
+}
+
+private func checkOutsideSessionWrites(base: URL, calendar: Calendar, now: Date, png: Data) async throws {
+    let state = base.appendingPathComponent("OutsideSessionState", isDirectory: true)
+    let home = base.appendingPathComponent("OutsideSessionHome", isDirectory: true)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    let vault = Vault(root: home.appendingPathComponent("Vault", isDirectory: true),
+                      externalNoteRegistryURL: state.appendingPathComponent("external-notes.json"),
+                      homeDirectoryURL: home)
+    try vault.prepare()
+    let sessions = SessionStore(stateDirectory: state, vault: vault, calendar: calendar, now: { now })
+    let service = CaptureService(vault: vault, sessions: sessions,
+                                 writer: NoteWriter(vault: vault, calendar: calendar), now: { now })
+    _ = try await sessions.start(name: "Thermo")
+    let active = await sessions.current()
+    let sessionURL = vault.sessionsURL.appendingPathComponent("Thermo.md")
+    let originalSession = try checkRead(sessionURL)
+    let originalSessionState = try Data(contentsOf: state.appendingPathComponent("session.json"))
+    func typed(_ name: String, _ body: String) -> Capture {
+        Capture(id: UUID(), createdAt: now, content: .note("\(name)\n\n\(body)"), source: CaptureSource())
+    }
+
+    // A one-off typed write uses the same exact-path rules as a standalone note.
+    for name in ["Biology", "science/Biology", "/Desktop/Biology"] {
+        let first = try await service.prepareNote(typed(name, "outside first"), outsideSession: true, calendar: calendar)
+        let expected = try vault.resolveNoteName(name)
+        try require(first.destination.url == expected.url && first.createsNote == true,
+                    "detached typed note must create its exact path: \(name)")
+        _ = try await service.save(first)
+        let second = try await service.prepareNote(typed(name, "outside append"), outsideSession: true, calendar: calendar)
+        try require(second.destination.url == first.destination.url && second.createsNote != true,
+                    "detached typed note must append to an existing path: \(name)")
+        _ = try await service.save(second)
+        let text = try checkRead(first.destination.url)
+        try require(text.contains("outside first") && text.contains("outside append"),
+                    "detached append must retain both typed bodies: \(name)")
+    }
+    let numbered = try await service.prepareNote(typed("science/Biology", "separate note"), newNote: true,
+                                                outsideSession: true, calendar: calendar)
+    try require(numbered.destination.url == vault.root.appendingPathComponent("science/Biology 2.md"),
+                "detached Save as New Note must number the leaf within its folder")
+    _ = try await service.save(numbered)
+
+    let inbox = try await service.prepareNote(typed("Inbox", "typed Inbox"), outsideSession: true, calendar: calendar)
+    try require(inbox.destination.kind == .inbox, "detached typed Inbox must append to Inbox")
+    _ = try await service.save(inbox)
+    let browse = Destination(url: vault.root.appendingPathComponent("Biology.md"), title: "Biology", kind: .note)
+    let browsedCapture = typed("Ignored title", "Browse body")
+    let browsed = try await service.prepareNote(browsedCapture, destination: browse, newNote: true,
+                                               outsideSession: true, calendar: calendar)
+    try require(browsed.destination == browse && browsed.capture == browsedCapture,
+                "Browse must retain its destination and full body while detached")
+    _ = try await service.save(browsed)
+
+    // Both choosing a title and cancelling the immediate picker resolve before saving.
+    for title in ["Biology", "science/Capture", Vault.inboxTitle] {
+        let capture = Capture(id: UUID(), createdAt: now, content: .text("outside selection \(title)"), source: CaptureSource())
+        let prepared = try await service.prepare(capture, noteTitle: title)
+        try require(prepared.destination.kind != .session, "chosen outside capture must not inherit the session")
+        _ = try await service.save(prepared)
+        _ = try await service.save(prepared)
+        let text = try checkRead(prepared.destination.url)
+        try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+                    "outside capture replay must keep its destination without duplicating the block")
+    }
+    let region = try await service.saveImage(png: png, source: CaptureSource(), noteTitle: "science/Capture")
+    let regionText = try checkRead(region.destination.url)
+    try require(region.destination.url == vault.root.appendingPathComponent("science/Capture.md") &&
+                regionText.contains("![](../assets/"), "outside region must link to its asset from the chosen folder")
+    let cancelledRegion = try await service.saveImage(png: png, source: CaptureSource(), noteTitle: Vault.inboxTitle)
+    try require(cancelledRegion.destination.kind == .inbox, "cancelled outside region picker must save to Inbox")
+
+    let afterOutside = await sessions.current()
+    let sessionAfterOutside = try checkRead(sessionURL)
+    let stateAfterOutside = try Data(contentsOf: state.appendingPathComponent("session.json"))
+    try require(afterOutside == active && sessionAfterOutside == originalSession && stateAfterOutside == originalSessionState,
+                "one-off writes must leave the active session, its persisted state, and note untouched")
+    let normalNote = try await service.prepareNote(typed("Ignored", "back in session"), calendar: calendar)
+    try require(normalNote.destination.url == sessionURL && normalNote.destination.kind == .session,
+                "the next ordinary typed note must return to the session")
+    _ = try await service.save(normalNote)
+    let normalCapture = try await service.saveText("normal selection", source: CaptureSource(), noteTitle: nil)
+    try require(normalCapture.destination.url == sessionURL, "the next ordinary capture must return to the session")
+
+    try await sessions.end()
+    let withoutSession = try await service.prepare(Capture(id: UUID(), createdAt: now, content: .text("no session picker"),
+                                                          source: CaptureSource()), noteTitle: Vault.inboxTitle)
+    try require(withoutSession.destination.kind == .inbox, "outside capture cancellation must also work without a session")
 }
 
 private func checkCaptureRoutingUnavailableVaultCases(base: URL) throws {

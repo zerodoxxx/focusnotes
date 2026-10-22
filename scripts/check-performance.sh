@@ -12,11 +12,18 @@ export FOCUSNOTES_PERF_GATES=1
 
 case "$(uname -s)" in
   Darwin)
-    swift run CoreChecks --performance-only
+    swift_args=(run)
+    if [[ "${FOCUSNOTES_LOCAL_ALREADY_BUILT:-}" == "1" ]]; then swift_args+=(--skip-build); fi
+    swift "${swift_args[@]}" CoreChecks --performance-only
     ;;
   MINGW*|MSYS*|CYGWIN*)
     cd windows
-    dotnet restore CaptureApp.sln --locked-mode
+    test_args=(test CaptureApp.sln -c Release --no-restore)
+    if [[ "${FOCUSNOTES_LOCAL_ALREADY_BUILT:-}" == "1" ]]; then
+      test_args+=(--no-build)
+    else
+      dotnet restore CaptureApp.sln --locked-mode
+    fi
     filter='Category=Perf'
     if [[ "${CAPTUREAPP_RUN_INTERACTIVE_TESTS:-}" == "1" ]]; then
       filter+='|FullyQualifiedName~I_ThousandCapturesRestoreByteIdenticalFormatsAndReportHoldTimes'
@@ -24,7 +31,7 @@ case "$(uname -s)" in
       echo "Clipboard hold-time benchmark skipped; set CAPTUREAPP_RUN_INTERACTIVE_TESTS=1 on an interactive desktop to include it."
     fi
     export CAPTUREAPP_REQUIRE_OCR_MODELS=1
-    dotnet test CaptureApp.sln -c Release --no-restore -m:1 --filter "$filter" --logger 'console;verbosity=detailed'
+    dotnet "${test_args[@]}" -m:1 --filter "$filter" --logger 'console;verbosity=detailed'
     ;;
   *)
     echo "Local performance gates require macOS or Windows." >&2
