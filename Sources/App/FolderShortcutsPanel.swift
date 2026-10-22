@@ -181,10 +181,12 @@ final class FolderShortcutsPanel: NSObject, NSWindowDelegate {
         errorLabel.stringValue = ""
         onRecordingChanged(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, self.recording != nil else { return event }
-                return self.receive(event)
+            // NSEvent isn't Sendable, so only a Bool crosses the isolation boundary.
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.recording != nil else { return false }
+                return self.receive(event) == nil
             }
+            return consumed ? nil : event
         }
         if monitor == nil {
             stopRecording()
