@@ -9,6 +9,7 @@ public sealed class TypedNote
     public NotePathNameError? PathNameError { get; }
     public string Title { get; }
     public string Body { get; }
+    public bool IsGeneratedTitle { get; }
 
     public TypedNote(string markdown, DateTimeOffset createdAt, TimeZoneInfo timeZone, VaultNamingRules? namingRules = null)
     {
@@ -16,6 +17,7 @@ public sealed class TypedNote
         var without = Regex.Replace(markdown, @"<!--[\s\S]*?(?:-->|$)", "");
         var first = Regex.Split(without, @"[\r\n\u000B\u000C\u0085\u2028\u2029]").FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
         var stripped = Strip(first);
+        IsGeneratedTitle = stripped.Length == 0;
         var extracted = stripped.Length == 0 ? "Note " + CaptureFormat.LocalStamp(createdAt, "yyyy-MM-dd HH.mm", timeZone) : stripped;
         NotePathName? parsed = null;
         NotePathNameError? error = null;

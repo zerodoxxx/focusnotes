@@ -75,17 +75,17 @@ internal sealed class ProbeWindow : Forms.Form
             await Probe("RegisterHotKey / WM_HOTKEY", async () =>
             {
                 hotKey = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                if (!Native.RegisterHotKey(Handle, 1, 0x4000 | 0x0001 | 0x0002 | 0x0004, 0x51))
+                if (!Native.RegisterHotKey(Handle, 1, 0x4000 | 0x0001 | 0x0004, 0x51))
                 {
                     return (false, $"RegisterHotKey error {Marshal.GetLastWin32Error()}");
                 }
 
                 try
                 {
-                    var sent = Native.SendCombo(0x51, 0x11, 0x12, 0x10);
+                    var sent = Native.SendCombo(0x51, 0x12, 0x10);
                     var completed = await Task.WhenAny(hotKey.Task, Task.Delay(TimeSpan.FromSeconds(2)));
                     return (sent && completed == hotKey.Task,
-                        $"Ctrl+Alt+Shift+Q; SendInput={sent}; WM_HOTKEY={hotKey.Task.IsCompletedSuccessfully} within 2 s");
+                        $"Alt+Shift+Q; SendInput={sent}; WM_HOTKEY={hotKey.Task.IsCompletedSuccessfully} within 2 s");
                 }
                 finally
                 {

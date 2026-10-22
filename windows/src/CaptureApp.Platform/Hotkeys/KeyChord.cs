@@ -181,16 +181,18 @@ public readonly record struct KeyChord
 
 public static class HotkeyDefaults
 {
+    public const HotkeyModifiers Modifiers = HotkeyModifiers.Alt | HotkeyModifiers.Shift;
+
     private static readonly IReadOnlyDictionary<HotkeyAction, KeyChord> Defaults = new ReadOnlyDictionary<HotkeyAction, KeyChord>(
         new Dictionary<HotkeyAction, KeyChord>
         {
-            [HotkeyAction.CaptureSelection] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'Q'),
-            [HotkeyAction.CaptureArea] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'G'),
-            [HotkeyAction.SearchNotes] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'F'),
-            [HotkeyAction.ToggleSession] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'A'),
-            [HotkeyAction.WriteNote] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'W'),
-            [HotkeyAction.AddSubheading] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'H'),
-            [HotkeyAction.OpenNotesFolder] = new(HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 'E')
+            [HotkeyAction.CaptureSelection] = new(Modifiers, 'Q'),
+            [HotkeyAction.CaptureArea] = new(Modifiers, 'G'),
+            [HotkeyAction.SearchNotes] = new(Modifiers, 'F'),
+            [HotkeyAction.ToggleSession] = new(Modifiers, 'A'),
+            [HotkeyAction.WriteNote] = new(Modifiers, 'W'),
+            [HotkeyAction.AddSubheading] = new(Modifiers, 'H'),
+            [HotkeyAction.OpenNotesFolder] = new(Modifiers, 'E')
         });
 
     public static IReadOnlyDictionary<HotkeyAction, KeyChord> All => Defaults;
