@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-20 (previous commit: `82f3696`)
+Last Updated: 2026-10-22 (previous commit: `62ccd67`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -189,29 +189,33 @@ existing users are offered the update.
 
 ## Windows release prerequisites
 
-The Windows edition is implemented, but Windows installers are not part of the currently published releases. The
-public [v0.1.1](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1) and
-[v0.1.0](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.0) releases contain macOS DMGs and checksums,
-with no Windows assets. The macOS release above is unchanged and does not wait on Windows prerequisites. Windows
-files are attached only when every prerequisite below is configured; otherwise `windows-gate` skips those assets and
-the macOS release proceeds. Unsigned Windows builds exist only as short-lived CI workflow artifacts and are never
-attached to a release or served by the updater.
+The Windows edition is implemented, but the currently published [v0.1.1](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1)
+and [v0.1.0](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.0) releases contain macOS DMGs and checksums,
+with no Windows assets. The release workflow now builds both Windows architectures on every release push, whether or
+not Authenticode signing is configured. Without it, Windows installers are unsigned; SmartScreen may warn and Smart
+App Control may block the app when it cannot confirm the app is safe. Do not disable Windows protections to install
+focusnotes. See the [README](../README.md#windows-install-notes) for the user-facing limitation.
+
+Windows update signing is still required independently of Authenticode. The gate fails if the committed public key
+set or the `WINDOWS_UPDATE_ED_KEY_1` private secret is missing. The release job signs each update index with K1 and
+verifies it against the public keys before attaching the Windows assets to the same draft as the macOS build.
 
 Setting up these prerequisites is a maintainer task; agents never handle the secrets.
 
 | Item | Kind | Purpose |
 | --- | --- | --- |
-| `SIGNPATH_API_TOKEN` | Secret | Lets the signing step reach SignPath. Exported to the Pack step as an environment variable. |
-| `WINDOWS_SIGN_TEMPLATE` | Secret | The `vpk --signTemplate` command line that signs `Setup.exe` and the app binaries. It must read the token from the environment (for example `%SIGNPATH_API_TOKEN%`), never inline. |
 | `WINDOWS_UPDATE_ED_KEY_1` | Secret | Private half of update key K1, used by the Mac release job to sign each `releases.win-*.json`. |
-| `WINDOWS_SIGNER_THUMBPRINTS` | Repository variable | Comma-separated thumbprints of the certificates that may sign our own binaries; the signing inventory fails on any other signer. |
 | `WINDOWS_UPDATE_ED_KEYS` | `Config/app.env` | Public keys the app trusts, as `<keyId>:<base64>` entries. Committed. |
+| `SIGNPATH_API_TOKEN` | Optional secret | Used only when enabling Authenticode signing. |
+| `WINDOWS_SIGN_TEMPLATE` | Optional secret | The `vpk --signTemplate` command line. It must read the token from the environment (for example `%SIGNPATH_API_TOKEN%`), never inline. |
+| `WINDOWS_SIGNER_THUMBPRINTS` | Optional repository variable | Comma-separated expected signer thumbprints; required with the two optional signing secrets to enforce the signing inventory. |
 
-The gate enables Windows assets only when `SIGNPATH_API_TOKEN` and `WINDOWS_SIGN_TEMPLATE` are both set. If they are
-set but `WINDOWS_UPDATE_ED_KEYS` is empty or `WINDOWS_UPDATE_ED_KEY_1` is missing, the release run fails rather than
-shipping Windows files that cannot be updated.
+Leave all three optional Authenticode settings unset to build and release unsigned Windows installers. If any one is
+set, all three must be set; an incomplete signing configuration fails the gate instead of falling back to unsigned.
+`WINDOWS_UPDATE_ED_KEYS` and `WINDOWS_UPDATE_ED_KEY_1` remain required in either mode. The Windows signing inventory
+is enforced when Authenticode is configured and report-only in unsigned mode.
 
-### Applying for SignPath Foundation signing
+### Optional SignPath Foundation signing
 
 SignPath Foundation offers a free OSS subscription, but approval is discretionary. Its published requirements include
 an OSI-approved license without commercial dual licensing, no proprietary components, active maintenance, documented
@@ -245,7 +249,7 @@ guides. The Windows Ed25519 update-index keys above are separate from Authentico
 ### Windows update keys (K1 and K2)
 
 The Windows update index is signed with Ed25519 keys that are separate from the Sparkle key, so a Mac key compromise
-cannot extend to Windows. Every signed Windows build trusts two keys from the start: an online key (K1) and an offline
+cannot extend to Windows. Every Windows build trusts two keys from the start: an online key (K1) and an offline
 standby (K2).
 
 ```sh
@@ -277,21 +281,24 @@ Authenticode certificate renewals do not affect updates, because the app trusts 
 
 For each of `win-x64` and `win-arm64`, the Windows matrix packs `<app name>-win-<arch>-Setup.exe`, the full and delta
 `.nupkg` files, `releases.win-<arch>.json` and `assets.win-<arch>.json`. The Mac `release` job downloads them, rejects
-duplicate asset names across architectures, signs each `releases.win-*.json` (writing the `.sig` beside it), adds all
-Windows files to `SHA256SUMS.txt`, attests the DMG and every `*-win-*` asset, and uploads everything to the same draft release.
+duplicate asset names across architectures, signs and verifies each `releases.win-*.json` (writing the `.sig` beside
+it), adds all Windows files to `SHA256SUMS.txt`, attests the DMG and Windows binaries, and uploads everything to the
+same draft release. This artifact flow runs whether or not Authenticode signing is configured.
 
 ### Signing inventory
 
-Before upload, `windows/scripts/signing-inventory.ps1 -Enforce` installs each architecture's `Setup.exe`, then lists
-every `.exe` and `.dll` in the installed layout and in every shipped installer artifact and writes
-`signing-inventory-<arch>.json` (path, SHA-256, signer, chain). Every file must be one of:
+Before upload, `windows/scripts/signing-inventory.ps1` installs each architecture's `Setup.exe`, then lists every
+`.exe` and `.dll` in the installed layout and in every shipped installer artifact and writes
+`signing-inventory-<arch>.json` (path, SHA-256, signer, chain). In enforced mode, every file must be one of:
 
 1. **Ours**, signed by a certificate whose thumbprint is in `WINDOWS_SIGNER_THUMBPRINTS`.
 2. **Vendor-signed** with a Trusted Root chain.
 3. **An unmodified upstream binary** whose hash is on `windows/scripts/upstream-allowlist.json`.
 
-Anything else fails the release. When a dependency update changes an allow-listed binary, review it and update the
-allow-list in the same PR. The report-only mode (no `-Enforce`) runs in `checks.yml` on every PR.
+When Authenticode signing is configured, the workflow passes `-Enforce`; anything else fails the release. With no
+Authenticode configuration, the inventory runs report-only and unsigned FocusNotes binaries are expected. When a
+dependency update changes an allow-listed binary, review it and update the allow-list in the same PR. Report-only mode
+also runs in `checks.yml` on every PR.
 
 ## Rollback
 
@@ -319,7 +326,7 @@ uses `ubuntu-latest` to prepare a version branch and PR, then builds on
   draft release. A failed run removes only its own tag when no release exists
   for it; existing releases and tags are left untouched.
 
-Secrets used by `release.yml`:
+Secrets and Windows signing settings used by `release.yml`:
 
 | Secret | Purpose |
 | --- | --- |
@@ -327,11 +334,12 @@ Secrets used by `release.yml`:
 | `SIGNING_P12_PASSWORD` | Password for the `.p12` |
 | `SIGNING_KEYCHAIN_PASSWORD` | Password for the CI keychain |
 | `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key for `appcast.xml` |
-| `SIGNPATH_API_TOKEN`, `WINDOWS_SIGN_TEMPLATE`, `WINDOWS_UPDATE_ED_KEY_1` | Windows signing and update-index signing; see [Windows release prerequisites](#windows-release-prerequisites). Optional: without the first two, Windows assets are skipped. |
+| `WINDOWS_UPDATE_ED_KEY_1` | Required Windows update-index signing key; see [Windows release prerequisites](#windows-release-prerequisites). |
+| `SIGNPATH_API_TOKEN`, `WINDOWS_SIGN_TEMPLATE`, `WINDOWS_SIGNER_THUMBPRINTS` | Optional Authenticode signing configuration. Set all three to sign and enforce the inventory, or leave all three unset for unsigned installers. |
 
 The maintainer still smoke-tests the draft and publishes it manually.
 
-The repository variable `WINDOWS_SIGNER_THUMBPRINTS` is also read by the Windows signing inventory.
+The repository variable `WINDOWS_SIGNER_THUMBPRINTS` is read by the Windows signing inventory when Authenticode signing is configured.
 
 ### `release.sh` environment variables
 

@@ -1,6 +1,6 @@
 # Release review checklist
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-22 (previous commit: `62ccd67`)
 
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
@@ -100,27 +100,30 @@ results above do not replace them. See [releasing.md](releasing.md).
 
 ## Windows distribution status
 
-The Windows edition is implemented, but Windows installers are not part of the currently published releases.
-Nothing here is closed; do not attach Windows files to a release until every item below is checked. macOS items above
-are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the setup behind these items.
+The Windows edition is implemented, but Windows installers are not part of the currently published releases. The
+release workflow now attaches Windows assets to the draft automatically; use this checklist to review them before
+publishing. macOS items above are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the
+release setup.
 
-- [ ] Code signing: a SignPath (or fallback) certificate chains to a Trusted Root Program CA; `SIGNPATH_API_TOKEN`,
-  `WINDOWS_SIGN_TEMPLATE` and the repository variable `WINDOWS_SIGNER_THUMBPRINTS` are set.
+- [ ] Release signing mode is understood: the workflow supports unsigned Authenticode installers with all three
+  optional signer settings unset. If signing is configured, `SIGNPATH_API_TOKEN`, `WINDOWS_SIGN_TEMPLATE` and
+  `WINDOWS_SIGNER_THUMBPRINTS` must all be set and the enforced inventory must pass; partial configuration fails.
 - [ ] Update keys: `scripts/make-windows-update-key.sh` was run for K1 and K2, `WINDOWS_UPDATE_ED_KEYS` is committed,
   K1 is the `WINDOWS_UPDATE_ED_KEY_1` secret, and K2 is backed up offline and kept out of CI.
-- [ ] The enforced signing inventory passes for x64 and arm64, with every file ours-and-signed, vendor-signed or on
-  the upstream allow-list.
-- [ ] Smart App Control run on Windows 11 x64 and arm64 in enforcement and evaluation mode: install, every feature
-  (including OCR and the semantic opt-in), an update, and uninstall all work, and the CodeIntegrity log shows no
-  event 3076 or 3077 for any file we ship.
+- [ ] The signing inventory is reviewed for x64 and arm64. In unsigned mode, record the unsigned FocusNotes files;
+  with Authenticode configured, confirm every file is ours-and-signed, vendor-signed or on the upstream allow-list.
+- [ ] On Windows 11 x64 and arm64, record Smart App Control behavior in enforcement and evaluation modes. It may
+  block unsigned files, and there is no per-app bypass; do not disable it to make the test pass. If Windows allows
+  installation, test every feature (including OCR and semantic search), update and uninstall. Confirm the README
+  describes the observed limitation and review CodeIntegrity events 3076/3077.
 - [ ] Install and update on native Windows 11 x64, Windows 11 arm64 and Windows 10 22H2 x64; the arm64 installer is
   refused on x64.
 - [ ] The device checks in the Windows section of [manual-tests.md](manual-tests.md) pass on all three targets.
 - [ ] Deviations DV1-DV11, OCR languages not covered by the bundled models, and any exception to the measured focus,
   OCR and resource gates are signed off by the maintainer.
 - [ ] `THIRD_PARTY_NOTICES.md` lists every shipped Windows component at its shipped version.
-- [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, and their release-availability
-  statements are updated in the same change that publishes Windows installers.
+- [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, including the unsigned
+  installer and Smart App Control limitations.
 
 ## Review limits
 

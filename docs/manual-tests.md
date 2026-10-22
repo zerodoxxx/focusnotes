@@ -1,5 +1,7 @@
 # CaptureKit manual checks
 
+Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+
 CaptureKit currently has no app wiring. Run these checks from a signed development
 host that calls the public APIs from its Carbon hotkey handlers. Capture
 `FrontmostContext.capture()` synchronously in each handler, before creating a
@@ -307,14 +309,18 @@ target, build and result for each item.
    stays AMD64.
 3. Run the arm64 installer on x64: it is refused.
 
-## 11c Signed builds and Smart App Control
+## 11c Release package signing and Smart App Control
 
-1. Run the signing inventory on the released artifacts and confirm every file is classified.
-2. On Windows 11 x64 and arm64 with Smart App Control in enforcement mode, then in evaluation mode: install from the
-   signed `Setup.exe`, exercise every feature including OCR and the semantic opt-in (which starts the helper), apply
-   an update, relaunch and uninstall. In Event Viewer → Microsoft → Windows → CodeIntegrity → Operational, there must
-   be no event 3076 or 3077 for any file the app ships.
-3. Confirm SmartScreen shows the publisher name for the signed installer.
+1. Run the signing inventory on the released artifacts and confirm every file is classified. Unsigned releases should
+   record the FocusNotes binaries as unsigned; when Authenticode is configured, the enforced inventory must pass.
+2. On Windows 11 x64 and arm64 with Smart App Control in enforcement mode, then in evaluation mode, record whether
+   Windows allows or blocks the unsigned installer and app. A block is an expected limitation when Windows cannot
+   confirm an unsigned file is safe; do not disable Smart App Control or try to bypass it. If installation is allowed,
+   exercise every feature including OCR and semantic search, apply an update, relaunch and uninstall. Review Event
+   Viewer → Microsoft → Windows → CodeIntegrity → Operational for events 3076 and 3077 and record the result.
+3. Check SmartScreen behavior for the unsigned installer. It may warn that the publisher is unknown; verify the file
+   came from the official release before deciding whether to run it. When Authenticode is configured, confirm the
+   publisher shown matches the configured signer.
 
 ## 11d Hardware-only
 
