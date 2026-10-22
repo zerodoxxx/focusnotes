@@ -93,12 +93,13 @@ func checkSessionRename() async throws {
 
     // A non-cooperating editor replacing the source during staging must keep
     // its own bytes and must never publish our stale snapshot at the new name.
+    // Its unlinked source descriptor fails the single-link guard with EPERM.
     do {
         _ = try await store.rename(selected, to: "Stale", beforeInstall: { _ in
             try Data("# External edit\nkeep me\n".utf8).write(to: target, options: .atomic)
         })
         throw CheckFailure.failed("replaced source snapshot was renamed")
-    } catch let error as POSIXError where error.code == .EAGAIN {}
+    } catch let error as POSIXError where error.code == .EPERM {}
     let external = try checkRead(target)
     try require(external == "# External edit\nkeep me\n" && !FileManager.default.fileExists(atPath: vault.root.appendingPathComponent("Sessions/archive/Stale.md").path),
                 "source identity changes must preserve the editor's replacement and reject stale output")
@@ -159,7 +160,11 @@ private func checkSessionRenameEdgeCases(base: URL, vault: Vault, store: Session
         _ = try await store.rename(candidate, to: "Persisted later")
         throw CheckFailure.failed("state persistence unexpectedly succeeded over a directory")
     } catch let error as CocoaError {
-        try require(error.code == .fileWriteFileExists || error.code == .fileWriteUnknown || error.code == .fileWriteNoPermission,
+        // Foundation on newer SDKs reports ENOENT when the target is a directory.
+        let missingTarget = error.code == .fileNoSuchFile &&
+            (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.domain == NSPOSIXErrorDomain &&
+            (error.userInfo[NSUnderlyingErrorKey] as? NSError)?.code == Int(ENOENT)
+        try require(error.code == .fileWriteFileExists || error.code == .fileWriteUnknown || error.code == .fileWriteNoPermission || missingTarget,
                     "state persistence must report a write error, got \(error.code)")
     }
     let current = await store.current()

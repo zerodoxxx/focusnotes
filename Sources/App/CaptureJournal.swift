@@ -2,6 +2,7 @@ import CaptureKit
 import Core
 import CryptoKit
 import Foundation
+import os
 
 struct CaptureJob: Sendable {
     let prepared: PreparedCapture
@@ -125,9 +126,22 @@ actor CaptureJournal {
         catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {}
     }
 
+    /// An undecodable intent is quarantined so it cannot block startup or captures.
     func pendingSessionRename() throws -> SessionRenameIntent? {
         guard FileManager.default.fileExists(atPath: renameIntentURL.path) else { return nil }
-        return try JSONDecoder().decode(SessionRenameIntent.self, from: Data(contentsOf: renameIntentURL))
+        let data = try Data(contentsOf: renameIntentURL)
+        do { return try JSONDecoder().decode(SessionRenameIntent.self, from: data) }
+        catch {
+            let corrupt = directory.appendingPathComponent("corrupt", isDirectory: true)
+            try FileManager.default.createDirectory(at: corrupt, withIntermediateDirectories: true)
+            let stem = renameIntentURL.deletingPathExtension().lastPathComponent
+            let target = FileManager.default.fileExists(atPath: corrupt.appendingPathComponent(stem + ".json").path)
+                ? stem + "-" + UUID().uuidString.lowercased() : stem
+            try FileManager.default.moveItem(at: renameIntentURL, to: corrupt.appendingPathComponent(target + ".json"))
+            Logger(subsystem: AppInfo.bundleIdentifier, category: "journal")
+                .error("Corrupt session rename intent quarantined (\(AppErrorLog.summary(error), privacy: .public))")
+            return nil
+        }
     }
 
     func finishSessionRename(_ intent: SessionRenameIntent, vault: Vault) throws {
@@ -139,7 +153,8 @@ actor CaptureJournal {
         for id in intent.captureIDs {
             let url = directory.appendingPathComponent(Self.key(for: id) + ".json")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: url))
+            // Replay quarantines an undecodable record; it must not block recovery at startup.
+            guard let record = try? JSONDecoder().decode(Record.self, from: Data(contentsOf: url)) else { continue }
             guard let destination = redirects[Self.key(for: record.prepared.capture.id)] else { continue }
             let updated = Record(prepared: replacingDestination(record.prepared, with: destination),
                                  hasPNG: record.hasPNG, ocr: record.ocr, noteDraft: record.noteDraft)
