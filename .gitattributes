@@ -1,3 +1,7 @@
 # Hash-pinned text files must keep their exact bytes on every checkout (Windows CI uses core.autocrlf).
 licenses/*.txt -text
 conformance/** -text
+
+# Git executes versioned hooks through their shebangs on every development host.
+*.sh text eol=lf
+.githooks/* text eol=lf

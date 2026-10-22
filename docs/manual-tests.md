@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+Last Updated: 2026-10-22 (previous commit: `77592ee`)
 
 CaptureKit currently has no app wiring. Run these checks from a signed development
 host that calls the public APIs from its Carbon hotkey handlers. Capture
@@ -145,6 +145,51 @@ Use a temporary vault and a disposable test folder under your home directory.
    Markdown sibling there, and churn an unrelated HOME subtree. Confirm the
    registered replacement is reindexed, while neither the sibling nor unrelated
    HOME files are indexed or reported as note changes.
+
+# One-off notes and captures outside a session
+
+Use a disposable vault. On Windows, use Ctrl in place of ⌘ for editor actions and
+Ctrl+Shift+Q / Ctrl+Shift+G for the outside-session selection / area captures.
+
+1. Start `Thermo`, open a quick note, and choose **Write outside session** in Actions
+   or press ⇧⌘N. Enter `Biology` and distinctive body text, then save. Confirm
+   `Biology.md` is created, the Thermo note is unchanged, the toast names Biology
+   and says Thermo is still active, and the next normal capture and quick note
+   append to Thermo. Repeat with existing `Biology.md`, `science/Biology`, `Inbox`,
+   and a disposable `/Desktop/focusnotes-path-check/Biology` home path; existing
+   targets append and missing folders are created.
+2. With the detached editor open, toggle ⇧⌘N again: the title and destination
+   return to Thermo without clearing the text. Repeat using ⌘N on a blank editor.
+   Close a detached draft and reopen: text remains, but the destination is Thermo.
+   End the session: the outside-session action is hidden or disabled.
+3. In a detached note, choose an existing target using Browse and confirm the
+   save appends there. Try Save as New Note with an existing typed path: a
+   numbered sibling is created. Set pin-on-save on an unsaved detached draft and
+   confirm the saved target, rather than Thermo, appears in Pinned.
+4. With Thermo active, select text in another app and press ⌃⇧C. Confirm the
+   note picker opens immediately. Choose `Biology`; confirm only that note changes.
+   Repeat with ⌃⇧S and a screen region; confirm the image, OCR text, and relative
+   asset link work in the chosen note. Repeat both captures and press Escape in
+   the note picker: each saves to Inbox, leaves Thermo unchanged, and keeps the
+   session active. Repeat without a session. A normal capture's toast re-press
+   must still open its existing destination picker.
+   Repeat with a session named `Inbox` and with a separate `science/Inbox.md` note:
+   Escape must always save to the vault's root `Inbox.md`, leaving those notes unchanged.
+5. Occupy either new capture chord with another app or a test host before
+   registration. Confirm the existing unavailable-shortcuts warning appears,
+   then use **Capture Selection Outside Session…** and **Capture Area Outside Session…**
+   from the menu bar or Windows tray menu. Both must still open the destination picker.
+   Release the chord and use Retry Shortcuts. Both new shortcuts should work.
+   On Windows, rebind both under Settings → Shortcuts and confirm the displayed
+   combinations and menu labels follow the saved bindings. Turn the shortcuts off
+   and repeat both tray commands; selection must still capture the original application's text.
+6. **Windows upgrade:** In a disposable profile from the previous version, bind Search to
+   Ctrl+Shift+Q and Session to Ctrl+Shift+G. Upgrade and confirm both actions keep those
+   bindings; the new captures get distinct alternatives shown in Settings and the tray menu.
+   Repeat with Quick Note bound to Ctrl+Shift+N and another customized shortcut. Confirm
+   only the now-reserved combination gets a replacement, Settings explains it, and changing
+   either shortcut works without resetting the others. Restart after saving and confirm
+   the chosen bindings and unrelated settings remain intact.
 
 # Quick note panel (⌥⇧N)
 
@@ -356,5 +401,3 @@ captures.
 
 The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
-
-Last Updated: 2026-10-22 (previous commit: `3c96523`)

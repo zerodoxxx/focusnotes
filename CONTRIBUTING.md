@@ -1,6 +1,6 @@
 # Contributing
 
-Last Updated: 2026-10-22 (previous commit: `f5794e4`)
+Last Updated: 2026-10-22 (previous commit: `d78e2fd`)
 
 Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
@@ -32,23 +32,48 @@ bash scripts/test-app-path-safety.sh
 
 The checks do not require Accessibility or Screen Recording permissions. For changes to capture behavior that depend on macOS privacy permissions or focus handling, also consult the manual steps in [`docs/manual-tests.md`](docs/manual-tests.md) and describe what you verified. `scripts/build-app.sh` builds the app bundle without installing or launching it.
 
-Elapsed performance measurements are diagnostic in CI on both platforms: shared runners vary in CPU, storage and scheduling. CI sets `FOCUSNOTES_PERF_GATES=0` and keeps workload correctness, OCR quality, cancellation and deadline outcomes covered, with generous timeouts to catch hangs. The original benchmark speed thresholds are enabled only by the explicit local opt-in `FOCUSNOTES_PERF_GATES=1`.
+Routine CI runs functional checks without performance workloads. Full CI also records performance measurements, with `FOCUSNOTES_PERF_GATES=0` because shared runners vary in CPU, storage and scheduling. Local pre-push checks enforce the original speed thresholds on your own machine with `FOCUSNOTES_PERF_GATES=1`.
 
-Install the local pre-push checks once per clone (also applies to its worktrees):
+Install the local hooks once per clone (also applies to its worktrees), using Git Bash on Windows:
 
 ```sh
-scripts/install-hooks.sh
+bash scripts/install-hooks.sh
 ```
 
-The installer uses the versioned `.githooks/pre-push` hook and preserves existing custom hooks/settings, explaining how to integrate manually if needed. Commits stay quick; each local push runs `scripts/check-performance.sh` before updating remote refs. You can run that script directly without pushing. On macOS it runs only the Swift large-vault index benchmark; on Windows (Git Bash) it runs the .NET index and OCR performance workloads. The Windows clipboard hold-time benchmark is included when `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` is set on an interactive desktop; otherwise the script reports that it is skipped. The script enforces the original index limits (cold sync 6 s on macOS, 18 s on Windows; no-change sync 400 ms; search 40 ms), Windows OCR limits (first call 3 s and warm p95 1.5 s), and interactive clipboard restore p99 10 ms. Compare failures on a consistent local machine; these limits do not apply to CI. Product deadlines and behavior tests remain active in CI.
+The installer uses the versioned `.githooks` directory and preserves existing custom hooks/settings, explaining how to integrate manually if needed.
+
+- **Pre-commit:** checks staged changes for whitespace errors. It does not build or run tests.
+- **Pre-push:** checks the complete range of branch commits being pushed. Documentation-only changes, tag/deletion pushes, and changes limited to the other platform skip native checks. Relevant source changes run the hook and CI-selector regression checks, then the host's build, functional tests, and local performance checks once. The tested tip must be the checked-out commit, with no tracked local changes or untracked build inputs; unrelated scratch files are allowed.
+- **Manual checks:** `bash scripts/check-local.sh` runs the host's complete local checks, including speed gates; `bash scripts/check-performance.sh` runs only the speed gates. Hooks do not download semantic models. Install them explicitly when testing semantic-search changes; missing optional model or desktop capabilities are reported as skips.
+
+On macOS, local checks build Swift targets and run core, capture, overlay, model-install and embedding checks, plus path-safety checks. The functional `CoreChecks --skip-performance` invocation leaves the benchmark to the separate performance step. On Windows, they restore locked dependencies, build Release with warnings as errors, and run functional tests serially. The separate performance step reuses that build for the .NET index and bundled OCR workloads. Set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` on an interactive desktop to include clipboard hold-time checks.
+
+Windows filesystem safety tests require permission to create symbolic links. A missing privilege fails by default. For a local account without that privilege, explicitly set `CAPTUREAPP_ALLOW_MISSING_SYMLINK_PRIVILEGE=1` before running checks or pushing. Only fixtures that encounter Windows error 1314 (`ERROR_PRIVILEGE_NOT_HELD`) are then reported as skipped; other errors still fail. The opt-in is ignored when `CI` or `GITHUB_ACTIONS` is set, so native CI continues to exercise these safety fixtures. Keep the local hooks enabled and record any skipped coverage in the PR.
+
+The performance script enforces the original index limits (cold sync 6 s on macOS, 18 s on Windows; no-change sync 400 ms; search 40 ms), Windows OCR limits (first call 3 s and warm p95 1.5 s), and interactive clipboard restore p99 10 ms. Compare failures on a consistent local machine; these limits do not apply to CI. Product deadlines and behavior tests remain active.
 
 For CaptureKit changes, run `swift run CaptureChecks`. For semantic-search changes, follow the model-backed `EmbedChecks` procedure in [`docs/semantic-search.md`](docs/semantic-search.md); it uses the optional downloaded models and runtime.
 
 In a pull request, describe the behavior changed, the checks you ran, and any manual checks that need a signed macOS host.
 
+## Choosing CI checks
+
+Local hooks handle routine validation. Remote builds and tests remain opt-in; normal pushes and PR updates do not start native runner jobs.
+
+- Add **`run-ci`** to run a lean check for the changed platforms: a macOS build and core checks, and/or one Windows x64 build and functional test run. Documentation-only changes start no native runner jobs. This profile does not download semantic models, run performance workloads, render galleries, or build installers.
+- Add **`run-ci-full`**, or select **Full checks** under **Actions → checks → Run workflow**, for the complete platform matrix: model-backed checks, performance workloads, galleries, the macOS DMG and older-OS smoke test, Windows x64/arm64, and installer/update/tamper tests. Use it for packaging, native-runtime, architecture, model, or release-readiness changes.
+- Add **`skip-ci`** to allow a PR to merge without running CI builds or tests. Two short Ubuntu jobs report success under the required `build` and `smoke-macos-15` check names and explain that native checks were intentionally omitted. The platform selector and macOS/Windows builds and tests stay skipped. Maintainer/codeowner approval and the other merge rules still apply. The label takes precedence over `run-ci` and `run-ci-full` and stays effective after new commits. Unrelated labels do not grant a bypass. Removing `skip-ci` runs short Ubuntu checks that restore the CI requirement with a failing `build` result; then add `run-ci` or `run-ci-full` to validate the PR before merging. Local hooks continue to run as usual.
+- A manual run without Full checks selects lean checks for both platforms. To repeat PR checks after another commit, remove and re-add the desired label. Adding the label is an explicit request for that run; leaving it attached does not make later pushes trigger CI. A newer requested run cancels an older run for the same PR.
+
+The required gate jobs execute even when their native checks are omitted, including lean runs that do not select macOS or the older-OS smoke test. GitHub can leave dynamic job names unevaluated on skipped jobs, so simply skipping these jobs would fail to publish the exact required check names. Ordinary updates without `skip-ci` and unrelated label events do not execute these gates or satisfy the CI requirement. Manual workflow runs and release validation remain explicitly available and are separate from PR-label selection. Use the PR labels when satisfying the PR's required check records; see [GitHub's required-check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+
+Dependency/build caches reduce repeated setup, and diagnostic artifacts have short retention. Signed release validation still runs in the release workflow. Hooks are local and can be bypassed, so platform builds and the full validation profile remain available as independent checks.
+
+GitHub's standard hosted runners are free for public repositories. The 2,000-minute GitHub Free allowance applies to private repository usage; see [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions). These changes reduce runner work and waiting time in either case; actual billed usage depends on the repository visibility and runner type.
+
 ## Windows
 
-The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). Windows installers are not part of the currently published releases. Build and test from `windows/`:
+The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). Local hooks also require Git Bash and Python 3 on `PATH`. Windows installers are not part of the currently published releases. Build and test from `windows/`:
 
 ```sh
 cd windows
@@ -66,8 +91,8 @@ semantic assets are missing.
 
 - `CaptureApp.Core`, `CaptureApp.AppCore`, `CaptureApp.Core.Tests`, `CaptureApp.AppCore.Tests`, `CaptureApp.Updates.Tests`, `CaptureApp.Embed.Tests` and `CaptureApp.Conformance.Tests` are platform neutral and run on any OS with the .NET SDK. `CaptureApp.Platform.Tests` and `CaptureApp.App.Tests` target Windows and are only built as test projects on a Windows host. Tests tagged `Needs=Windows` (file-layer behaviour such as reparse points and reserved names), `Needs=InteractiveDesktop` (hotkeys, focus, UI Automation, clipboard; also set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`) and `Needs=OcrModels` (the English OCR corpus, using the NuGet-bundled assets; set `CAPTUREAPP_REQUIRE_OCR_MODELS=1` to fail instead of skip if those assets are missing) require a Windows desktop. `Category=Perf` workloads always retain correctness assertions and report timings; run them serially with `--filter "Category=Perf" -m:1 --logger "console;verbosity=detailed"` to see the measurements. The local pre-push script also opts into their speed assertions.
 - Behaviour shared with the Mac app is specified by `conformance/scenarios`. Swift is the reference, so change the Swift behaviour first, then regenerate the expected values with `swift run CoreChecks --write-conformance` and review the diff. Never edit an `expected` block by hand. `swift run CoreChecks` and `dotnet test` must both pass against the same files. See [`conformance/README.md`](conformance/README.md).
-- CI runs the Windows build, tests, self-test and gallery check on `windows-latest` (x64) and `windows-11-arm` (arm64); packaging and update tests run in the `windows-package` job. `windows/scripts/pack.ps1 -Arch x64|arm64 -Version <ver> -OutDir <dir>` builds one architecture's installer locally on a matching Windows machine.
-- Run solution tests with `-m:1` so model inference and other test assemblies do not compete with desktop fixtures. CI gives each functional/measurement test step a 15-minute hang timeout, prints performance workload measurements, retains TRX reports in `test-results-<runner>` artifacts and runs the desktop capability probe after failures; a passing ARM64 run can include skipped desktop tests, so check the report's skipped counts when comparing architectures.
+- Lean CI runs the Windows build and functional tests on `windows-latest` (x64). Full CI adds `windows-11-arm` (arm64), model-backed and performance checks, published-app self-tests, galleries, and the `windows-package` installer/update tests. `windows/scripts/pack.ps1 -Arch x64|arm64 -Version <ver> -OutDir <dir>` builds one architecture's installer locally on a matching Windows machine.
+- Run solution tests with `-m:1` so model inference and other test assemblies do not compete with desktop fixtures. CI bounds test and job duration, retains TRX reports in `test-results-<runner>` artifacts, and provides runner capability diagnostics; a passing ARM64 run can include skipped desktop tests, so check the report's skipped counts when comparing architectures.
 
 ## Security reports
 

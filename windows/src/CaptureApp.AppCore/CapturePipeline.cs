@@ -14,7 +14,7 @@ public enum CaptureTrigger
 }
 
 public sealed record PendingCapture(Guid Id, DateTimeOffset CreatedAt, CaptureTrigger Trigger, CaptureContent Content,
-    CaptureSource Source, string Subtitle, byte[]? Png = null, string? Ocr = null);
+    CaptureSource Source, string Subtitle, byte[]? Png = null, string? Ocr = null, bool OutsideSession = false);
 
 /// Platform-neutral capture orchestration over Core's vault, writer, session, index, and watcher.
 public sealed class CapturePipeline : IDisposable
@@ -82,23 +82,23 @@ public sealed class CapturePipeline : IDisposable
     }
 
     public CaptureJob PrepareText(string text, CaptureSource source, string? noteTitle = null, string? noteDraft = null,
-        Guid? id = null, DateTimeOffset? createdAt = null)
-        => PrepareLocked(() => PrepareTextCore(text, source, noteTitle, noteDraft, id, createdAt));
+        Guid? id = null, DateTimeOffset? createdAt = null, Destination? destination = null)
+        => PrepareLocked(() => PrepareTextCore(text, source, noteTitle, noteDraft, id, createdAt, destination));
 
     private CaptureJob PrepareTextCore(string text, CaptureSource source, string? noteTitle, string? noteDraft,
-        Guid? id, DateTimeOffset? createdAt)
+        Guid? id, DateTimeOffset? createdAt, Destination? destination)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Text(text), source);
-        return new(Service.Prepare(capture, noteTitle), NoteDraft: noteDraft);
+        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), NoteDraft: noteDraft);
     }
 
     public CaptureJob PrepareImage(byte[] png, CaptureSource source, string? noteTitle = null, string? ocr = null,
-        Guid? id = null, DateTimeOffset? createdAt = null)
-        => PrepareLocked(() => PrepareImageCore(png, source, noteTitle, ocr, id, createdAt));
+        Guid? id = null, DateTimeOffset? createdAt = null, Destination? destination = null)
+        => PrepareLocked(() => PrepareImageCore(png, source, noteTitle, ocr, id, createdAt, destination));
 
     private CaptureJob PrepareImageCore(byte[] png, CaptureSource source, string? noteTitle, string? ocr,
-        Guid? id, DateTimeOffset? createdAt)
+        Guid? id, DateTimeOffset? createdAt, Destination? destination)
     {
         ThrowIfDisposed();
         var captureId = id ?? Guid.NewGuid();
@@ -106,19 +106,19 @@ public sealed class CapturePipeline : IDisposable
         var stamp = CaptureFormat.LocalStamp(created, "yyyy-MM-dd-HHmmss", TimeZone);
         var asset = $"{Vault.AssetsDirectoryName}/{stamp}-{captureId.ToString("D").ToLowerInvariant()}.png";
         var capture = new Capture(captureId, created, CaptureContent.Image(asset), source);
-        return new(Service.Prepare(capture, noteTitle), png, ocr);
+        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), png, ocr);
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,
-        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false)
-        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote));
+        string? noteDraft = null, Guid? id = null, DateTimeOffset? createdAt = null, bool newNote = false, bool outsideSession = false)
+        => PrepareLocked(() => PrepareNoteCore(markdown, source, destination, noteDraft, id, createdAt, newNote, outsideSession));
 
     private CaptureJob PrepareNoteCore(string markdown, CaptureSource source, Destination? destination,
-        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote)
+        string? noteDraft, Guid? id, DateTimeOffset? createdAt, bool newNote, bool outsideSession)
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Note(markdown), source);
-        return new(Service.PrepareNote(capture, TimeZone, destination, newNote), NoteDraft: noteDraft ?? markdown);
+        return new(Service.PrepareNote(capture, TimeZone, destination, newNote, outsideSession), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession);
     }
 
     public CaptureJob PrepareSubheading(Capture capture, Destination? destination = null) => PrepareLocked(() =>

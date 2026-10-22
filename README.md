@@ -20,7 +20,8 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
 - **Sessions.** Start a session for a topic (a course, a paper, a design review) and every capture goes to that
   topic's note until you end it. A unique existing name resumes its note; duplicate matches open a chooser,
   where ⌘↩ (Ctrl+Enter on Windows) renames and resumes the selected session. A slash-qualified name picks a
-  path under `Sessions/`. Add subheadings to start new sections.
+  path under `Sessions/`. Add subheadings to start new sections. Use **Write outside session** in a quick note,
+  or an outside-session capture shortcut, to save a one-off note elsewhere while the session stays active.
 - **Search.** Keyword search across all notes, plus optional on-device semantic search.
 - **No focus stealing.** focusnotes never activates itself; every action has a global shortcut and a toast confirms
   the save.
@@ -33,6 +34,8 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
 | --- | --- |
 | <kbd>⌥⇧C</kbd> | Capture selected text |
 | <kbd>⌥⇧S</kbd> | Capture an area of the screen |
+| <kbd>⌃⇧C</kbd> | Capture selected text outside the session; choose a note |
+| <kbd>⌃⇧S</kbd> | Capture an area outside the session; choose a note |
 | <kbd>⌥⇧N</kbd> | Write a quick note |
 | <kbd>⌥⇧F</kbd> | Search notes |
 | <kbd>⌥⇧A</kbd> | Start or end a session |
@@ -40,7 +43,14 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
 | <kbd>⌥⇧L</kbd> | Open the notes folder |
 
 In the quick note: <kbd>⌘↩</kbd> saves, <kbd>⌘K</kbd> opens actions, <kbd>⌘P</kbd> browses notes, and <kbd>esc</kbd>
-closes it and keeps your draft.
+closes it and keeps your draft. While a session is active, <kbd>⇧⌘N</kbd> toggles **Write outside session**:
+the first nonblank line names a new or existing note, including folder and `/` home paths. Browse and
+Save as New Note still work. Press it again, or <kbd>⌘N</kbd> on a blank editor, to return to the session.
+Saving or closing resets that destination; the next quick note or normal capture uses the session again.
+
+Outside-session capture shortcuts open **Add to note…** immediately, even without a session; <kbd>esc</kbd>
+saves to Inbox. For a normal capture, pressing the same shortcut again while its save toast is visible
+also opens the note picker. The active session stays running in both cases.
 
 ## Install
 
@@ -95,8 +105,8 @@ used this way are tracked for search and file updates; Focusnotes does not scan 
 Names resolve to their exact path: `foo` means the vault-root `foo.md`, even when
 `archive/foo.md` exists. To create a separate numbered note in the same folder, choose
 **Save as New Note** in Actions (⌥⌘↩ on macOS, Ctrl+Alt+Enter on Windows). The editor
-shows **Add to note** when the default save will append; sessions and Browse destinations
-take precedence over the typed name.
+shows **Add to note** when the default save will append. Browse destinations take precedence over
+the typed name; the active session does too unless **Write outside session** is selected.
 Paths into the reserved `assets/` folder and note names whose final component starts with `~$` are
 rejected.
 
@@ -166,7 +176,7 @@ installers are unsigned. Use the [Windows build instructions](CONTRIBUTING.md#wi
 
 - **Targets.** Windows 10 22H2 and Windows 11, on x64 and arm64. Each architecture gets its own installer and
   update channel.
-- **Same behaviour, Windows mechanics.** The same seven actions, sessions, search, toasts and plain-Markdown vault.
+- **Same behaviour, Windows mechanics.** The same capture and note actions, sessions, search, toasts and plain-Markdown vault.
   The vault layer is checked against the same shared fixtures as the Mac app (see [CONTRIBUTING.md](CONTRIBUTING.md)).
   Selection capture uses UI Automation, with an opt-in clipboard fallback. Area OCR runs locally with RapidOcrNet's
   bundled PP-OCRv5 Latin models; this Windows POC is English-first, with multilingual coverage deferred. OCR models
@@ -182,12 +192,15 @@ installers are unsigned. Use the [Windows build instructions](CONTRIBUTING.md#wi
 
 ### Shortcuts on Windows
 
-Windows uses Alt+Shift for global shortcuts, matching the Option+Shift modifier pair on macOS.
+Windows uses Alt+Shift for the normal global shortcuts, matching Option+Shift on macOS.
+Outside-session captures use Ctrl+Shift on both platforms.
 
 | Action | Windows | Mac |
 | --- | --- | --- |
 | Capture selected text | <kbd>Alt+Shift+Q</kbd> | <kbd>⌥⇧C</kbd> |
 | Capture an area of the screen | <kbd>Alt+Shift+G</kbd> | <kbd>⌥⇧S</kbd> |
+| Capture selected text outside the session | <kbd>Ctrl+Shift+Q</kbd> | <kbd>⌃⇧C</kbd> |
+| Capture an area outside the session | <kbd>Ctrl+Shift+G</kbd> | <kbd>⌃⇧S</kbd> |
 | Write a quick note | <kbd>Alt+Shift+W</kbd> | <kbd>⌥⇧N</kbd> |
 | Search notes | <kbd>Alt+Shift+F</kbd> | <kbd>⌥⇧F</kbd> |
 | Start or end a session | <kbd>Alt+Shift+A</kbd> | <kbd>⌥⇧A</kbd> |
@@ -196,7 +209,11 @@ Windows uses Alt+Shift for global shortcuts, matching the Option+Shift modifier 
 
 These defaults are provisional until they are tested against common apps on real devices. Rebind any of them in
 **Settings… → Shortcuts**. In the quick note, <kbd>Ctrl+Enter</kbd> saves, <kbd>Ctrl+K</kbd> opens actions,
-<kbd>Ctrl+P</kbd> browses notes and <kbd>Esc</kbd> closes it and keeps your draft.
+<kbd>Ctrl+P</kbd> browses notes, <kbd>Ctrl+Shift+N</kbd> toggles **Write outside session** while a session
+is active, and <kbd>Esc</kbd> closes it and keeps your draft. <kbd>Ctrl+N</kbd> on a blank editor returns
+to the session. Outside-session captures open the same note picker; <kbd>Esc</kbd> saves to Inbox.
+Both outside-session capture commands are also available from the tray menu, including when their shortcuts are turned off or unavailable.
+After an upgrade, existing custom shortcuts take priority over new defaults. Settings shows any replacement needed for a conflict or a combination newly reserved by the editor; use **Change…** to choose another shortcut.
 
 ### Where things live on Windows
 

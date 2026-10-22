@@ -5,7 +5,7 @@ namespace CaptureApp.Platform.Hotkeys;
 /// <summary>Detects Ctrl+Alt+Shift+letter combinations that type a character via installed AltGr layouts.</summary>
 public static class AltGrGuard
 {
-    // Stable fallback priority after the seven defaults Q, G, F, A, W, H, E.
+    // Stable Alt+Shift fallback priority after the default letters Q, G, F, A, W, H, E.
     public const string FallbackOrder = "DJKLNPRTUVXYZBCIOSM";
 
     private const uint MapVirtualKeyToScanCode = 0;

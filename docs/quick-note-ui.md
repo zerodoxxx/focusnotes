@@ -145,7 +145,9 @@ medium glyph, 3pt apart, 12pt from the card's right edge). Two groups divided by
 
 | Group | Action | Shortcut | Notes |
 | --- | --- | --- | --- |
-| 1 | New Note | ⌘N | Saves the current text, then opens a blank note. With empty text it only clears the chosen destination. |
+| 1 | New Note | ⌘N | Saves the current text, then opens a blank note. With empty text it clears the chosen destination and restores session routing. |
+| 1 | Write outside session | ⇧⌘N | Shown only with an active session. Toggles standalone routing for this note; choosing it again restores the session destination. |
+| 1 | Save as New Note | ⌥⌘↩ | Creates a numbered note when a standalone title names an existing note, including while writing outside a session. Disabled for an explicit Browse or session destination. |
 | 1 | Add to Pinned / Remove from Pinned | ⇧⌘P | Adds/removes a note in Browse’s Pinned section. This does not control the window. For an unsaved draft, the intent persists with the draft and pins its created note on save. |
 | 2 | Open as Note | ⌘O | The maximise action (see §6). |
 | 2 | Copy as Markdown | ⇧⌘C | Copies the text. |
@@ -153,6 +155,12 @@ medium glyph, 3pt apart, 12pt from the card's right edge). Two groups divided by
 
 Rows that do not apply are dimmed (40%) and skipped by the arrow keys. Browse lives in the top-right capsule;
 ⌘P still opens it from the editor and swaps Actions to Browse while the filter is focused.
+Write outside session keeps the text and active session. The title uses the resolved standalone
+note name and the footer uses the usual Create note/Add to note state; typed folder and `/` home
+paths, Browse, and pin-on-save work as for a standalone note. Saving or closing clears the transient
+choice, like a Browse destination, while closing keeps the draft text. The next quick note or ordinary
+capture returns to the session. A successful outside-session toast names the destination and the
+still-active session.
 The unsaved pin intent survives esc, ✕ and toggle-close, is consumed on save, and is cleared by
 Discard Draft or New Note resetting the destination. An existing/session destination uses its real pin state.
 Interactive saves, shutdown retries and startup journal replay share one post-commit step: apply the pin after
@@ -190,9 +198,9 @@ visible frame while preserving the note frame and card anchor when the note alre
 ## 6. Open as note (maximise)
 
 "A bigger screen" is the user's default Markdown app, in the same Obsidian-compatible
-vault: the text is saved exactly as ⌘↩ would save it (to the active session note if
-a session is running, otherwise a new note), then that note opens. With no text,
-it opens the active session note or the chosen destination; with neither, a toast
+vault: the text is saved exactly as ⌘↩ would save it (to the chosen Browse destination,
+the active session unless Write outside session is selected, or the title-derived note), then that note opens. With no text,
+it opens the chosen destination or the session note when session routing applies; with neither, a toast
 says "Nothing to open yet". An in-app note window is a possible follow-up.
 
 ## 7. Colour and type

@@ -14,6 +14,8 @@ internal sealed class ShortcutsPanel : StackPanel
     [
         (HotkeyAction.CaptureSelection, "Capture Selection"),
         (HotkeyAction.CaptureArea, "Capture Area"),
+        (HotkeyAction.CaptureSelectionOutsideSession, "Capture Selection outside session"),
+        (HotkeyAction.CaptureAreaOutsideSession, "Capture Area outside session"),
         (HotkeyAction.SearchNotes, "Search Notes"),
         (HotkeyAction.ToggleSession, "Start or End Session"),
         (HotkeyAction.WriteNote, "Quick Note"),
@@ -24,6 +26,7 @@ internal sealed class ShortcutsPanel : StackPanel
     private readonly AppController controller;
     private readonly Action changed;
     private readonly Grid grid = new();
+    private readonly TextBlock adjustments = UiKit.Secondary("");
     private readonly TextBlock message = UiKit.Secondary("");
 
     public ShortcutsPanel(AppController controller, Action changed)
@@ -35,6 +38,7 @@ internal sealed class ShortcutsPanel : StackPanel
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.8, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Children.Add(grid);
+        Children.Add(adjustments);
         Children.Add(message);
         Children.Add(UiKit.Row(
             UiKit.Button("Check again", () => { controller.RegisterHotkeys(); Refresh(); changed(); }),
@@ -48,6 +52,9 @@ internal sealed class ShortcutsPanel : StackPanel
 
     public void Refresh()
     {
+        adjustments.Text = string.Join(Environment.NewLine, controller.BindingStore.Adjustments.Select(adjustment =>
+            $"{Rows.First(row => row.Action == adjustment.Action).Label}: using {adjustment.Replacement.DisplayString} instead of {adjustment.PreviousChord.DisplayString}. {adjustment.Reason} Use Change… to choose another combination."));
+        adjustments.Visibility = adjustments.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         grid.Children.Clear();
         grid.RowDefinitions.Clear();
         var disabled = controller.Settings.DisabledShortcuts;

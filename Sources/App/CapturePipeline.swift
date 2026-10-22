@@ -95,7 +95,8 @@ struct CapturePipeline: Sendable {
         return pipeline
     }
 
-    func prepare(_ capture: PendingCapture, noteTitle: String?, destination: Destination? = nil) async throws -> CaptureJob {
+    func prepare(_ capture: PendingCapture, noteTitle: String?, destination: Destination? = nil,
+                 outsideSession: Bool = false) async throws -> CaptureJob {
         try await recoverSessionIdentity()
         let content: CaptureContent
         let png: Data?
@@ -113,13 +114,18 @@ struct CapturePipeline: Sendable {
         let value = Capture(id: capture.id, createdAt: capture.createdAt, content: content, source: capture.source)
         let prepared: PreparedCapture
         if let destination { prepared = PreparedCapture(capture: value, destination: destination) }
+        else if outsideSession, noteTitle == nil {
+            // Inbox is a fixed fallback, independent of notes or sessions named Inbox.
+            prepared = PreparedCapture(capture: value, destination: Destination(
+                url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox))
+        }
         else { prepared = try await service.prepare(value, noteTitle: noteTitle) }
         return CaptureJob(prepared: prepared, png: png, ocr: ocr, deferredOCR: capture.deferredOCR)
     }
 
-    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool) async throws -> PreparedCapture {
+    func prepareNote(_ capture: Capture, destination: Destination?, newNote: Bool, outsideSession: Bool = false) async throws -> PreparedCapture {
         try await recoverSessionIdentity()
-        return try await service.prepareNote(capture, destination: destination, newNote: newNote, calendar: calendar)
+        return try await service.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, calendar: calendar)
     }
 
     func prepareCapture(_ capture: Capture, destination: Destination?) async throws -> PreparedCapture {

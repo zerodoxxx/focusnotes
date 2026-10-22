@@ -17,9 +17,10 @@ extension AppController {
         try await checkAppReliability()
         try await checkSemanticRetryRecovery()
         try await checkNoteDraftStoreScheduling()
+        try await checkOutsideSessionWrites()
         if ProcessInfo.processInfo.environment["QUICK_NOTE_SELF_TEST"] == "1" {
             try await checkQuickNotePinPersistence()
-            return "{\"ok\":true,\"noteDraftPinPersistenceVerified\":true,\"legacyDraftMigrationVerified\":true,\"draftPinRetryVerified\":true,\"pinStorageFailureNonfatalVerified\":true,\"draftPinRecoveryVerified\":true,\"finalPinFailureToastVerified\":true,\"semanticRetryRecoveryVerified\":true}"
+            return "{\"ok\":true,\"outsideSessionWritesVerified\":true,\"noteDraftPinPersistenceVerified\":true,\"legacyDraftMigrationVerified\":true,\"draftPinRetryVerified\":true,\"pinStorageFailureNonfatalVerified\":true,\"draftPinRecoveryVerified\":true,\"finalPinFailureToastVerified\":true,\"semanticRetryRecoveryVerified\":true}"
         }
         let externalNote = pipeline.vault.root.appendingPathComponent("External Edit.md")
         guard FileManager.default.createFile(atPath: externalNote.path, contents: Data("# External Edit\n\n".utf8)) else {
@@ -187,6 +188,7 @@ extension AppController {
         try await checkCorruptJournal(png: png, context: context)
         try await checkAcquisitionShutdown(png: png, context: context)
         let summary: [String: Any] = [
+            "outsideSessionWritesVerified": true, "outsideSessionRetryRoutingVerified": true,
             "ocrBudgetImageSeconds": slowOCRSeconds, "deferredOCRSearchVerified": true, "subheadingHotkeyPathVerified": true, "noteHotkeyPathVerified": true, "noteDraftPersistenceVerified": true, "noteDraftPinPersistenceVerified": true, "independentNoteCreationVerified": true,
             "acquisitionOrderDuringOCRVerified": true, "formatExample": "FeedbackCases/Vault/Sessions/Feedback.md",
             "ok": true, "captures": hasModels ? 8 : 7, "textDestination": text.destination.title,
@@ -404,6 +406,151 @@ extension AppController {
         await semantic.stop()
     }
 
+    /// Exercise the same per-panel state and controller paths used by the outside-session commands.
+    private func checkOutsideSessionWrites() async throws {
+        let base = pipeline.vault.root.appendingPathComponent("OutsideSessionCases", isDirectory: true)
+        let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"),
+                                                  stateDirectory: base.appendingPathComponent("State"), calendar: pipeline.calendar)
+        var feedback: [Toast] = []
+        let controller = AppController(pipeline: live, presentsUI: false, onToast: { feedback.append($0) })
+        let session = try await controller.startSession(name: "Thermo")
+        let destination = try Router.destination(noteTitle: nil, activeSession: session, notes: [], vault: live.vault)
+        let initialSession = try Data(contentsOf: destination.url)
+        let state = QuickNoteState(destination: destination)
+        try live.drafts.store("science/Biology\nA thought outside Thermo.")
+        try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
+        guard state.outsideSession, state.destination == nil,
+              try state.togglePinOnSave(in: live.drafts),
+              let saved = try await controller.addNote(try live.drafts.load(), destination: state.destination,
+                                                     pinOnSave: state.pinOnSave, outsideSession: state.outsideSession),
+              live.vault.relativePath(of: saved.destination.url) == "science/Biology.md",
+              live.pins.isPinned("science/Biology.md"),
+              try Data(contentsOf: destination.url) == initialSession,
+              await live.sessions.current() == session,
+              feedback.last?.title == "Saved to Biology · Thermo still active" else {
+            throw SelfTestFailure("Detached typed note lost routing, pin intent, feedback or active session")
+        }
+        // A new panel keeps only the draft; the per-panel detached destination is not persisted.
+        let reopened = QuickNoteState(destination: destination)
+        guard !reopened.outsideSession, reopened.destination == destination else {
+            throw SelfTestFailure("Detached destination survived reopening")
+        }
+        try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
+        guard !state.outsideSession, state.destination == destination else { throw SelfTestFailure("Toggle did not restore session") }
+        try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
+        try state.restoreSessionDestination(destination, drafts: live.drafts)
+        guard !state.outsideSession, state.destination == destination else { throw SelfTestFailure("Blank New Note did not restore session") }
+        let context = FrontmostContext(appName: "Outside session test", bundleIdentifier: nil, processIdentifier: 0, windowTitle: nil)
+        let chosen = CapturePipeline.selection(text: "outside chosen capture", context: context)
+        await controller.stage(chosen, outsideSession: true)
+        guard let chosenTask = controller.commitPending(noteTitle: "science/Biology", announce: true),
+              try await chosenTask.value.destination.url == saved.destination.url else {
+            throw SelfTestFailure("Outside capture did not use chosen note")
+        }
+        let cancelled = CapturePipeline.selection(text: "outside cancelled capture", context: context)
+        await controller.stage(cancelled, outsideSession: true)
+        let records = try await selfTestJournalJobs(live.journal)
+        guard records.contains(where: { $0.prepared.capture.id == cancelled.id && $0.prepared.destination.kind == .inbox }),
+              let cancelTask = controller.commitPending(), try await cancelTask.value.destination.kind == .inbox,
+              try Data(contentsOf: destination.url) == initialSession, await live.sessions.current() == session else {
+            throw SelfTestFailure("Outside capture cancel/recovery fallback changed the session")
+        }
+        let png = try await AppMedia.demoPNG()
+        let image = PendingCapture(trigger: .region, content: .image(png: png, ocr: "outside image OCR"),
+                                   source: CapturePipeline.source(context), subtitle: "Image")
+        await controller.stage(image, outsideSession: true)
+        guard let imageTask = controller.commitPending(noteTitle: "science/Images"),
+              live.vault.relativePath(of: try await imageTask.value.destination.url) == "science/Images.md",
+              let imageHit = try await live.index.capture(id: image.id), let asset = imageHit.assetPath,
+              try await live.assetData(asset) == png,
+              try Data(contentsOf: destination.url) == initialSession else {
+            throw SelfTestFailure("Outside image capture lost its nested destination, OCR or asset")
+        }
+        guard let nextNote = try await controller.addNote("Another title\nNormal quick note returns to Thermo."),
+              nextNote.destination == destination else { throw SelfTestFailure("Next quick note did not return to the session") }
+        await controller.stage(CapturePipeline.selection(text: "normal capture returns to Thermo", context: context))
+        guard let normalTask = controller.commitPending(), try await normalTask.value.destination == destination else {
+            throw SelfTestFailure("Next normal capture did not return to the session")
+        }
+        // Closing the picker on shutdown must keep its journaled Inbox fallback.
+        let beforeShutdown = try Data(contentsOf: destination.url)
+        let shutdownCapture = CapturePipeline.selection(text: "outside shutdown fallback", context: context)
+        await controller.stage(shutdownCapture, outsideSession: true)
+        _ = await controller.beginTermination().value
+        guard try await live.index.capture(id: shutdownCapture.id)?.notePath == "Inbox.md",
+              try Data(contentsOf: destination.url) == beforeShutdown, await live.sessions.current() == session else {
+            throw SelfTestFailure("Outside capture shutdown fallback changed the session")
+        }
+        try await checkOutsideSessionRetry(in: base)
+    }
+
+    private func checkOutsideSessionRetry(in base: URL) async throws {
+        let fm = FileManager.default
+        for (originalOutside, browseRetry) in [(false, false), (true, false), (true, true)] {
+            let directory = base.appendingPathComponent(browseRetry ? "OutsideToBrowseRetry"
+                                                       : originalOutside ? "OutsideToSessionRetry" : "SessionToOutsideRetry")
+            let live = try await CapturePipeline.open(vaultRoot: directory.appendingPathComponent("Vault"),
+                                                     stateDirectory: directory.appendingPathComponent("State"), calendar: pipeline.calendar)
+            let controller = AppController(pipeline: live, presentsUI: false)
+            let session = try await controller.startSession(name: "Thermo")
+            let sessionURL = live.vault.root.appendingPathComponent(session.notePath)
+            let sessionBytes = try Data(contentsOf: sessionURL)
+            let browseDestination: Destination? = browseRetry
+                ? Destination(url: live.vault.root.appendingPathComponent("Physics.md"), title: "Physics", kind: .note) : nil
+            if let browseDestination { try Data("# Physics\n\n".utf8).write(to: browseDestination.url) }
+            let blockedURL = originalOutside ? live.vault.root : sessionURL
+            guard let permissions = try fm.attributesOfItem(atPath: blockedURL.path)[.posixPermissions] else {
+                throw SelfTestFailure("Couldn't read retry-path permissions")
+            }
+            let draft = "Biology\nRetry after changing the quick-note destination."
+            var previousID: UUID?
+            do {
+                try fm.setAttributes([.posixPermissions: originalOutside ? 0o555 : 0o444], ofItemAtPath: blockedURL.path)
+                defer { try? fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: blockedURL.path) }
+                for _ in 0..<2 {
+                    do {
+                        _ = try await controller.addNote(draft, outsideSession: originalOutside)
+                        throw SelfTestFailure("Read-only note commit unexpectedly succeeded")
+                    } catch let error as POSIXError where error.code == .EACCES {
+                        // NoteFile.openat rejects the read-only note or parent directory.
+                    }
+                    let jobs = try await selfTestJournalJobs(live.journal)
+                    guard jobs.count == 1, let job = jobs.first, job.noteOutsideSession == originalOutside,
+                          previousID == nil || previousID == job.prepared.capture.id else {
+                        throw SelfTestFailure("A same-route retry changed its journaled identity or route metadata")
+                    }
+                    previousID = job.prepared.capture.id
+                }
+            }
+            guard let saved = try await controller.addNote(draft, destination: browseDestination,
+                                                          outsideSession: browseRetry || !originalOutside),
+                  saved.captureID != previousID, try await live.journal.recordURLs().isEmpty,
+                  await live.sessions.current() == session else { throw SelfTestFailure("Changed route reused an incompatible prepared job") }
+            if let browseDestination {
+                guard saved.destination == browseDestination,
+                      try Data(contentsOf: sessionURL) == sessionBytes,
+                      !fm.fileExists(atPath: live.vault.root.appendingPathComponent("Biology.md").path),
+                      try String(contentsOf: browseDestination.url, encoding: .utf8).contains("Retry after changing") else {
+                    throw SelfTestFailure("Browse after a failed detached save retained the stale destination")
+                }
+            } else if originalOutside {
+                guard saved.destination.kind == .session,
+                      !fm.fileExists(atPath: live.vault.root.appendingPathComponent("Biology.md").path) else {
+                    throw SelfTestFailure("Resetting the editor retried a detached destination")
+                }
+            } else {
+                guard saved.destination.kind == .note, saved.destination.url.lastPathComponent == "Biology.md",
+                      try Data(contentsOf: sessionURL) == sessionBytes else {
+                    throw SelfTestFailure("Detaching a failed draft appended it to the session")
+                }
+            }
+            _ = await controller.beginTermination().value
+            guard await live.replayUnsaved() == 0 else {
+                throw SelfTestFailure("A replaced quick-note destination left stale work for replay")
+            }
+        }
+    }
+
     /// Isolated quick-note persistence assertions also run independently of the host's OCR service.
     private func checkQuickNotePinPersistence() async throws {
         let base = pipeline.vault.root.appendingPathComponent("QuickNotePinCases", isDirectory: true)
@@ -477,8 +624,9 @@ extension AppController {
             do {
                 _ = try await retryController.addNote(retryDraft, pinOnSave: true)
                 throw SelfTestFailure("Read-only note commit unexpectedly succeeded")
-            } catch is SelfTestFailure { throw SelfTestFailure("Read-only note commit unexpectedly succeeded") }
-            catch {}
+            } catch let error as POSIXError where error.code == .EACCES {
+                // NoteFile cannot create its temporary note in the read-only vault.
+            }
         }
         let failedJobs = try await selfTestJournalJobs(retryPipeline.journal)
         let reopened = try NoteDraftStore(stateDirectory: retryBase.appendingPathComponent("State")).loadSnapshot()
@@ -573,8 +721,9 @@ extension AppController {
                 do {
                     _ = try await originalController.addNote(draft, pinOnSave: true)
                     throw SelfTestFailure("\(name): read-only commit unexpectedly succeeded")
-                } catch is SelfTestFailure { throw SelfTestFailure("\(name): read-only commit unexpectedly succeeded") }
-                catch {}
+                } catch let error as POSIXError where error.code == .EACCES {
+                    // Only the injected permission denial establishes the failed-save case.
+                }
             }
             let jobs = try await selfTestJournalJobs(original.journal)
             guard jobs.count == 1, let job = jobs.first, try original.drafts.loadSnapshot().pinOnSave else {
@@ -644,8 +793,9 @@ extension AppController {
             do {
                 _ = try await task.value
                 throw SelfTestFailure("Injected destination failure unexpectedly succeeded")
-            } catch is SelfTestFailure { throw SelfTestFailure("Injected destination failure unexpectedly succeeded") }
-            catch {}
+            } catch let error as POSIXError where error.code == .EISDIR {
+                // The prepared note was replaced by a directory; other failures are unexpected.
+            }
         }
         _ = await controller.beginTermination().value
         let jobs = try await selfTestJournalJobs(original.journal)

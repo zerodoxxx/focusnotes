@@ -10,6 +10,7 @@ struct CaptureJob: Sendable {
     let ocr: String?
     var deferredOCR: Task<CaptureKit.OCRResult?, Never>? = nil
     var noteDraft: String? = nil
+    var noteOutsideSession = false
 }
 
 actor CaptureJournal {
@@ -50,6 +51,7 @@ actor CaptureJournal {
         let hasPNG: Bool
         let ocr: String?
         let noteDraft: String?
+        var noteOutsideSession: Bool? = nil
     }
 
     let directory: URL
@@ -69,7 +71,8 @@ actor CaptureJournal {
         if let png = job.png {
             try png.write(to: directory.appendingPathComponent(stem + ".png"), options: .atomic)
         }
-        let record = Record(prepared: job.prepared, hasPNG: job.png != nil, ocr: job.ocr, noteDraft: job.noteDraft)
+        let record = Record(prepared: job.prepared, hasPNG: job.png != nil, ocr: job.ocr, noteDraft: job.noteDraft,
+                            noteOutsideSession: job.noteOutsideSession ? true : nil)
         try Self.writeJSON(record, to: directory.appendingPathComponent(stem + ".json"))
     }
 
@@ -157,7 +160,8 @@ actor CaptureJournal {
             guard let record = try? JSONDecoder().decode(Record.self, from: Data(contentsOf: url)) else { continue }
             guard let destination = redirects[Self.key(for: record.prepared.capture.id)] else { continue }
             let updated = Record(prepared: replacingDestination(record.prepared, with: destination),
-                                 hasPNG: record.hasPNG, ocr: record.ocr, noteDraft: record.noteDraft)
+                                 hasPNG: record.hasPNG, ocr: record.ocr, noteDraft: record.noteDraft,
+                                 noteOutsideSession: record.noteOutsideSession)
             try Self.writeJSON(updated, to: url)
         }
     }
@@ -175,7 +179,7 @@ actor CaptureJournal {
     func redirected(_ job: CaptureJob) throws -> CaptureJob {
         guard let destination = try destinationRedirects()[Self.key(for: job.prepared.capture.id)] else { return job }
         return CaptureJob(prepared: replacingDestination(job.prepared, with: destination), png: job.png,
-                          ocr: job.ocr, deferredOCR: job.deferredOCR, noteDraft: job.noteDraft)
+                          ocr: job.ocr, deferredOCR: job.deferredOCR, noteDraft: job.noteDraft, noteOutsideSession: job.noteOutsideSession)
     }
 
     private func destinationRedirects() throws -> [String: Destination] {
@@ -224,10 +228,13 @@ actor CaptureJournal {
                 }
                 let original = record.prepared.capture
                 let capture = Capture(id: original.id, createdAt: original.createdAt, content: .text(text), source: original.source)
-                return try redirected(CaptureJob(prepared: PreparedCapture(capture: capture, destination: record.prepared.destination), png: nil, ocr: nil))
+                return try redirected(CaptureJob(prepared: PreparedCapture(capture: capture, destination: record.prepared.destination),
+                                                 png: nil, ocr: nil, noteDraft: record.noteDraft,
+                                                 noteOutsideSession: record.noteOutsideSession == true))
             }
         }
-        return try redirected(CaptureJob(prepared: record.prepared, png: png, ocr: record.ocr, noteDraft: record.noteDraft))
+        return try redirected(CaptureJob(prepared: record.prepared, png: png, ocr: record.ocr, noteDraft: record.noteDraft,
+                                         noteOutsideSession: record.noteOutsideSession == true))
     }
 
     /// Keep undecodable records and their PNGs without retrying them on every launch.

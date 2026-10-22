@@ -84,6 +84,7 @@ public static class Strings
 
     public static string SavedTo(string title) => $"Saved to {title}";
     public static string AddedTo(string name) => $"Added to {name}";
+    public static string SessionStillActive(string message, string? sessionName) => sessionName is null ? message : $"{message} · {sessionName} still active";
     public static string InNote(string title) => $"In {title}";
     public static string SessionStarted(string name, bool resumed) => $"Session {(resumed ? "resumed" : "started")} · {name}";
     public static string SessionCapturesGoHere(string binding) => $"Captures go here until {binding}";
@@ -133,6 +134,8 @@ public static class Strings
     // Tray menu.
     public const string MenuCaptureSelection = "Capture Selection";
     public const string MenuCaptureArea = "Capture Area";
+    public const string MenuCaptureSelectionOutsideSession = "Capture Selection Outside Session…";
+    public const string MenuCaptureAreaOutsideSession = "Capture Area Outside Session…";
     public const string MenuSearch = "Search Notes…";
     public const string MenuStartSession = "Start Session…";
     public const string MenuWriteNote = "Write a Note…";

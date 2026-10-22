@@ -149,7 +149,8 @@ func noteShortcutAction(for event: NSEvent) -> NoteActionID? {
     switch event.keyCode {
     case 8 where shift: return .copyMarkdown
     case 35: return shift ? .pin : .browse
-    case 45: return .newNote
+    case 45 where flags == [.command, .shift]: return .writeOutsideSession
+    case 45 where flags == .command: return .newNote
     case 31: return .openAsNote
     case 51 where shift: return .discardDraft
     case 36 where flags.contains(.option), 76 where flags.contains(.option): return .saveAsNewNote // Return, keypad Enter

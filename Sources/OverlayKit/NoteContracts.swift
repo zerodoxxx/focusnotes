@@ -2,7 +2,7 @@ import Foundation
 
 /// The quick note's action-card commands. Raw values are stable identifiers.
 public enum NoteActionID: String, Sendable, CaseIterable {
-    case newNote, browse, pin, openAsNote, copyMarkdown, discardDraft, saveAsNewNote
+    case newNote, browse, pin, openAsNote, copyMarkdown, discardDraft, saveAsNewNote, writeOutsideSession
 }
 
 /// One row in the Browse list. Built by the app from its note index.

@@ -33,6 +33,8 @@ internal static class AppSelfTest
         {
             [MenuIds.CaptureSelection] = HotkeyDefaults.For(HotkeyAction.CaptureSelection).DisplayString,
             [MenuIds.CaptureArea] = HotkeyDefaults.For(HotkeyAction.CaptureArea).DisplayString,
+            [MenuIds.CaptureSelectionOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureSelectionOutsideSession).DisplayString,
+            [MenuIds.CaptureAreaOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureAreaOutsideSession).DisplayString,
             [MenuIds.Search] = HotkeyDefaults.For(HotkeyAction.SearchNotes).DisplayString,
             [MenuIds.Session] = HotkeyDefaults.For(HotkeyAction.ToggleSession).DisplayString,
             [MenuIds.WriteNote] = HotkeyDefaults.For(HotkeyAction.WriteNote).DisplayString,
@@ -41,9 +43,9 @@ internal static class AppSelfTest
         };
         var entries = TrayMenuBuilder.Build(new MenuState(true, 0, null, bindings, 0, new(SemanticMenuPhase.NotInstalled), new(UpdateMenuKind.Idle)));
         _ = new TrayMenuModel(entries.Select(Convert));
-        if (bindings.Values.Any(string.IsNullOrEmpty) || entries.Count(e => e.Shortcut.Length > 0) != 7)
+        if (bindings.Values.Any(string.IsNullOrEmpty) || entries.Count(e => e.Shortcut.Length > 0) != bindings.Count)
         {
-            throw new InvalidOperationException("The tray menu did not show all seven shortcut texts.");
+            throw new InvalidOperationException("The tray menu did not show all command shortcut texts.");
         }
     }
 

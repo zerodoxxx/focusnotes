@@ -67,15 +67,29 @@ internal sealed class CheckVault : IDisposable
     internal static void SymbolicLink(string link, string target, bool directory = false)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(link)!);
-        if (directory)
+        try
         {
-            Directory.CreateSymbolicLink(link, target);
+            if (directory)
+            {
+                Directory.CreateSymbolicLink(link, target);
+            }
+            else
+            {
+                File.CreateSymbolicLink(link, target);
+            }
         }
-        else
+        catch (IOException error) when (MaySkipMissingSymbolicLinkPrivilege(error, OperatingSystem.IsWindows(),
+            Environment.GetEnvironmentVariable("CAPTUREAPP_ALLOW_MISSING_SYMLINK_PRIVILEGE"),
+            Environment.GetEnvironmentVariable("CI"), Environment.GetEnvironmentVariable("GITHUB_ACTIONS")))
         {
-            File.CreateSymbolicLink(link, target);
+            Assert.Skip("Windows symbolic-link fixture requires privilege (error 1314); explicitly skipped locally with " +
+                "CAPTUREAPP_ALLOW_MISSING_SYMLINK_PRIVILEGE=1. Enable symbolic-link creation to run this safety test.");
         }
     }
+
+    internal static bool MaySkipMissingSymbolicLinkPrivilege(IOException error, bool windows, string? optIn, string? ci, string? githubActions) =>
+        windows && error.HResult == unchecked((int)0x80070522) // HRESULT_FROM_WIN32(ERROR_PRIVILEGE_NOT_HELD = 1314)
+        && optIn == "1" && string.IsNullOrEmpty(ci) && string.IsNullOrEmpty(githubActions);
 
     internal static void HardLink(string link, string target)
     {

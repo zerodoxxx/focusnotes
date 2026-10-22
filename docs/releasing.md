@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+Last Updated: 2026-10-22 (previous commit: `d78e2fd`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -298,7 +298,7 @@ Before upload, `windows/scripts/signing-inventory.ps1` installs each architectur
 When Authenticode signing is configured, the workflow passes `-Enforce`; anything else fails the release. With no
 Authenticode configuration, the inventory runs report-only and unsigned FocusNotes binaries are expected. When a
 dependency update changes an allow-listed binary, review it and update the allow-list in the same PR. Report-only mode
-also runs in `checks.yml` on every PR.
+also runs in the full `checks.yml` profile when explicitly requested.
 
 ## Rollback
 
@@ -318,7 +318,7 @@ Swift 6.4) and checks that toolchain before it builds. The release workflow
 uses `ubuntu-latest` to prepare a version branch and PR, then builds on
 `xcode-27` after that PR changes `Config/app.env` on `main`.
 
-- `.github/workflows/checks.yml` runs the checks on pushes to `main` and on pull requests.
+- `.github/workflows/checks.yml` runs builds and tests only on request. Add `run-ci` to a PR for lean checks of changed platforms, or use a manual lean run for both platforms. Normal pushes do not start native checks. Add `run-ci-full`, or select Full checks in the manual workflow, for model-backed checks, performance workloads, galleries, both Windows architectures, packaging/update tests and the older-macOS smoke test. `skip-ci` skips native builds and tests while two short Ubuntu jobs satisfy the required PR checks; it does not waive maintainer approval or signed-release validation. Run the full profile before a release; local hooks validate only the developer's host platform. See [Choosing CI checks](../CONTRIBUTING.md#choosing-ci-checks).
 - `.github/workflows/release.yml` runs only when manually started with a
   version input to prepare a version commit and PR. After that PR is merged,
   the workflow imports the signing identity from secrets, builds the merge

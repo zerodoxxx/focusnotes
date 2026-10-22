@@ -398,6 +398,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     var onResize: ((NSSize, Bool) -> Void)?
     private func resize(animated: Bool = true) { onResize?(desiredSize, animated) }
     var onAction: ((NoteActionID) -> Void)?
+    var hasActiveSession = false
     var onClose: (() -> Void)?
     var onBrowseChoice: ((BrowseItem, BrowseChoice) -> Void)?
     var browseItems: () -> [BrowseItem] = { [] }
@@ -642,6 +643,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             textView.insertText("", replacementRange: NSRange(location: 0, length: length)) // undoable; fires textDidChange
         case .browse: toggleBrowse()
         case .pin, .newNote, .openAsNote: onAction?(id)
+        case .writeOutsideSession: if hasActiveSession { onAction?(id) }
         case .saveAsNewNote: if appendsToExisting { onAction?(id) } else { textView.onSave?() } // nothing to escape: plain save
         }
     }
@@ -654,7 +656,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         guard actionMenu == nil else { return }
         detachBrowse()
         let menu = NoteActionMenuView(items: NoteActionItem.standard(isPinned: isPinned, hasText: !textView.string.isEmpty,
-                                                                     appendsToExisting: appendsToExisting),
+                                                                     appendsToExisting: appendsToExisting, hasActiveSession: hasActiveSession),
                                       query: query, selectedIndex: selectedIndex)
         menu.onRun = { [weak self] id in self?.hideActions(); self?.perform(id) }
         menu.onClose = { [weak self] in self?.hideActions() }
@@ -1025,6 +1027,7 @@ public struct NoteEditorHandlers {
     public var onScheduleDraft: (String) -> Void
     /// Creates a new note from this text although its title names an existing one (the Save as New Note escape).
     public var onSaveAsNew: (String) -> Void
+    public var onWriteOutsideSession: (() -> Void)?
 
     public init(onDraft: @escaping (String) throws -> Void, onSubmit: @escaping (String) -> Void,
                 onNew: @escaping (String) -> Void, onOpenAsNote: @escaping (String) -> Void,
@@ -1033,11 +1036,13 @@ public struct NoteEditorHandlers {
                 titleForText: @escaping (String) -> String = NoteEditorHandlers.defaultTitle,
                 onScheduleDraft: ((String) -> Void)? = nil,
                 existingTitleForText: @escaping (String) -> String? = { _ in nil },
-                onSaveAsNew: @escaping (String) -> Void = { _ in }) {
+                onSaveAsNew: @escaping (String) -> Void = { _ in },
+                onWriteOutsideSession: (() -> Void)? = nil) {
         self.onDraft = onDraft; self.onSubmit = onSubmit; self.onNew = onNew; self.onOpenAsNote = onOpenAsNote
         self.browseItems = browseItems; self.onBrowse = onBrowse; self.onTogglePin = onTogglePin
         self.onClose = onClose; self.onError = onError; self.titleForText = titleForText
         self.existingTitleForText = existingTitleForText; self.onSaveAsNew = onSaveAsNew
+        self.onWriteOutsideSession = onWriteOutsideSession
         self.onScheduleDraft = onScheduleDraft ?? { text in
             do { try onDraft(text) } catch { onError(error) }
         }
@@ -1091,6 +1096,7 @@ public final class NoteEditorPanel {
         panel.cancelHandler = { [weak view] in view?.closeOverlay() ?? false }
         view.titleForText = handlers.titleForText
         view.existingTitleForText = handlers.existingTitleForText
+        view.hasActiveSession = handlers.onWriteOutsideSession != nil
         view.browseItems = handlers.browseItems
         view.onBrowseChoice = { [weak panel, weak view] item, choice in
             if choice == .write { handlers.onBrowse(item, choice); view?.hideBrowse(); return }
@@ -1127,6 +1133,8 @@ public final class NoteEditorPanel {
                 if !panel.isVisible { handlers.onSaveAsNew(text) }
             case .pin:
                 view.setDestination(view.destination, isPinned: handlers.onTogglePin())
+            case .writeOutsideSession:
+                handlers.onWriteOutsideSession?()
             case .browse, .copyMarkdown, .discardDraft:
                 break // Browse is wired with the overlays; copy and discard are handled by the editor view.
             }
