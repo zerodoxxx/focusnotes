@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+Last Updated: 2026-10-22 (previous commit: `77592ee`)
 
 CaptureKit currently has no app wiring. Run these checks from a signed development
 host that calls the public APIs from its Carbon hotkey handlers. Capture
@@ -401,5 +401,3 @@ captures.
 
 The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
-
-Last Updated: 2026-10-22 (previous commit: `3c96523`)

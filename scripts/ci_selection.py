@@ -68,11 +68,11 @@ def event_policy(event_name: str, event: dict) -> dict[str, bool]:
     action = event.get("action")
     label = event.get("label", {}).get("name")
     labels = [item.get("name") for item in event.get("pull_request", {}).get("labels", [])]
-    attached = pr and "skip-cli" in labels
+    attached = pr and "skip-ci" in labels
     request_event = pr and action == "labeled" and label in {"run-ci", "run-ci-full"}
-    removal = pr and action == "unlabeled" and label == "skip-cli"
+    removal = pr and action == "unlabeled" and label == "skip-ci"
     skip_event = attached and (action in {"opened", "reopened", "synchronize"}
-                              or (action == "labeled" and label == "skip-cli"))
+                              or (action == "labeled" and label == "skip-ci"))
     required_names = manual or request_event or removal or skip_event
     return {
         "native": manual or (request_event and not attached),
@@ -88,7 +88,7 @@ def selection(event_name: str, event: dict, full_input: bool) -> dict[str, str]:
     full = policy["native"] and (full_input or event.get("label", {}).get("name") == "run-ci-full")
     if policy["skip"]:
         macos = windows = False
-        reason = "skip-cli is attached; all CI jobs are intentionally skipped."
+        reason = "skip-ci is attached; all CI jobs are intentionally skipped."
     elif not policy["native"]:
         macos = windows = False
         reason = "No explicit CI request for this event; native checks are not selected."

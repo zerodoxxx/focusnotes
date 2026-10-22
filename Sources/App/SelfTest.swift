@@ -511,8 +511,9 @@ extension AppController {
                     do {
                         _ = try await controller.addNote(draft, outsideSession: originalOutside)
                         throw SelfTestFailure("Read-only note commit unexpectedly succeeded")
-                    } catch is SelfTestFailure { throw SelfTestFailure("Read-only note commit unexpectedly succeeded") }
-                    catch {}
+                    } catch let error as POSIXError where error.code == .EACCES {
+                        // NoteFile.openat rejects the read-only note or parent directory.
+                    }
                     let jobs = try await selfTestJournalJobs(live.journal)
                     guard jobs.count == 1, let job = jobs.first, job.noteOutsideSession == originalOutside,
                           previousID == nil || previousID == job.prepared.capture.id else {
@@ -623,8 +624,9 @@ extension AppController {
             do {
                 _ = try await retryController.addNote(retryDraft, pinOnSave: true)
                 throw SelfTestFailure("Read-only note commit unexpectedly succeeded")
-            } catch is SelfTestFailure { throw SelfTestFailure("Read-only note commit unexpectedly succeeded") }
-            catch {}
+            } catch let error as POSIXError where error.code == .EACCES {
+                // NoteFile cannot create its temporary note in the read-only vault.
+            }
         }
         let failedJobs = try await selfTestJournalJobs(retryPipeline.journal)
         let reopened = try NoteDraftStore(stateDirectory: retryBase.appendingPathComponent("State")).loadSnapshot()
@@ -719,8 +721,9 @@ extension AppController {
                 do {
                     _ = try await originalController.addNote(draft, pinOnSave: true)
                     throw SelfTestFailure("\(name): read-only commit unexpectedly succeeded")
-                } catch is SelfTestFailure { throw SelfTestFailure("\(name): read-only commit unexpectedly succeeded") }
-                catch {}
+                } catch let error as POSIXError where error.code == .EACCES {
+                    // Only the injected permission denial establishes the failed-save case.
+                }
             }
             let jobs = try await selfTestJournalJobs(original.journal)
             guard jobs.count == 1, let job = jobs.first, try original.drafts.loadSnapshot().pinOnSave else {
@@ -790,8 +793,9 @@ extension AppController {
             do {
                 _ = try await task.value
                 throw SelfTestFailure("Injected destination failure unexpectedly succeeded")
-            } catch is SelfTestFailure { throw SelfTestFailure("Injected destination failure unexpectedly succeeded") }
-            catch {}
+            } catch let error as POSIXError where error.code == .EISDIR {
+                // The prepared note was replaced by a directory; other failures are unexpected.
+            }
         }
         _ = await controller.beginTermination().value
         let jobs = try await selfTestJournalJobs(original.journal)

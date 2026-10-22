@@ -53,6 +53,7 @@ public sealed class SetupWindowTests
                 Assert.False(next.IsDefault);
                 Assert.Equal(0, close.Margin.Right);
                 SessionPickerChecks.Run(app);
+                WiringTests.OutsideCaptureEscapeUsesTitlePickerCancellation(app);
 
                 var gallery = Environment.GetEnvironmentVariable("FOCUSNOTES_SETUP_GALLERY_OUT");
                 if (!string.IsNullOrWhiteSpace(gallery))

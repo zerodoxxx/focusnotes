@@ -161,20 +161,23 @@ class SelectionTests(unittest.TestCase):
                          {"select", "windows-release-gate", "build", "smoke-macos-15", "windows", "windows-package"})
         # expected: native runners requested, required-check names eligible, metadata-only revocation
         cases = [
-            ("skip", "pull_request", pr_event(label="skip-cli"), False, (False, True, False)),
-            ("skip beats lean", "pull_request", pr_event(labels=["run-ci", "skip-cli"]), False, (False, True, False)),
-            ("skip beats full", "pull_request", pr_event(label="run-ci-full", labels=["run-ci-full", "skip-cli"]), True, (False, True, False)),
-            ("skip persists on source push", "pull_request", pr_event("synchronize", None, ["skip-cli"]), False, (False, True, False)),
-            ("skip persists on reopened", "pull_request", pr_event("reopened", None, ["skip-cli"]), False, (False, True, False)),
-            ("skip present on opened", "pull_request", pr_event("opened", None, ["skip-cli"]), False, (False, True, False)),
-            ("skip removed", "pull_request", pr_event("unlabeled", "skip-cli", []), False, (False, True, True)),
+            ("skip", "pull_request", pr_event(label="skip-ci"), False, (False, True, False)),
+            ("skip beats lean", "pull_request", pr_event(labels=["run-ci", "skip-ci"]), False, (False, True, False)),
+            ("skip beats full", "pull_request", pr_event(label="run-ci-full", labels=["run-ci-full", "skip-ci"]), True, (False, True, False)),
+            ("skip persists on source push", "pull_request", pr_event("synchronize", None, ["skip-ci"]), False, (False, True, False)),
+            ("skip persists on reopened", "pull_request", pr_event("reopened", None, ["skip-ci"]), False, (False, True, False)),
+            ("skip present on opened", "pull_request", pr_event("opened", None, ["skip-ci"]), False, (False, True, False)),
+            ("skip removed", "pull_request", pr_event("unlabeled", "skip-ci", []), False, (False, True, True)),
+            ("similar skip label has no bypass", "pull_request", pr_event(label="skip-ci-extra"), False, (False, False, False)),
+            ("similar skip label does not block lean", "pull_request", pr_event(labels=["run-ci", "skip-ci-extra"]), False, (True, True, False)),
+            ("similar skip removal does not revoke", "pull_request", pr_event("unlabeled", "skip-ci-extra", []), False, (False, False, False)),
             ("lean", "pull_request", pr_event(), False, (True, True, False)),
             ("full", "pull_request", pr_event(label="run-ci-full"), False, (True, True, False)),
             ("manual quick", "workflow_dispatch", {}, False, (True, True, False)),
             ("manual full", "workflow_dispatch", {}, True, (True, True, False)),
             ("unrelated label", "pull_request", pr_event(label="enhancement"), False, (False, False, False)),
-            ("unrelated stale skip snapshot", "pull_request", pr_event(label="enhancement", labels=["skip-cli", "enhancement"]), False, (False, False, False)),
-            ("unrelated removal stale skip", "pull_request", pr_event("unlabeled", "enhancement", ["skip-cli"]), False, (False, False, False)),
+            ("unrelated stale skip snapshot", "pull_request", pr_event(label="enhancement", labels=["skip-ci", "enhancement"]), False, (False, False, False)),
+            ("unrelated removal stale skip", "pull_request", pr_event("unlabeled", "enhancement", ["skip-ci"]), False, (False, False, False)),
             ("run-ci removal", "pull_request", pr_event("unlabeled", "run-ci", []), False, (False, False, False)),
             ("normal source push", "pull_request", pr_event("synchronize", None, ["run-ci"]), False, (False, False, False)),
             ("normal opened", "pull_request", pr_event("opened", None, []), False, (False, False, False)),
@@ -236,7 +239,7 @@ class SelectionTests(unittest.TestCase):
                     self.assertEqual(workflow_expression(expression, values), expected)
                 self.assertTrue(workflow_expression(failed_selector, values))
         # Intentional skips have a skipped selector, which must never take this failure path.
-        values.update({"label": "skip-cli", "labels": ["skip-cli"], "select_result": "skipped"})
+        values.update({"label": "skip-ci", "labels": ["skip-ci"], "select_result": "skipped"})
         self.assertFalse(workflow_expression(re.search(r"(?m)^    if: (.+)$", build).group(1), values))
         self.assertFalse(workflow_expression(failed_selector, values))
 

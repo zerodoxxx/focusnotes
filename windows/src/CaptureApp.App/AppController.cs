@@ -66,6 +66,7 @@ internal sealed partial class AppController : IDisposable
     {
         pipeline = testPipeline;
         Coordinator = new(testPipeline, new HeadlessCaptureHost());
+        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
     }
 
     public string SettingsPath { get; }

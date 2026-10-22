@@ -18,12 +18,12 @@ env:
 
 concurrency:
   # Skip changes cancel requested work. Unrelated label snapshots cannot cancel it or replace required checks.
-  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'requested' || github.run_id }}
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'requested' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   select:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full') && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full') && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
@@ -58,18 +58,18 @@ jobs:
 
   build:
     needs: select
-    if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (!cancelled() && needs.select.outputs.macos == 'true') || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))) }}
+    if: ${{ always() && (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (!cancelled() && needs.select.outputs.macos == 'true') || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci' && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))) }}
     # Only a request or intentional skip may publish the ruleset's required check name.
     # A skipped job allocates no runner and is accepted by GitHub's required-check rules.
-    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'build' || 'build (CI not requested)' }}
+    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'build' || 'build (CI not requested)' }}
     # xcode-27 runner: Xcode 27 (Swift 6.4) is the default toolchain.
-    runs-on: ${{ (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli'))) && 'ubuntu-latest' || 'xcode-27' }}
+    runs-on: ${{ (needs.select.result == 'failure' || needs.select.result == 'cancelled' || (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci' && !contains(github.event.pull_request.labels.*.name, 'skip-ci'))) && 'ubuntu-latest' || 'xcode-27' }}
     timeout-minutes: 30
     steps:
-      - name: Revoke the intentional skip after skip-cli is removed
-        if: ${{ always() && github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli' && !contains(github.event.pull_request.labels.*.name, 'skip-cli') }}
+      - name: Revoke the intentional skip after skip-ci is removed
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci' && !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
         run: |
-          echo 'skip-cli was removed. Add run-ci or run-ci-full to request verification before merging.' >&2
+          echo 'skip-ci was removed. Add run-ci or run-ci-full to request verification before merging.' >&2
           exit 1
 
       - name: Fail required check when platform selection failed or was cancelled
@@ -133,7 +133,7 @@ jobs:
 
   smoke-macos-15:
     if: needs.select.outputs.full == 'true'
-    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-cli') || (contains(github.event.pull_request.labels.*.name, 'skip-cli') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-cli') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'smoke-macos-15' || 'smoke-macos-15 (CI not requested)' }}
+    name: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && ((github.event.action == 'labeled' && (github.event.label.name == 'run-ci' || github.event.label.name == 'run-ci-full')) || (github.event.action == 'unlabeled' && github.event.label.name == 'skip-ci') || (contains(github.event.pull_request.labels.*.name, 'skip-ci') && ((github.event.action == 'labeled' && github.event.label.name == 'skip-ci') || github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'))))) && 'smoke-macos-15' || 'smoke-macos-15 (CI not requested)' }}
     needs: [select, build]
     runs-on: macos-15
     timeout-minutes: 5

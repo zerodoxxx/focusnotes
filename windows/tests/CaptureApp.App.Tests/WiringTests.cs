@@ -1,6 +1,10 @@
 using System.IO;
+using System.Windows;
+using System.Windows.Threading;
 using CaptureApp.App;
+using CaptureApp.AppCore;
 using CaptureApp.AppCore.Shell;
+using CaptureApp.Core;
 using CaptureApp.Overlay;
 using System.Windows.Input;
 using Xunit;
@@ -9,6 +13,73 @@ namespace CaptureApp.App.Tests;
 
 public sealed class WiringTests
 {
+    // Reuse SetupWindowTests' STA/Application: WPF permits one Application per process.
+    internal static void OutsideCaptureEscapeUsesTitlePickerCancellation(Application app)
+    {
+        foreach (var image in new[] { false, true })
+        {
+            var root = Path.Combine(Path.GetTempPath(), "outside-picker-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                using var pipeline = CapturePipeline.Open(Path.Combine(root, "vault"), Path.Combine(root, "state"), TimeZoneInfo.Utc);
+                using var controller = new AppController(app, pipeline.StateDirectory, pipeline);
+                var session = pipeline.Sessions.Start("Inbox");
+                var sessionUrl = pipeline.Vault.ManagedUrl(session.NotePath);
+                var sessionBefore = File.ReadAllBytes(sessionUrl);
+                var nestedUrl = Path.Combine(pipeline.Vault.Root, "science", "Inbox.md");
+                const string nestedBefore = "# Inbox\n\nKeep this nested Inbox unchanged.\n";
+                Directory.CreateDirectory(Path.GetDirectoryName(nestedUrl)!);
+                File.WriteAllText(nestedUrl, nestedBefore);
+                var capture = (image ? PendingCaptures.Image([137, 80, 78, 71], "picker OCR", new())
+                    : PendingCaptures.Selection("outside picker escape capture", new())) with { OutsideSession = true };
+                var stage = controller.Coordinator.StageAsync(capture);
+                UiWait.Pump(stage, TimeSpan.FromSeconds(5));
+                Assert.True(stage.IsCompleted, "Outside capture staging did not complete.");
+                stage.GetAwaiter().GetResult();
+                var journaled = pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths()));
+                Assert.Equal(new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox), journaled.Prepared.Destination);
+
+                WaitUntil(() => controller.InputForChecks is { IsVisible: true }, "Outside capture did not open its title picker.");
+                var picker = Assert.IsType<InputPanelController>(controller.InputForChecks);
+                Assert.True(picker.HandleInput(Key.Escape));
+                // This runs InputPanel's close handler, PresentInput's onCancel,
+                // and ShowTitlePicker's CommitPending callback before inspecting the save.
+                WaitUntil(() => controller.InputForChecks is null, "Escape did not close the title picker.");
+                Assert.Null(controller.Coordinator.Pending);
+                var commit = controller.Coordinator.WaitForCommitsAsync();
+                UiWait.Pump(commit, TimeSpan.FromSeconds(5));
+                Assert.True(commit.IsCompleted, "The title picker cancellation did not finish saving.");
+                commit.GetAwaiter().GetResult();
+                Assert.Equal("Inbox.md", pipeline.Index.Capture(capture.Id)?.NotePath);
+                Assert.Empty(pipeline.Journal.RecordPaths());
+                Assert.Equal(sessionBefore, File.ReadAllBytes(sessionUrl));
+                Assert.Equal(nestedBefore, File.ReadAllText(nestedUrl));
+                Assert.Equal(session, pipeline.Sessions.Current());
+                if (image)
+                {
+                    var asset = Assert.Single(Directory.GetFiles(pipeline.Vault.AssetsUrl));
+                    Assert.Equal(capture.Png, File.ReadAllBytes(asset));
+                }
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        static void WaitUntil(Func<bool> condition, string failure)
+        {
+            var completed = new TaskCompletionSource();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+            timer.Tick += (_, _) => { if (condition()) completed.TrySetResult(); };
+            timer.Start();
+            try
+            {
+                UiWait.Pump(completed.Task, TimeSpan.FromSeconds(5));
+                Assert.True(completed.Task.IsCompleted, failure);
+            }
+            finally { timer.Stop(); }
+        }
+    }
+
     [Fact]
     public void OutsideSessionActionUsesControlShiftNAndOnlyAppearsForAnActiveSession()
     {

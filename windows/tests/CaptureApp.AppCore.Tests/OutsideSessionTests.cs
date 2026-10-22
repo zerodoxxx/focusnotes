@@ -62,7 +62,7 @@ public sealed class OutsideSessionTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public async Task OutsideCapturePromptsImmediatelyAndEscUsesJournaledInbox(bool image, bool nestedInbox)
+    public async Task OutsideCapturePromptsImmediatelyAndDefaultCommitUsesJournaledInbox(bool image, bool nestedInbox)
     {
         using var temp = new TempDirectory();
         using var pipeline = Open(temp);
@@ -88,7 +88,7 @@ public sealed class OutsideSessionTests
         var journaled = pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths())).Prepared.Destination;
         Assert.Equal(new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox), journaled);
         Assert.Equal(session, pipeline.Sessions.Current());
-        // Cancelling keeps the staged destination even if session state changes.
+        // A default commit keeps the staged destination even if session state changes.
         pipeline.Sessions.End();
         var saved = await coordinator.CommitPending(announce: true)!;
         Assert.Equal(journaled, saved.Destination);
@@ -217,23 +217,45 @@ public sealed class OutsideSessionTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ChangingOutsideIntentSupersedesAFailedSameTextSave(bool firstOutside)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ChangingDestinationIntentSupersedesADurablyJournaledFailedSave(bool firstOutside, bool browseRetry)
     {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows destination-sharing semantics.");
         using var temp = new TempDirectory();
         using var pipeline = Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = await coordinator.StartSessionAsync("Thermo");
         const string draft = "Biology\n\nretryroutingneedle";
-        File.WriteAllText(pipeline.Journal.DirectoryPath, "block journaling");
-        await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddNoteAsync(draft, outsideSession: firstOutside));
-        File.Delete(pipeline.Journal.DirectoryPath);
-        Directory.CreateDirectory(pipeline.Journal.DirectoryPath);
-        var saved = Assert.IsType<SavedCapture>(await coordinator.AddNoteAsync(draft, outsideSession: !firstOutside));
-        Assert.Equal(firstOutside ? pipeline.Vault.ManagedUrl(session.NotePath) : Path.Combine(pipeline.Vault.Root, "Biology.md"), saved.Destination.Url);
+        var biologyUrl = Path.Combine(pipeline.Vault.Root, "Biology.md");
+        File.WriteAllText(biologyUrl, "# Biology\n\nExisting Biology content.\n");
+        var failedUrl = firstOutside ? biologyUrl : pipeline.Vault.ManagedUrl(session.NotePath);
+        var failedBefore = File.ReadAllBytes(failedUrl);
+        // Permit preparation reads but deny the append, after Journal.Store succeeds.
+        using (var destinationLock = new FileStream(failedUrl, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var failure = await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddNoteAsync(draft, outsideSession: firstOutside));
+            Assert.Equal(unchecked((int)0x80070020), failure.HResult); // ERROR_SHARING_VIOLATION at the destination.
+        }
+        var failed = pipeline.Journal.Load(Assert.Single(pipeline.Journal.RecordPaths()));
+        Assert.Equal(failedUrl, failed.Prepared.Destination.Url);
+        Assert.Equal(firstOutside, failed.NoteOutsideSession);
+        Assert.Equal(draft, failed.NoteDraft);
+        Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
+
+        var picked = browseRetry ? new Destination(Path.Combine(pipeline.Vault.Root, "Picked.md"), "Picked", NoteKind.Note) : null;
+        var saved = Assert.IsType<SavedCapture>(await coordinator.AddNoteAsync(draft, picked, outsideSession: browseRetry || !firstOutside));
+        Assert.Equal(picked?.Url ?? (firstOutside ? pipeline.Vault.ManagedUrl(session.NotePath) : biologyUrl), saved.Destination.Url);
+        Assert.NotEqual(failed.Prepared.Capture.Id, saved.CaptureId);
+        Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
         Assert.Empty(pipeline.Journal.RecordPaths());
-        Assert.Equal(0, await pipeline.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
+        using var reopened = Open(temp);
+        Assert.Equal(0, await reopened.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
+        Assert.Null(reopened.Index.Capture(failed.Prepared.Capture.Id));
+        Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
+        Assert.Contains("retryroutingneedle", File.ReadAllText(saved.Destination.Url), StringComparison.Ordinal);
+        Assert.DoesNotContain(failed.Prepared.Capture.Id.ToString("D"), File.ReadAllText(saved.Destination.Url), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(session, pipeline.Sessions.Current());
     }
 
