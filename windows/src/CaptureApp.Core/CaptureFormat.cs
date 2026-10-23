@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace CaptureApp.Core;
 
@@ -22,7 +23,122 @@ public static class CaptureFormat
         }
 
         var body = capture.Content.Kind == CaptureContentKind.Image ? ImageBody(capture.Content.Value, noteRelativeDir, assetPathPrefix) : TextBody(capture.Content.Value);
-        return (includeSourceHeading ? $"### {SourceHeading(capture.Source)}\n" : "") + $"{MarkerPrefix}{id} at={stamp} app=\"{EscapeMetadata(CleanPart(capture.Source.AppName))}\"{MarkerSuffix}\n\n{body}\n";
+        var sourceLink = SourceLink(capture.Source);
+        return (includeSourceHeading ? $"### {SourceHeading(capture.Source)}\n" : "") + $"{MarkerPrefix}{id} at={stamp} app=\"{EscapeMetadata(CleanPart(capture.Source.AppName))}\"{MarkerSuffix}\n\n" +
+               (sourceLink is null ? "" : sourceLink + "\n\n") + body + "\n";
+    }
+
+    /// <summary>
+    /// Formats only absolute HTTP(S) source URLs. Angle brackets isolate Markdown syntax,
+    /// and encoded parentheses keep the editor's link recognizer from ending the URL early.
+    /// </summary>
+    internal static string? SourceLink(CaptureSource source)
+    {
+        var value = source.Url;
+        if (string.IsNullOrEmpty(value)) return null;
+
+        static bool IsUnreservedOrSubDelimiter(Rune rune)
+        {
+            if (rune.Value is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9') return true;
+            return "-._~!$&'()*+,;=".Contains((char)rune.Value);
+        }
+
+        static bool IsValidComponent(string component, bool allowColon, bool allowAt,
+            bool allowSlash, bool allowQuestion, bool allowMarkdownEscapes)
+        {
+            foreach (var rune in component.EnumerateRunes())
+            {
+                if (IsUnreservedOrSubDelimiter(rune) || rune.Value > 0x7F || rune.Value == '%') continue;
+                if (allowColon && rune.Value == ':') continue;
+                if (allowAt && rune.Value == '@') continue;
+                if (allowSlash && rune.Value == '/') continue;
+                if (allowQuestion && rune.Value == '?') continue;
+                if (allowMarkdownEscapes && rune.Value is '<' or '>' or '\\') continue;
+                return false;
+            }
+
+            return true;
+        }
+
+        foreach (var rune in value.EnumerateRunes())
+        {
+            var category = Rune.GetUnicodeCategory(rune);
+            if (Rune.IsWhiteSpace(rune) || category is UnicodeCategory.Control or UnicodeCategory.Format or
+                UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator) return null;
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '%') continue;
+            if (index + 2 >= value.Length || !char.IsAsciiHexDigit(value[index + 1]) || !char.IsAsciiHexDigit(value[index + 2])) return null;
+            index += 2;
+        }
+
+        var schemeEnd = value.IndexOf(':');
+        if (schemeEnd <= 0) return null;
+        var scheme = value[..schemeEnd].ToLowerInvariant();
+        if (scheme is not ("http" or "https") || !value.AsSpan(schemeEnd + 1).StartsWith("//")) return null;
+
+        var authorityStart = schemeEnd + 3;
+        var authorityEnd = value.IndexOfAny(['/','?','#'], authorityStart);
+        if (authorityEnd < 0) authorityEnd = value.Length;
+        var authority = value[authorityStart..authorityEnd];
+        if (authority.Length == 0) return null;
+        var at = authority.IndexOf('@');
+        if (at >= 0)
+        {
+            if (at != authority.LastIndexOf('@') || !IsValidComponent(authority[..at], true, false, false, false, true)) return null;
+        }
+
+        var hostPort = at >= 0 ? authority[(at + 1)..] : authority;
+        if (hostPort.Length == 0) return null;
+        string? port = null;
+        if (hostPort[0] == '[')
+        {
+            var close = hostPort.IndexOf(']');
+            if (close <= 1) return null;
+            var literal = hostPort[1..close];
+            if (!literal.Contains(':') || literal.Any(c => !(char.IsAsciiHexDigit(c) || c is ':' or '.' or '%'))) return null;
+            var suffix = hostPort[(close + 1)..];
+            if (suffix.Length > 0)
+            {
+                if (suffix[0] != ':') return null;
+                port = suffix[1..];
+            }
+        }
+        else
+        {
+            var colon = hostPort.IndexOf(':');
+            if (colon >= 0)
+            {
+                if (colon != hostPort.LastIndexOf(':')) return null;
+                port = hostPort[(colon + 1)..];
+                if (colon == 0 || !IsValidComponent(hostPort[..colon], false, false, false, false, false)) return null;
+            }
+            else if (!IsValidComponent(hostPort, false, false, false, false, false)) return null;
+        }
+        if (port is not null && (port.Length == 0 || !int.TryParse(port, NumberStyles.None, CultureInfo.InvariantCulture, out var portNumber) || portNumber > 65_535)) return null;
+
+        var remainder = value[authorityEnd..];
+        var fragmentStart = remainder.IndexOf('#');
+        var beforeFragment = fragmentStart >= 0 ? remainder[..fragmentStart] : remainder;
+        var fragment = fragmentStart >= 0 ? remainder[(fragmentStart + 1)..] : null;
+        var queryStart = beforeFragment.IndexOf('?');
+        var path = queryStart >= 0 ? beforeFragment[..queryStart] : beforeFragment;
+        var query = queryStart >= 0 ? beforeFragment[(queryStart + 1)..] : null;
+        if ((path.Length > 0 && path[0] != '/') ||
+            !IsValidComponent(path, true, true, true, false, true) ||
+            (query is not null && !IsValidComponent(query, true, true, true, true, true)) ||
+            (fragment is not null && !IsValidComponent(fragment, true, true, true, true, true))) return null;
+
+        var normalized = scheme + value[schemeEnd..]
+            .Replace("<", "%3C", StringComparison.Ordinal)
+            .Replace(">", "%3E", StringComparison.Ordinal)
+            .Replace("\\", "%5C", StringComparison.Ordinal)
+            .Replace("(", "%28", StringComparison.Ordinal)
+            .Replace(")", "%29", StringComparison.Ordinal);
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var parsed) || parsed.Scheme != scheme || string.IsNullOrEmpty(parsed.Host)) return null;
+        return $"[Source](<{normalized}>)";
     }
 
     public static string SourceHeading(CaptureSource source)

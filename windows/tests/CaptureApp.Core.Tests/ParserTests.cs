@@ -54,6 +54,33 @@ public sealed class ParserTests
     }
 
     [Fact]
+    public void SourceLinksKeepImagesClassifiedAndPreserveTextBodies()
+    {
+        const string sourceUrl = "https://example.test/page?a=1#part";
+        var imageCapture = new Capture(Id, CheckVault.Now, CaptureContent.Image("assets/shot one.png"), new(Url: sourceUrl));
+        var imageMarkdown = CaptureFormat.Block(imageCapture, "", CheckVault.Zone);
+        var image = Assert.Single(NoteParser.Parse(imageMarkdown, "Root.md", "Root", CheckVault.Zone).Blocks);
+        Assert.Equal(BlockKind.Image, image.Kind);
+        Assert.Equal("assets/shot one.png", image.AssetPath);
+        Assert.Equal($"[Source](<{sourceUrl}>)\n\n![](assets/shot%20one.png)", image.Body);
+
+        var literalLink = $"[Source](<{sourceUrl}>)";
+        var selectionCapture = new Capture(Id, CheckVault.Now, CaptureContent.Text(literalLink), new(Url: sourceUrl));
+        var selection = Assert.Single(NoteParser.Parse(CaptureFormat.Block(selectionCapture, "", CheckVault.Zone), "Root.md", "Root", CheckVault.Zone).Blocks);
+        Assert.Equal(BlockKind.Text, selection.Kind);
+        Assert.Equal($"{literalLink}\n\n{literalLink}", selection.Body);
+
+        foreach (var invalidUrl in new[] { "javascript:alert(1)", "file:///tmp/page", "https://example.test/%GG" })
+        {
+            var malformedText = $"[Source](<{invalidUrl}>)\n\n![](assets/shot.png)";
+            var malformedCapture = new Capture(Id, CheckVault.Now, CaptureContent.Text(malformedText), new());
+            var parsed = Assert.Single(NoteParser.Parse(CaptureFormat.Block(malformedCapture, "", CheckVault.Zone), "Root.md", "Root", CheckVault.Zone).Blocks);
+            Assert.Equal(BlockKind.Text, parsed.Kind);
+            Assert.Equal(malformedText, parsed.Body);
+        }
+    }
+
+    [Fact]
     public void LooseBlocksTitlesBOMChunkingAndMalformedBoundaries()
     {
         var first = new Capture(Id, CheckVault.Now, CaptureContent.Text("first body"), new());

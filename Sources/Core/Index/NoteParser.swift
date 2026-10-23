@@ -225,8 +225,20 @@ public enum NoteParser {
     }
 
     private static func imagePath(_ body: String, notePath: String, assetRootURL: URL?) -> String? {
-        guard !body.contains("\n"), body.hasPrefix("![]("), body.hasSuffix(")") else { return nil }
-        let encodedLink = String(body.dropFirst(4).dropLast())
+        var imageBody = body
+        let sourcePrefix = "[Source](<"
+        if body.hasPrefix(sourcePrefix), let separator = body.range(of: "\n\n") {
+            let sourceLine = String(body[..<separator.lowerBound])
+            let candidate = body[separator.upperBound...]
+            if !sourceLine.contains("\n"), !candidate.contains("\n"), sourceLine.hasSuffix(">)") {
+                let sourceURL = String(sourceLine.dropFirst(sourcePrefix.count).dropLast(2))
+                if let canonicalSourceLine = CaptureFormat.sourceLink(for: CaptureSource(url: sourceURL)), canonicalSourceLine == sourceLine {
+                    imageBody = String(candidate)
+                }
+            }
+        }
+        guard !imageBody.contains("\n"), imageBody.hasPrefix("![]("), imageBody.hasSuffix(")") else { return nil }
+        let encodedLink = String(imageBody.dropFirst(4).dropLast())
         guard !encodedLink.isEmpty, !encodedLink.hasPrefix("/"), !encodedLink.contains(":"),
               !encodedLink.contains("\\"), !encodedLink.contains("?"), !encodedLink.contains("#"),
               !encodedLink.contains("\n") else { return nil }

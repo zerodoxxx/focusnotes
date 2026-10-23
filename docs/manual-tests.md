@@ -1,13 +1,12 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-22 (previous commit: `77592ee`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
-CaptureKit currently has no app wiring. Run these checks from a signed development
-host that calls the public APIs from its Carbon hotkey handlers. Capture
-`FrontmostContext.capture()` synchronously in each handler, before creating a
-`Task`, and pass it to `SelectionReader.read(context:)` or
-`RegionCapturer.capture(context:)`. Log results without opening a window or
-activating the host. Use the same signing identity across rebuilds.
+The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
+from a signed development build. The handlers capture
+`FrontmostContext.capture()` synchronously, before creating a `Task`, then pass
+it to `SelectionReader.read(context:)` or `RegionCapturer.capture(context:)`.
+Use the same signing identity across rebuilds.
 
 1. **Permissions:** With Accessibility access disabled, confirm selected-text
    capture returns `accessibilityNotTrusted`. Invoke
@@ -38,7 +37,16 @@ activating the host. Use the same signing identity across rebuilds.
    and retry. Select a rectangle: expect valid PNG data and the original frontmost
    context. Repeat and press Escape: expect `cancelled`. Verify the temporary PNG
    and its temporary directory are removed after success and cancellation.
-7. **Focus and lifecycle:** For both captures, leave a text cursor active in the
+7. **Browser URL:** In Safari, Chrome, and Edge, load a nonsensitive HTTP(S)
+   page and leave focus in the page (not the address field). Use English UI in
+   Chrome and Edge; in Chrome, enable **Always show full URLs** from the
+   address-bar context menu. When the browser exposes its complete address, each
+   selection and area capture should have a separate `[Source](<...>)` link before
+   its content. When the value is incomplete or unavailable, the capture should
+   still save without the link. Capture from Firefox, Notes, or a `file:`/`about:`
+   page has no Source link. Repeat with the address field focused and confirm no
+   link is added while capture still succeeds.
+8. **Focus and lifecycle:** For both captures, leave a text cursor active in the
    original app. After capture or Escape, type: input must still reach that app.
    The capture host must never become active or show a Dock icon. Verify all five
    default shortcuts dispatch once to the correct handler. Unregister them and
@@ -380,9 +388,9 @@ Close with esc after testing; the live fixture includes sample Browse rows.
 
 # Windows release device checks
 
-The Windows edition is implemented, but these device checks are still required before publishing Windows installers.
-The automated Windows runners cannot cover them. Nothing counts toward a release until every section passes on all
-three targets (Windows 11 arm64, Windows 11 x64, Windows 10 22H2 x64). Automated tests tagged
+The published Windows edition includes x64 and arm64 installers. These device checks provide release-grade validation
+that automated Windows runners cannot cover. Run them for Windows 11 arm64, Windows 11 x64, and Windows 10 22H2 x64.
+Automated tests tagged
 `Needs=InteractiveDesktop` (set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1`, then `dotnet test --filter "Needs=InteractiveDesktop"`) are part of 11a and 11b. Record the
 target, build and result for each item.
 
@@ -426,10 +434,18 @@ target, build and result for each item.
 9. **Panels and accessibility:** Turn Windows animations off: panels and toasts appear without motion. With Narrator on,
    the editor ("Note text"), chrome buttons and Actions/Browse rows are announced with labels.
 10. **Emulation:** Run the x64 build on Windows 11 arm64: Setup offers the native build.
+11. **Browser URL:** In Chrome and Edge with English browser UI, load a nonsensitive
+    HTTP(S) page and leave focus in the page. Enable Chrome's **Always show full URLs**
+    option from the address-bar context menu. When UI Automation exposes the
+    complete address, selection and area captures should each include a separate
+    `[Source](<...>)` link before content. If the value is incomplete or unavailable,
+    capture should still save without the link. In an unsupported app (including
+    Firefox), with a localized control name, while the address field is focused,
+    or on a `file:`/`about:` page, capture should also save without the Source link.
 
 ## 11b Native x64 (Windows 11 and Windows 10 22H2)
 
-1. Repeat 11a items 1 to 3 and 6 on both systems.
+1. Repeat 11a items 1 to 3, 6, and 11 on both systems.
 2. Install the x64 `Setup.exe` without administrator rights, then update from vN to vN+1. The app relaunches, the tray
    icon returns, shortcuts re-register, Setup does not reappear, and `Get-Process`/PE inspection shows the x64 build
    stays AMD64.

@@ -45,6 +45,36 @@ func checkNoteParser() throws {
         }
     }
 
+    let sourceURL = "https://example.test/page?a=1#part"
+    let linkedImage = Capture(id: id, createdAt: minute, content: .image(assetPath: "assets/shot one.png"),
+                              source: CaptureSource(url: sourceURL))
+    let linkedImageMarkdown = CaptureFormat.block(for: linkedImage, noteRelativeDir: "", calendar: calendar)
+    let linkedImageBlock = NoteParser.parse(contents: linkedImageMarkdown, notePath: "Root.md", titleFallback: "Root", calendar: calendar).blocks[0]
+    let linkedImageBody = "[Source](<\(sourceURL)>)\n\n![](assets/shot%20one.png)"
+    try require(linkedImageBlock.kind == .image && linkedImageBlock.assetPath == "assets/shot one.png",
+                "a generated source link must not hide the following image asset")
+    try require(linkedImageBlock.body == linkedImageBody, "image classification must preserve the complete linked body")
+
+    let literalLink = "[Source](<\(sourceURL)>)"
+    let linkedSelection = Capture(id: id, createdAt: minute, content: .text(literalLink), source: CaptureSource(url: sourceURL))
+    let selectionBlock = NoteParser.parse(
+        contents: CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar),
+        notePath: "Root.md", titleFallback: "Root", calendar: calendar
+    ).blocks[0]
+    try require(selectionBlock.kind == .text && selectionBlock.body == "\(literalLink)\n\n\(literalLink)",
+                "a selected literal source link must remain in the parsed text body")
+
+    for invalidURL in ["javascript:alert(1)", "file:///tmp/page", "https://example.test/%GG"] {
+        let malformedText = "[Source](<\(invalidURL)>)\n\n![](assets/shot.png)"
+        let malformedCapture = Capture(id: id, createdAt: minute, content: .text(malformedText), source: CaptureSource())
+        let malformedBlock = NoteParser.parse(
+            contents: CaptureFormat.block(for: malformedCapture, noteRelativeDir: "", calendar: calendar),
+            notePath: "Root.md", titleFallback: "Root", calendar: calendar
+        ).blocks[0]
+        try require(malformedBlock.kind == .text && malformedBlock.body == malformedText,
+                    "a malformed or non-HTTP source-like line must remain ordinary text")
+    }
+
     let first = Capture(id: id, createdAt: minute, content: .text("first body"), source: CaptureSource())
     let second = Capture(id: UUID(), createdAt: minute.addingTimeInterval(60), content: .text("second body"), source: CaptureSource())
     let markdown = "# Mixed\n\nLoose introduction\n### ordinary heading\nstill loose\n\nAnother loose paragraph\n\n"

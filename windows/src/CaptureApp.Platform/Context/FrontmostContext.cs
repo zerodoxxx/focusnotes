@@ -7,10 +7,10 @@ namespace CaptureApp.Platform.Context;
 
 /// <summary>A hotkey-time identity. Capture synchronously before opening any application UI.</summary>
 public sealed record FrontmostContext(nint WindowHandle, uint ProcessIdentifier, string? AppName = null,
-    string? ExecutablePath = null, string? WindowTitle = null)
+    string? ExecutablePath = null, string? WindowTitle = null, string? Url = null)
 {
     // SourceHeading in Core owns the Swift browser-suffix stripping and Unknown source fallback.
-    public CaptureSource Source => new(AppName, WindowTitle);
+    public CaptureSource Source => new(AppName, WindowTitle, Url);
     public string SourceHeading => CaptureFormat.SourceHeading(Source);
 
     public static FrontmostContext Capture()
@@ -41,7 +41,8 @@ public sealed record FrontmostContext(nint WindowHandle, uint ProcessIdentifier,
         }
         var title = new char[32768];
         var count = NativeMethods.GetWindowText(window, title, title.Length);
-        return new(window, pid, name, path, count > 0 ? new string(title, 0, count) : null);
+        var url = BrowserAddress.Read(window, pid, path);
+        return new(window, pid, name, path, count > 0 ? new string(title, 0, count) : null, url);
     }
 
     internal bool IsStillFrontmost()

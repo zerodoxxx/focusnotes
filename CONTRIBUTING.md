@@ -1,6 +1,6 @@
 # Contributing
 
-Last Updated: 2026-10-22 (previous commit: `d78e2fd`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
 Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
@@ -73,7 +73,7 @@ GitHub's standard hosted runners are free for public repositories. The 2,000-min
 
 ## Windows
 
-The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). Local hooks also require Git Bash and Python 3 on `PATH`. Windows installers are not part of the currently published releases. Build and test from `windows/`:
+The implemented Windows edition lives in `windows/` (.NET 10; the SDK version is pinned in `windows/global.json`). Local hooks also require Git Bash and Python 3 on `PATH`. Current releases include Windows installers; build and test from `windows/`:
 
 ```sh
 cd windows

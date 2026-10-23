@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-22 (previous commit: `d78e2fd`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -108,7 +108,8 @@ merge commit. Ordinary code merges do not start a release. The workflow:
 - runs `scripts/release.sh` in tag mode: all checks, the build, signing, the
   bundle checks and the DMG verification described in `release.sh` below;
 - attests the DMG, pushes tag `v<version>`, and creates a **draft** release with the DMG,
-  `SHA256SUMS.txt`, `appcast.xml` and generated notes.
+  `SHA256SUMS.txt`, `appcast.xml` and generated notes. When the Windows release gate is enabled, it also includes
+  the x64 and arm64 installers, portable packages, and signed update indexes.
 
 Review and test the draft, then publish it in GitHub. A regular merge can happen
 at any time; the release includes the code on `main` when its version commit is
@@ -119,9 +120,9 @@ that no release exists for it. If a release exists or GitHub cannot confirm its
 state, the workflow leaves the release and tag untouched; inspect and resolve
 that state before retrying. `BUILD` always goes up.
 
-The published [v0.1.1 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1)
-already uses that version, so it cannot be reused. Choose an unused version
-such as `0.1.2` for the next release.
+The published [v0.1.5 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.5)
+already uses that version, so it cannot be reused. Choose a stable version greater than the current `VERSION` in
+`Config/app.env` (currently `0.1.5`).
 
 The workflow writes only to a release branch and opens a PR; the version commit
 reaches the default branch through the usual review and merge process. Its
@@ -189,12 +190,11 @@ existing users are offered the update.
 
 ## Windows release prerequisites
 
-The Windows edition is implemented, but the currently published [v0.1.1](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.1)
-and [v0.1.0](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.0) releases contain macOS DMGs and checksums,
-with no Windows assets. The release workflow now builds both Windows architectures on every release push, whether or
-not Authenticode signing is configured. Without it, Windows installers are unsigned; SmartScreen may warn and Smart
-App Control may block the app when it cannot confirm the app is safe. Do not disable Windows protections to install
-focusnotes. See the [README](../README.md#windows-install-notes) for the user-facing limitation.
+The published [v0.1.5 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.5) includes Windows installers
+and portable packages for x64 and arm64. The release workflow builds both architectures when its Windows release gate
+passes, whether or not Authenticode signing is configured. Without it, Windows installers are unsigned; SmartScreen
+may warn and Smart App Control may block the app when it cannot confirm the app is safe. Do not disable Windows
+protections to install focusnotes. See the [README](../README.md#windows-install-notes) for user installation guidance.
 
 Windows update signing is still required independently of Authenticode. The gate fails if the committed public key
 set or the `WINDOWS_UPDATE_ED_KEY_1` private secret is missing. The release job signs each update index with K1 and

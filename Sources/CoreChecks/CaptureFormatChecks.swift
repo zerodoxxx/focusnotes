@@ -26,6 +26,30 @@ func checkCaptureFormat() throws {
         ("CRLF", block(.text("one\r\ntwo\r\n")), "### Unknown source\n\(marker())\n\none\ntwo\n")
     ]
     for (name, actual, expected) in cases { try require(actual == expected, "\(name): got \(actual.debugDescription)") }
+    let selectionURL = "https://docs.example.test/notes?id=1#part"
+    let selection = block(.text("Selected words"), source: CaptureSource(appName: "Browser", windowTitle: "Selection", url: selectionURL))
+    try require(selection == "### Selection\n\(marker("Browser"))\n\n[Source](<\(selectionURL)>)\n\nSelected words\n",
+                "selection source URL must follow the marker and precede captured text: \(selection.debugDescription)")
+    let regionURL = "https://docs.example.test/doc/section#reading"
+    let region = block(.image(assetPath: "assets/shot.png"), source: CaptureSource(appName: "Safari", windowTitle: "Document — Safari", url: regionURL))
+    try require(region == "### Document\n\(marker("Safari"))\n\n[Source](<\(regionURL)>)\n\n![](assets/shot.png)\n",
+                "region source URL must precede the saved image")
+    let escapedURL = "HTTPS://example.test/a(b)/x\\y?q=<x>&r=(2)#part(3)"
+    let escapedURLBlock = block(.text("Hello"), source: CaptureSource(url: escapedURL))
+    try require(escapedURLBlock.contains("[Source](<https://example.test/a%28b%29/x%5Cy?q=%3Cx%3E&r=%282%29#part%283%29>)"),
+                "source URL must normalize the scheme and escape Markdown delimiters")
+    let percentURL = "https://example.test/path%2Fpart?next=a%20b&tag=x+y#frag%2f"
+    try require(block(.text("Hello"), source: CaptureSource(url: percentURL)).contains("[Source](<\(percentURL)>)"),
+                "source URL must preserve valid percent escapes and query/fragment text")
+    let noURL = block(.text("Hello"), source: CaptureSource(appName: "Safari"))
+    for invalidURL in [
+        "javascript:alert(1)", "file:///etc/passwd", "http:///missing-host", "https://",
+        "https://example.test/bad%2", "https://example.test/a b", "https://exa mple.test/path",
+        "https://example.test:abc/path", "https://example.test:65536/path", "https://example.test/path\nnext"
+    ] {
+        let invalid = block(.text("Hello"), source: CaptureSource(appName: "Safari", url: invalidURL))
+        try require(invalid == noURL, "invalid source URL must be omitted: \(invalidURL.debugDescription)")
+    }
     for suffix in [" — Mozilla Firefox", " - Google Chrome", " - Brave", " — Safari"] {
         try require(CaptureFormat.sourceHeading(CaptureSource(windowTitle: "Page" + suffix)) == "Page", "browser suffix remained")
     }
