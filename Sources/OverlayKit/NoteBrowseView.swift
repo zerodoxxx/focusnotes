@@ -100,6 +100,7 @@ final class NoteBrowseView: NoteCardView {
                height: cappedHeight(contentTop + (shown.isEmpty ? OverlayTheme.browseEmptyHeight : metrics.visible) + footerHeight))
     }
 
+    /// `selectedID` wins over `selectedIndex` when it matches a shown row; otherwise `selectedIndex` applies.
     init(items: [BrowseItem], query: String = "", selectedIndex: Int? = nil, selectedID: String? = nil) {
         self.items = items
         super.init(placeholder: "Search notes…", query: query)

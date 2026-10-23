@@ -735,6 +735,7 @@ private func checkNoteOverlays() async throws {
     try require((rowViews.first?.accessibilityLabel() ?? "").contains("Note 250") || rowViews.first.map({ descendants($0).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Note 250" } }) == true,
                 "The pinned item must be listed first")
 
+    // Characterization: locks in Browse refresh query/selection retention; not a regression test for a known bug.
     var refreshedItems = [
         BrowseItem(id: "beta", title: "Trip beta", detail: "Note", symbolName: "doc.text", isPinned: false),
         BrowseItem(id: "alpha", title: "Trip alpha", detail: "Note", symbolName: "doc.text", isPinned: false),
@@ -765,7 +766,8 @@ private func checkNoteOverlays() async throws {
     ]
     // Refresh is synchronous; assert before yielding so a hover event cannot change the selected row.
     refreshedEditor.refreshBrowseItems()
-    let refreshedRows = descendants(refreshedPanel.contentView!).filter { String(describing: type(of: $0)) == "BrowseRowView" }
+    guard let refreshedContent = refreshedPanel.contentView else { throw GalleryError("Refreshed Browse panel has no content view") }
+    let refreshedRows = descendants(refreshedContent).filter { String(describing: type(of: $0)) == "BrowseRowView" }
     let selectedRow = refreshedRows.firstIndex { $0.accessibilityValue() as? String == "Selected" }
     try require(try field(in: refreshedPanel).stringValue == "Trip"
                 && selectedBrowseID() == "beta" && selectedRow == 1,
