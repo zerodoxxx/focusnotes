@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-22 (previous commit: `77592ee`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -17,18 +17,20 @@ destination; the next normal capture still goes to the session.
 Captures append to plain Markdown compatible with Obsidian: `#` contains the note title;
 `##` is a user subheading, and `###` identifies a source. A source heading
 appears on the first capture, when the source changes, or after an intervening
-Markdown heading outside fenced code. Timestamps and apps live in invisible
-markers, so repeated captures stay uncluttered:
+Markdown heading outside fenced code. Timestamps and app metadata live in
+invisible markers; browser captures add a separate `Source` link when available:
 
 ```markdown
 # Inbox
 
 ### System Design
-<!-- capture:a1b2c3d4-0000-4000-8000-000000000001 at=2026-10-14T13:04:58+05:30 app="Firefox" -->
+<!-- capture:a1b2c3d4-0000-4000-8000-000000000001 at=2026-10-14T13:04:58+05:30 app="Safari" -->
+
+[Source](<https://example.com/design>)
 
 First paragraph.
 
-<!-- capture:a1b2c3d4-0000-4000-8000-000000000002 at=2026-10-14T13:05:10+05:30 app="Firefox" -->
+<!-- capture:a1b2c3d4-0000-4000-8000-000000000002 at=2026-10-14T13:05:10+05:30 app="Safari" -->
 
 Second paragraph.
 
@@ -36,10 +38,25 @@ Second paragraph.
 <!-- subheading:a1b2c3d4-0000-4000-8000-000000000003 -->
 
 ### System Design
-<!-- capture:a1b2c3d4-0000-4000-8000-000000000004 at=2026-10-14T13:05:25+05:30 app="Firefox" -->
+<!-- capture:a1b2c3d4-0000-4000-8000-000000000004 at=2026-10-14T13:05:25+05:30 app="Safari" -->
 
 Third paragraph.
 ```
+
+When a selection or area capture comes from a supported browser whose native
+accessibility interface exposes its complete address-bar value, the capture
+block includes a separate `[Source](<...>)` Markdown link immediately before
+the content. Only HTTP(S) addresses are accepted. The app reads the exposed
+address bar, not page contents or selected text; if the browser or address bar
+is unsupported, inaccessible, or does not expose a complete URL, the capture
+still saves without the link. A focused address field is skipped because it may
+contain an unsubmitted edit rather than the current page address. On macOS, the supported browsers are Safari,
+Chrome, and Edge. On Windows, Chrome and Edge are supported when UI Automation
+exposes the English **Address and search bar** control and a complete HTTP(S)
+value. Firefox is not supported on either platform.
+Chrome may hide part of its address by default; right-click the address bar and
+choose **Always show full URLs** to expose the complete URL when needed. ([Chromium's explanation](https://blog.chromium.org/2020/08/helping-people-spot-spoofs-url.html))
+([Sources/CaptureKit/FrontmostContext.swift](../Sources/CaptureKit/FrontmostContext.swift), [windows/src/CaptureApp.Platform/Context/FrontmostContext.cs](../windows/src/CaptureApp.Platform/Context/FrontmostContext.cs), [Sources/Core/CaptureFormat.swift](../Sources/Core/CaptureFormat.swift), [windows/src/CaptureApp.Core/CaptureFormat.cs](../windows/src/CaptureApp.Core/CaptureFormat.cs))
 
 Browser suffixes are removed from source titles; empty titles fall back to the
 app, then “Unknown source”. Legacy dated capture blocks remain readable and are
@@ -154,7 +171,7 @@ newer. The index uses no triggers, which avoids the FTS5-in-trigger issue in SQL
 
 ## Windows differences
 
-The implemented Windows edition writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. Windows installers are not part of the currently published releases. This section lists where behaviour differs. Everything above applies unless stated here.
+The implemented Windows edition writes the same files as the Mac app: the same Markdown, hidden markers, `Inbox.md`, `Sessions/`, `assets/` and state-file schemas, so a vault can move between the two. Current GitHub releases include Windows installers for x64 and arm64. This section lists where behaviour differs. Everything above applies unless stated here.
 
 - **Keys.** Ctrl replaces ⌘ in the quick note (Ctrl+Enter saves, Ctrl+K Actions, Ctrl+P Browse, Ctrl+N new, Ctrl+Shift+N Write outside session while a session is active, Ctrl+O open as note, Ctrl+Shift+P pin, Ctrl+Shift+C copy Markdown, Ctrl+Shift+Backspace discard) and Alt+Enter replaces ⌥↩ ("Show in File Explorer"). The global shortcuts use Alt+Shift, matching the Mac's Option+Shift modifier pair, plus Q, G, F, A, W, H and E (selection, area, search, session, write, subheading, notes folder). Outside-session captures use Ctrl+Shift+Q for selection and Ctrl+Shift+G for an area; Ctrl+Shift+W opens the quick note outside the session. All global shortcuts can be rebound in Settings.
 - **Paths.** The vault defaults to `Documents\focusnotes` and app state to `%LocalAppData%\com.zerodoxxx.focusnotes`. In a note name, `/` and `\` both separate folders, and a leading `/` resolves from `%USERPROFILE%` instead of the home folder. External-note registry entries are stored `/`-separated and home-relative, as on the Mac. A path that crosses a symbolic link, junction or other reparse point is rejected where the Mac rejects symlinks. Paths longer than 260 characters work.

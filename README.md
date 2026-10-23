@@ -6,15 +6,24 @@ focusnotes is a small native app for capturing what you're reading or thinking w
 The macOS edition runs from the menu bar; select text and press a shortcut, drag over part of the screen, or jot a
 quick note in a floating panel. Everything lands in plain Markdown files you own.
 
-> **Platforms.** FocusNotes supports macOS and Windows. Windows installers are not part of the currently published
-> releases yet; see [Windows support](#windows-support). The
-> product details, shortcuts and install steps below describe the macOS edition and currently published macOS build.
+> **Platforms.** FocusNotes supports macOS and Windows. Windows x64 and arm64 installers and portable archives are
+> available from [Releases](https://github.com/zerodoxxx/focusnotes/releases); see [Windows support](#windows-support)
+> for installation steps and platform details. The feature overview and shortcut table use macOS defaults; Windows
+> behavior, shortcuts, and installation are covered in Windows support.
 
 ## Features
 
 - **Capture selection.** Saves the selected text from any app, along with where it came from.
 - **Capture area.** Drag over part of the screen to save it as an image. Text in the image is recognised (OCR) and
   becomes searchable.
+- **Browser links.** Selection and area captures from supported browsers include a separate Markdown `Source` link
+  to the current page when its complete HTTP(S) address is exposed by the browser's native accessibility interface.
+  FocusNotes reads the address bar only; it does not inspect page contents or selected text to find a URL. If the
+  field is being edited or does not expose a complete address, the capture still saves without a link. Supported
+  browsers are Safari, Chrome, and Edge on
+  macOS, and Chrome and Edge on Windows. Chrome and Edge must expose their English “Address and search bar” control;
+  Firefox is not supported. In Chrome, right-click the address bar and choose **Always show full URLs** to expose the
+  complete URL when needed ([Chromium's explanation](https://blog.chromium.org/2020/08/helping-people-spot-spoofs-url.html)).
 - **Quick note.** A floating Markdown panel with a live preview. It stays on screen while you work and saves with ⌘↩.
   Include folder segments in the title to save a note in a subfolder.
 - **Sessions.** Start a session for a topic (a course, a paper, a design review) and every capture goes to that
@@ -140,13 +149,15 @@ Session names use the same slash convention inside `Sessions/`: a valid name suc
 `archive/Standup` creates or resumes a nested session note. Relative malformed slash forms, such
 as `pros / cons` or `TODO/`, use the cleaned flat session-name matching flow instead.
 
-Timestamps and source details are stored in HTML comments, so the visible text stays clean:
+Timestamps and source app/window details are stored in HTML comments. Browser captures also add a separate `Source` link:
 
 ```markdown
 # System Design
 
 ### Designing Data-Intensive Applications
-<!-- capture:… at=2026-10-14T13:04:58+05:30 app="Firefox" -->
+<!-- capture:… at=2026-10-14T13:04:58+05:30 app="Safari" -->
+
+[Source](<https://example.com/design>)
 
 Replication lag is the delay between a write on the leader and its visibility on followers.
 ```
@@ -190,10 +201,24 @@ Your notes stay in your notes folder.
 ## Windows support
 
 A native Windows edition (C# on .NET 10 with WPF) lives in [`windows/`](windows/). It implements the FocusNotes
-features on Windows 10 22H2 and Windows 11, for x64 and arm64. The currently published
-[releases](https://github.com/zerodoxxx/focusnotes/releases) do not include Windows installers yet. The release
-workflow now builds x64 and arm64 installers without SignPath; unless Authenticode signing is configured, those
-installers are unsigned. Use the [Windows build instructions](CONTRIBUTING.md#windows) to build from source.
+features on Windows 10 22H2 and Windows 11, for x64 and arm64. Current
+[releases](https://github.com/zerodoxxx/focusnotes/releases) include a `Setup.exe` installer and a portable ZIP for
+each architecture. Authenticode signing is optional; unsigned installers may trigger Windows security warnings or
+be blocked by Smart App Control. Use the [Windows build instructions](CONTRIBUTING.md#windows) to build from source.
+
+### Install on Windows
+
+From [Releases](https://github.com/zerodoxxx/focusnotes/releases), download `focusnotes-win-x64-Setup.exe` for x64
+(Intel/AMD) or `focusnotes-win-arm64-Setup.exe` for Windows on ARM, plus the same release's `SHA256SUMS.txt`. The
+corresponding portable ZIP is also available for each architecture. In PowerShell, check the installer's SHA-256
+against its entry in `SHA256SUMS.txt` (use the ARM64 filename if that is the installer you downloaded):
+
+```powershell
+Get-FileHash .\focusnotes-win-x64-Setup.exe -Algorithm SHA256
+```
+
+Run the matching `Setup.exe`. It installs for your user under `%LocalAppData%` and does not require administrator
+rights. On first launch, complete Setup to choose the notes folder and configure the app. Read [Windows install notes](#windows-install-notes) for SmartScreen and Smart App Control guidance.
 
 - **Targets.** Windows 10 22H2 and Windows 11, on x64 and arm64. Each architecture gets its own installer and
   update channel.

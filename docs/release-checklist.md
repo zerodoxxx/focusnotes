@@ -1,6 +1,6 @@
 # Release review checklist
 
-Last Updated: 2026-10-22 (previous commit: `62ccd67`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
@@ -100,10 +100,10 @@ results above do not replace them. See [releasing.md](releasing.md).
 
 ## Windows distribution status
 
-The Windows edition is implemented, but Windows installers are not part of the currently published releases. The
-release workflow now attaches Windows assets to the draft automatically; use this checklist to review them before
-publishing. macOS items above are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the
-release setup.
+The published [v0.1.5 release](https://github.com/zerodoxxx/focusnotes/releases/tag/v0.1.5) includes Windows x64 and
+arm64 installers and portable packages. The release workflow attaches these assets to the draft automatically; use
+this checklist to review the packages and record the remaining Windows release-readiness checks. macOS items above
+are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) for the release setup.
 
 - [ ] Release signing mode is understood: the workflow supports unsigned Authenticode installers with all three
   optional signer settings unset. If signing is configured, `SIGNPATH_API_TOKEN`, `WINDOWS_SIGN_TEMPLATE` and

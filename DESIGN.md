@@ -1,12 +1,14 @@
 # Design
 
-Last Updated: 2026-10-23 (previous commit: `f09f3f8`)
+Last Updated: 2026-10-23 (previous commit: `3af31ff`)
 
 ## Product surfaces
 
 focusnotes runs as a macOS accessory app and puts its always-available commands in a status-bar menu. The menu includes selection and area capture, note search, session control, quick-note writing, subheading entry, the notes folder, semantic-model controls, permission links, an optional updater item, and Quit. ([Sources/App/main.swift](Sources/App/main.swift#L6-L7), [Sources/App/AppController.swift](Sources/App/AppController.swift#L1020-L1069))
 
 The default global shortcuts are ⌥⇧C for selection capture, ⌥⇧S for area capture, ⌥⇧F for search, ⌥⇧A for session control, ⌥⇧N for a quick note, ⌃⇧N for a quick note outside the session, ⌥⇧H for a subheading, and ⌥⇧L for the notes folder. Outside-session captures use ⌃⇧C for selected text and ⌃⇧S for an area. They open Add to note… immediately, with note suggestions; Escape saves to Inbox. Both work with or without an active session and leave it unchanged. The toast names the destination and, when present, the still-active session. Re-pressing a normal capture shortcut during its toast still opens the existing destination picker. ([Sources/CaptureKit/Hotkeys.swift](Sources/CaptureKit/Hotkeys.swift#L49-L55)) These are registered as exclusive Carbon hotkeys; if registration fails, the menu keeps the command, removes its shortcut indication, and exposes a retry command with a reason in the tooltip. ([Sources/App/AppController.swift](Sources/App/AppController.swift#L218-L243), [Sources/CaptureKit/Hotkeys.swift](Sources/CaptureKit/Hotkeys.swift#L89-L121), [Sources/App/AppController.swift](Sources/App/AppController.swift#L1087-L1111))
+
+Selection and area captures from Safari, Chrome, or Edge can include a separate `[Source](<...>)` Markdown link before the captured content. CaptureKit reads the browser's native address field and accepts complete HTTP(S) addresses only; it does not inspect page contents or selected text. It ignores a focused address field, which may hold an unsubmitted edit. Safari uses its Accessibility field identifier. Chrome and Edge require the English **Address and search bar** accessibility name. Firefox is not supported, and an unavailable or incomplete field leaves the capture intact without a link. ([Sources/CaptureKit/BrowserAddressURL.swift](Sources/CaptureKit/BrowserAddressURL.swift), [Sources/Core/CaptureFormat.swift](Sources/Core/CaptureFormat.swift))
 
 The interactive surfaces are borderless, nonactivating panels: they borrow keyboard focus while leaving the app inactive, and they cannot become the main window. Passive toast panels ignore mouse events. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L39-L64), [Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L66-L76)) Interactive panels without a saved movable position are centered on the pointer's screen, with their top edge 22% of the visible screen height below the top; toasts are placed 72 points above the visible bottom. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L210-L223), [Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L137-L149))
 
@@ -66,7 +68,9 @@ The quick note adjusts its height to content and screen height, and its Browse c
 
 ## Windows edition
 
-The implemented Windows edition keeps the Mac product surfaces above and changes only what the platform forces or what a new first-launch flow needs. Windows installers are not part of the currently published releases. Its user-visible strings come from one table, with the Mac's wording and these maps: Ctrl for ⌘, "File Explorer" for "Finder", "tray icon" for "menu bar icon", Setup for Permissions, and the user's current shortcut in place of the Mac's ⌥⇧ hints. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs))
+The implemented Windows edition keeps the Mac product surfaces above and changes only what the platform forces or what a new first-launch flow needs. Current GitHub releases include x64 and arm64 Windows installers and portable packages. Its user-visible strings come from one table, with the Mac's wording and these maps: Ctrl for ⌘, "File Explorer" for "Finder", "tray icon" for "menu bar icon", Setup for Permissions, and the user's current shortcut in place of the Mac's ⌥⇧ hints. ([windows/src/CaptureApp.AppCore/Shell/Strings.cs](windows/src/CaptureApp.AppCore/Shell/Strings.cs), [windows/src/CaptureApp.Platform/PlatformStrings.cs](windows/src/CaptureApp.Platform/PlatformStrings.cs))
+
+On Windows, Chrome and Edge can add the same source link when UI Automation exposes the English **Address and search bar** control in the browser toolbar with a complete HTTP(S) value. A focused address field, or an unsupported, inaccessible, incomplete, or unrecognized control, omits the URL without blocking capture. ([windows/src/CaptureApp.Platform/Context/BrowserAddress.cs](windows/src/CaptureApp.Platform/Context/BrowserAddress.cs), [windows/src/CaptureApp.Core/CaptureFormat.cs](windows/src/CaptureApp.Core/CaptureFormat.cs))
 
 ### Tray menu
 
