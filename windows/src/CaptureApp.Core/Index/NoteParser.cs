@@ -280,12 +280,33 @@ public static class NoteParser
 
     private static string? ImagePath(string body, string notePath, string? assetRoot)
     {
-        if (body.Contains('\n') || !body.StartsWith("![](", StringComparison.Ordinal) || !body.EndsWith(')'))
+        var imageBody = body;
+        const string sourcePrefix = "[Source](<";
+        const string sourceSuffix = ">)";
+        if (body.StartsWith(sourcePrefix, StringComparison.Ordinal))
+        {
+            var separator = body.IndexOf("\n\n", StringComparison.Ordinal);
+            if (separator >= 0)
+            {
+                var sourceLine = body[..separator];
+                var candidate = body[(separator + 2)..];
+                if (!sourceLine.Contains('\n') && !candidate.Contains('\n') && sourceLine.EndsWith(sourceSuffix, StringComparison.Ordinal))
+                {
+                    var sourceUrl = sourceLine[sourcePrefix.Length..^sourceSuffix.Length];
+                    if (CaptureFormat.SourceLink(new(Url: sourceUrl)) == sourceLine)
+                    {
+                        imageBody = candidate;
+                    }
+                }
+            }
+        }
+
+        if (imageBody.Contains('\n') || !imageBody.StartsWith("![](", StringComparison.Ordinal) || !imageBody.EndsWith(')'))
         {
             return null;
         }
 
-        var encoded = body[4..^1];
+        var encoded = imageBody[4..^1];
         if (encoded.Length == 0 || encoded.StartsWith('/') || encoded.IndexOfAny([':', '\\', '?', '#', '\n']) >= 0 || Regex.IsMatch(encoded, @"%(?![0-9a-fA-F]{2})"))
         {
             return null;

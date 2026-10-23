@@ -177,8 +177,10 @@ if CommandLine.arguments.count > 1 {
                 throw CheckFailure.failed("Usage: CaptureChecks --export-ocr-fixtures <dir>")
             }
             try Fixtures.exportOCRFixtures(to: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true))
+        case "--browser-url":
+            try checkBrowserAddressURL()
         default:
-            throw CheckFailure.failed("Unknown CaptureChecks mode. Use --ocr-corpus or --export-ocr-fixtures.")
+            throw CheckFailure.failed("Unknown CaptureChecks mode.")
         }
         exit(EXIT_SUCCESS)
     } catch {
@@ -330,6 +332,69 @@ func checkRegionCaptureProcessDisposition() throws {
     print("Region capture: PASS (cancel, process failure, and captured result classification).")
 }
 
+func checkBrowserAddressURL() throws {
+    let safari = "com.apple.Safari"
+    let chrome = "com.google.Chrome"
+    let edge = "com.microsoft.edgemac"
+    let field = "AXTextField"
+    let safariID = "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD"
+    let chromeName = "Address and search bar"
+    try require(BrowserAddressURL.recognizedField(bundleIdentifier: safari, role: field, identifier: safariID,
+                                                  title: nil, description: nil, insideToolbar: true), "Safari address field missed")
+    for browser in [chrome, edge] {
+        try require(BrowserAddressURL.recognizedField(bundleIdentifier: browser, role: field, identifier: nil,
+                                                      title: chromeName, description: nil, insideToolbar: true),
+                    "Chromium address field missed: \(browser)")
+        try require(BrowserAddressURL.recognizedField(bundleIdentifier: browser, role: field, identifier: nil,
+                                                      title: nil, description: chromeName, insideToolbar: true),
+                    "Chromium description missed: \(browser)")
+    }
+    for browser in [safari, chrome, edge, "org.mozilla.firefox", "com.example.editor"] {
+        try require(!BrowserAddressURL.recognizedField(bundleIdentifier: browser, role: field, identifier: safariID,
+                                                       title: chromeName, description: nil, insideToolbar: false),
+                    "Web content must not become a browser address: \(browser)")
+    }
+    try require(!BrowserAddressURL.recognizedField(bundleIdentifier: safari, role: field, identifier: nil,
+                                                   title: chromeName, description: nil, insideToolbar: true),
+                "Safari accepted an unrelated toolbar text field")
+    try require(!BrowserAddressURL.recognizedField(bundleIdentifier: chrome, role: "AXSearchField", identifier: nil,
+                                                   title: chromeName, description: nil, insideToolbar: true),
+                "Chrome accepted a search field with the wrong role")
+    try require(!BrowserAddressURL.recognizedField(bundleIdentifier: "org.mozilla.firefox", role: field,
+                                                   identifier: safariID, title: chromeName, description: nil,
+                                                   insideToolbar: true), "Unrecognized browser accepted")
+
+    for address in ["https://example.org/a%20b?q=one&two=three#part", "http://localhost:8080/path", "HTTPS://example.org/"] {
+        try require(BrowserAddressURL.validated(address) == address, "Valid HTTP(S) address rejected: \(address)")
+    }
+    try require(BrowserAddressURL.capturableValue(focused: false, nativeURL: nil,
+                                                   displayedValue: "https://example.org/page") == "https://example.org/page",
+                "A complete unfocused address was lost")
+    try require(BrowserAddressURL.capturableValue(focused: false, nativeURL: "https://example.org/full/path",
+                                                   displayedValue: "example.org") == "https://example.org/full/path",
+                "A complete native URL should win over abbreviated display text")
+    for focused in [true, nil] as [Bool?] {
+        try require(BrowserAddressURL.capturableValue(focused: focused, nativeURL: "https://example.org/page",
+                                                       displayedValue: "https://example.org/edited") == nil,
+                    "Editing or unverified focus must not expose an unsubmitted address")
+    }
+    try require(BrowserAddressURL.capturableValue(focused: false, nativeURL: nil,
+                                                   displayedValue: "example.org/page") == nil,
+                "An abbreviated address must not infer its scheme")
+    for address in ["example.org", "https://", "http:///path", "ftp://example.org/", "javascript:alert(1)",
+                    "https://example.org/a b", "https://example.org/a\nnext", "https://example.org/%ZZ",
+                    "https://example.org/%", "https://example.org:65536/", "https://example.org:0/",
+                    "https://user:pass@example.org/", "https://example.org\\@evil.test/"] {
+        try require(BrowserAddressURL.validated(address) == nil, "Unsafe browser address accepted: \(address)")
+    }
+    let context = FrontmostContext(appName: "Safari", bundleIdentifier: safari, processIdentifier: 123,
+                                   windowTitle: "Page", url: "https://example.org/page")
+    try require(context.url == "https://example.org/page" && context.windowTitle == "Page", "Context URL snapshot lost")
+    try require(FrontmostContext(appName: nil, bundleIdentifier: nil, processIdentifier: 0,
+                                 windowTitle: nil).url == nil, "Context default URL changed")
+    print("Browser URL: PASS (recognized address fields, browser and content isolation, strict HTTP(S), context fallback).")
+}
+
 // A running app can own the defaults; still exercise pasteboard, OCR and classification.
 var hotkeyFailure: Error?
 do { try checkHotkeys() } catch { hotkeyFailure = error }
@@ -337,6 +402,7 @@ do {
     try checkPasteboard()
     try await checkOCRAndClassifier()
     try checkRegionCaptureProcessDisposition()
+    try checkBrowserAddressURL()
     if let hotkeyFailure { throw hotkeyFailure }
 } catch {
     FileHandle.standardError.write(Data("Capture checks failed: \(error)\n".utf8))

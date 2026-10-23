@@ -476,7 +476,7 @@ struct CapturePipeline: Sendable {
     }
 
     static func source(_ context: FrontmostContext) -> CaptureSource {
-        CaptureSource(appName: context.appName, windowTitle: context.windowTitle)
+        CaptureSource(appName: context.appName, windowTitle: context.windowTitle, url: context.url)
     }
 
     static func firstLine(_ text: String) -> String {
