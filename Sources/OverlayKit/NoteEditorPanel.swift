@@ -682,12 +682,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         let query = current.field.stringValue
         let selectedID = current.selectedID
         let items = browseItems()
-        let trimmedQuery = query.trimmingCharacters(in: .whitespaces)
-        let matches = trimmedQuery.isEmpty ? items : items.filter { $0.title.localizedCaseInsensitiveContains(trimmedQuery) }
-        let shown = Array((matches.filter(\.isPinned) + matches.filter { !$0.isPinned }).prefix(OverlayTheme.browseMaxRows))
-        let selectedIndex = selectedID.flatMap { id in shown.firstIndex(where: { $0.id == id }) }
         detachBrowse()
-        let browse = NoteBrowseView(items: items, query: query, selectedIndex: selectedIndex)
+        let browse = NoteBrowseView(items: items, query: query, selectedID: selectedID)
         browse.onChoose = { [weak self] item, choice in self?.onBrowseChoice?(item, choice) }
         browse.onBack = { [weak self] in self?.hideBrowse() }
         browseView = browse

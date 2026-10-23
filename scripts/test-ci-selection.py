@@ -183,11 +183,8 @@ class SelectionTests(unittest.TestCase):
     def test_actual_workflow_event_matrix(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
 
-        def job_block(name):
-            return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\s*$|\Z)", workflow).group(1)
-
         def scalar(job, key):
-            return re.search(rf"(?m)^    {re.escape(key)}: (.+)$", job_block(job)).group(1)
+            return workflow_scalar(workflow_job(workflow, job), key)
 
         concurrency = re.search(r"(?m)^  group: (.+)$", workflow).group(1)
         coordinated_expression = re.findall(r"\$\{\{(.*?)\}\}", concurrency)[-1]
@@ -232,7 +229,7 @@ class SelectionTests(unittest.TestCase):
                 evaluate = lambda source: workflow_expression(source, values)
                 self.assertEqual(bool(evaluate(scalar("select", "if"))), native)
                 for job in ("build", "smoke-macos-15"):
-                    block = job_block(job)
+                    block = workflow_job(workflow, job)
                     self.assertIn("always()", scalar(job, "if"))
                     self.assertEqual(bool(evaluate(scalar(job, "if"))), required_names)
                     if required_names:
@@ -243,7 +240,7 @@ class SelectionTests(unittest.TestCase):
                         self.assertNotIn(actual_check_name(block, values), {"build", "smoke-macos-15"})
                 self.assertEqual(evaluate(coordinated_expression), "requested" if required_names else 123)
                 self.assertEqual(evaluate(scalar("build", "runs-on")), "xcode-27" if native else "ubuntu-latest")
-                revocation_guard = re.search(r"(?m)^        if: (.+)$", job_block("build")).group(1)
+                revocation_guard = workflow_scalar(workflow_job(workflow, "build"), "if", indent=8)
                 self.assertEqual(bool(evaluate(revocation_guard)), revoke)
                 self.assertEqual(bool(evaluate(scalar("windows", "if"))), native)
                 self.assertEqual(bool(evaluate(scalar("windows-release-gate", "if"))), native)
@@ -256,11 +253,11 @@ class SelectionTests(unittest.TestCase):
         triggers = workflow.split("permissions:", 1)[0]
         self.assertIn("types: [opened, reopened, synchronize, labeled, unlabeled]", triggers)
         self.assertNotRegex(triggers, r"(?m)^  push:")
-        build = job_block("build")
+        build = workflow_job(workflow, "build")
         self.assertLess(build.index("exit 1"), build.index("uses: actions/checkout"))
         self.assertEqual(scalar("windows-release-gate", "needs"), "select")
         self.assertEqual(scalar("windows-release-gate", "runs-on"), "ubuntu-latest")
-        self.assertIn("run: bash scripts/test-windows-release-gate.sh", job_block("windows-release-gate"))
+        self.assertIn("run: bash scripts/test-windows-release-gate.sh", workflow_job(workflow, "windows-release-gate"))
         # The release-gate fixtures follow Windows scope for lean requests too.
         for path, expected in [("Sources/App/AppController.swift", False), ("windows/src/App.cs", True),
                                ("scripts/windows-release-gate.sh", True), ("README.md", False)]:

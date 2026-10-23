@@ -100,7 +100,8 @@ final class NoteBrowseView: NoteCardView {
                height: cappedHeight(contentTop + (shown.isEmpty ? OverlayTheme.browseEmptyHeight : metrics.visible) + footerHeight))
     }
 
-    init(items: [BrowseItem], query: String = "", selectedIndex: Int? = nil) {
+    /// `selectedID` wins over `selectedIndex` when it matches a shown row; otherwise `selectedIndex` applies.
+    init(items: [BrowseItem], query: String = "", selectedIndex: Int? = nil, selectedID: String? = nil) {
         self.items = items
         super.init(placeholder: "Search notes…", query: query)
         scroll.drawsBackground = false
@@ -110,7 +111,7 @@ final class NoteBrowseView: NoteCardView {
         message.alignment = .center
         [scroll, message, footerSeparator, footer].forEach { addSubview($0) }
         footerHints.forEach(footer.addSubview)
-        rebuild(preferred: selectedIndex)
+        rebuild(preferred: selectedIndex, preferredID: selectedID)
         setFrameSize(desiredSize)
         layoutSubtreeIfNeeded()
         scroll.contentView.scroll(to: .zero)
@@ -149,11 +150,19 @@ final class NoteBrowseView: NoteCardView {
         onChoose?(shown[index], choice)
     }
 
-    private func rebuild(preferred: Int?) {
+    private func rebuild(preferred: Int?, preferredID: String? = nil) {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        let matching = query.isEmpty ? items : items.filter { $0.title.localizedCaseInsensitiveContains(query) }
-        // Pinned first; cap the rows built so thousands of notes stay cheap per keystroke.
-        shown = Array((matching.filter(\.isPinned) + matching.filter { !$0.isPinned }).prefix(OverlayTheme.browseMaxRows))
+        var pinned: [BrowseItem] = []
+        var recent: [BrowseItem] = []
+        for item in items where query.isEmpty || item.title.localizedCaseInsensitiveContains(query) {
+            if item.isPinned {
+                if pinned.count < OverlayTheme.browseMaxRows { pinned.append(item) }
+            } else if recent.count < OverlayTheme.browseMaxRows {
+                recent.append(item)
+            }
+        }
+        // Stable pinned-first order with bounded storage and at most browseMaxRows visible rows.
+        shown = Array((pinned + recent).prefix(OverlayTheme.browseMaxRows))
         let pinnedCount = shown.prefix { $0.isPinned }.count, recentCount = shown.count - pinnedCount
         rows.forEach { $0.removeFromSuperview() }
         headers.forEach { $0.label.removeFromSuperview() }
@@ -173,7 +182,8 @@ final class NoteBrowseView: NoteCardView {
         message.stringValue = shown.isEmpty ? (items.isEmpty ? "No notes yet" : "No matching notes") : ""
         scroll.isHidden = shown.isEmpty
         message.isHidden = !shown.isEmpty
-        if let preferred, shown.indices.contains(preferred) { selection = preferred }
+        if let preferredID, let index = shown.firstIndex(where: { $0.id == preferredID }) { selection = index }
+        else if let preferred, shown.indices.contains(preferred) { selection = preferred }
         else { selection = shown.isEmpty ? nil : 0 }
         for (index, row) in rows.enumerated() { row.isSelected = index == selection }
         needsLayout = true
