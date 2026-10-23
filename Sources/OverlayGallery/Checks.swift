@@ -734,6 +734,51 @@ private func checkNoteOverlays() async throws {
     try require(rowViews.count == OverlayTheme.browseMaxRows, "Browse must cap its rows (\(rowViews.count))")
     try require((rowViews.first?.accessibilityLabel() ?? "").contains("Note 250") || rowViews.first.map({ descendants($0).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Note 250" } }) == true,
                 "The pinned item must be listed first")
+
+    var refreshedItems = [
+        BrowseItem(id: "beta", title: "Trip beta", detail: "Note", symbolName: "doc.text", isPinned: false),
+        BrowseItem(id: "alpha", title: "Trip alpha", detail: "Note", symbolName: "doc.text", isPinned: false),
+        BrowseItem(id: "other", title: "Other topic", detail: "Note", symbolName: "doc.text", isPinned: true)
+    ]
+    let refreshedEditor = NoteEditorPanel()
+    refreshedEditor.present(destination: nil, isPinned: false, draft: "", handlers: NoteEditorHandlers(
+        onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in }, onOpenAsNote: { _ in }, browseItems: { refreshedItems },
+        onBrowse: { _, _ in }, onTogglePin: { true }, onClose: {}, onError: { _ in }))
+    try key(35, modifiers: .command)
+    try await settle()
+    let refreshedPanel = try currentPanel()
+    func selectedBrowseID() -> String? {
+        guard let content = refreshedPanel.contentView,
+              let card = descendants(content).first(where: { String(describing: type(of: $0)) == "NoteBrowseView" }) else { return nil }
+        return OverlayPreview.selectedCardID(in: card)
+    }
+    let filter = try field(in: refreshedPanel)
+    filter.stringValue = "Trip"
+    filter.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: filter))
+    try require(selectedBrowseID() == "beta", "Browse filter must select its first match")
+
+    refreshedItems = [
+        BrowseItem(id: "pinned", title: "Trip pinned", detail: "Note", symbolName: "doc.text", isPinned: true),
+        BrowseItem(id: "beta", title: "Trip beta", detail: "Note", symbolName: "doc.text", isPinned: false),
+        BrowseItem(id: "alpha", title: "Trip alpha", detail: "Note", symbolName: "doc.text", isPinned: false),
+        BrowseItem(id: "other", title: "Other topic", detail: "Note", symbolName: "doc.text", isPinned: true)
+    ]
+    // Refresh is synchronous; assert before yielding so a hover event cannot change the selected row.
+    refreshedEditor.refreshBrowseItems()
+    let refreshedRows = descendants(refreshedPanel.contentView!).filter { String(describing: type(of: $0)) == "BrowseRowView" }
+    let selectedRow = refreshedRows.firstIndex { $0.accessibilityValue() as? String == "Selected" }
+    try require(try field(in: refreshedPanel).stringValue == "Trip"
+                && selectedBrowseID() == "beta" && selectedRow == 1,
+                "Refreshing Browse must retain its query and selected item after pinned-first reordering")
+
+    refreshedItems.removeAll { $0.id == "beta" }
+    refreshedEditor.refreshBrowseItems()
+    let queryAfterRemoval = try field(in: refreshedPanel).stringValue
+    let selectedAfterRemoval = selectedBrowseID()
+    try require(queryAfterRemoval == "Trip" && selectedAfterRemoval == "pinned",
+                "Refreshing Browse must select the first result when its previous item disappears (query: \(queryAfterRemoval), selected: \(String(describing: selectedAfterRemoval)))")
+    refreshedEditor.dismiss()
+    try await settle()
     try await checkFooterFit()
     print("Note overlay checks passed (card toggle/escape/focus/bounds, row navigation, Browse write/open/back, size restore).")
 }
