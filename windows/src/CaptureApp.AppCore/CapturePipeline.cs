@@ -196,6 +196,32 @@ public sealed class CapturePipeline : IDisposable
         return saved;
     }
 
+    public Session StartSession(string name) => ChangeSession(() => Sessions.Start(name));
+
+    public Session StartFolderSession(NoteFolder folder, string name) => ChangeSession(() => Sessions.StartInFolder(folder, name));
+
+    public Session ResumeSession(SessionCandidate candidate) => ChangeSession(() => Sessions.Resume(candidate));
+
+    public void EndSession()
+    {
+        lock (captureGate)
+        {
+            ThrowIfDisposed();
+            RecoverPendingRename();
+            Sessions.End();
+        }
+    }
+
+    private Session ChangeSession(Func<Session> change)
+    {
+        lock (captureGate)
+        {
+            ThrowIfDisposed();
+            RecoverPendingRename();
+            return change();
+        }
+    }
+
     public SessionRenameOutcome RenameSession(SessionCandidate candidate, string newName, Action? beforeReplace = null,
         Action<SessionRenamePlan>? afterIntent = null)
     {
