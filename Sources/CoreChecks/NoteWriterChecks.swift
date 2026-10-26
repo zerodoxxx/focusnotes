@@ -104,6 +104,7 @@ private func checkTypedNoteShortWrite(vault: Vault, calendar: Calendar, date: Da
     let capture = Capture(id: UUID(), createdAt: date, content: .note("A complete typed body"), source: CaptureSource())
     let writer = NoteWriter(vault: vault, calendar: calendar)
 
+    // setrlimit is process-wide; CoreChecks awaits each check in sequence, so nothing else writes meanwhile.
     var limit = rlimit()
     try require(getrlimit(RLIMIT_FSIZE, &limit) == 0, "could not read the file-size limit")
     let oldLimit = limit.rlim_cur

@@ -26,7 +26,7 @@ public struct TypedNote: Sendable {
         let resolvedName: NotePathName?
         let parseError: NotePathNameError?
         do {
-            resolvedName = try NoteTitle.resolvedPathName(for: extractedName)
+            resolvedName = try NoteTitle.resolvedPathName(for: extractedName, normalizingWhitespace: false)
             parseError = nil
         } catch let error as NotePathNameError {
             resolvedName = nil

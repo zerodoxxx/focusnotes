@@ -500,6 +500,7 @@ final class AppController: NSObject, NSMenuDelegate {
     func stage(_ capture: PendingCapture, outsideSession: Bool = false) async {
         guard !shutdownFinished else { return }
         _ = commitPending()
+        holdRetryPending()
         let pipeline = pipeline
         let recovery = recoveryJobs[capture.id]
         let recoveryPersistence = recoveryPersistences[capture.id]
@@ -531,9 +532,22 @@ final class AppController: NSObject, NSMenuDelegate {
                          subtitle: capture.subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note")))
     }
 
+    /// A newer capture replaces a retry-pending one; keep the earlier job for shutdown or replay.
+    private func holdRetryPending() {
+        guard pendingNeedsRetryChoice, let held = pending, let staged = stagedJob, staged.id == held.id else { return }
+        preparedJobs[held.id] = staged.preparation
+        pending = nil
+        pendingOutsideSession = false
+        pendingNeedsRetryChoice = false
+        stagedJob = nil
+    }
+
+    /// Implicit commits (drain, toast, new capture) skip a retry-pending capture; only an
+    /// explicit destination or shutdown may save it.
     @discardableResult
     func commitPending(noteTitle: String? = nil, destination: Destination? = nil, announce: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
+        if pendingNeedsRetryChoice, noteTitle == nil, destination == nil, !isTerminating { return nil }
         let outsideSession = pendingOutsideSession
         pending = nil
         pendingOutsideSession = false
@@ -903,6 +917,7 @@ final class AppController: NSObject, NSMenuDelegate {
     var inputForChecks: InputPanelController? { input }
     var pendingForChecks: PendingCapture? { pending }
     var isChoosingDestinationForChecks: Bool { isChoosingDestination }
+    func showToastForChecks(_ value: Toast) { showToast(value) }
 
     func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
         let calendar = pipeline.calendar

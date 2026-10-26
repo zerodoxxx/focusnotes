@@ -638,7 +638,8 @@ enum NoteFile {
                     }
                     // An independently created note keeps its identity even when
                     // the user has subsequently edited its body in another app.
-                    // A marker alone can be left by a short write. Only a whole block is saved.
+                    // A marker alone can be left by a failed write; that path truncates its bytes back.
+                    // A crash, kill or power loss mid-write can still leave a marker without its body.
                     if alreadySaved {
                         let current = try isCurrent(descriptor, at: location)
                         guard current, try fingerprint(descriptor) == initial else { return false }
@@ -672,7 +673,8 @@ enum NoteFile {
                     // marker after a successful save, including after the body
                     // is edited elsewhere, so remove this attempt's bytes before
                     // allowing the error to trigger a journal replay.
-                    guard ftruncate(descriptor, off_t(end)) == 0 else { throw posixError() }
+                    // If rollback fails, still surface the original write error.
+                    _ = ftruncate(descriptor, off_t(end))
                     throw error
                 }
                 let written = try fingerprint(descriptor)

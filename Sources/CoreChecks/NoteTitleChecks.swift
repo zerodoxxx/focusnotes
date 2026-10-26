@@ -31,6 +31,8 @@ func checkNoteTitle() throws {
         try require(resolved.scope == .vault && resolved.components == [expected],
                     "legacy flat slash name should resolve consistently: \(raw)")
     }
+    let spaced = try NoteTitle.resolvedPathName(for: "pros  /  cons", normalizingWhitespace: false)
+    try require(spaced.components == ["pros  -  cons"], "typed-note flat fallback should keep the raw spacing")
     let qualifiedResolved = try NoteTitle.resolvedPathName(for: "science/math")
     try require(qualifiedResolved.components == ["science", "math"],
                 "well-formed slash names should remain qualified paths")

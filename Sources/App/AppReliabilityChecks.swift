@@ -179,6 +179,14 @@ private func checkFailedChosenNoteCanBeRetried() async throws {
         throw SelfTestFailure("Failed chosen-note save did not preserve the capture with retry guidance")
     }
 
+    // Implicit commits (toast, drain) must not route a retry-pending capture to the default.
+    controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
+    await controller.drainCaptures()
+    try await Task.sleep(for: .milliseconds(100))
+    guard controller.pendingForChecks?.id == capture.id, try await pipeline.index.capture(id: capture.id) == nil else {
+        throw SelfTestFailure("A toast or drain saved a retry-pending capture to the default destination")
+    }
+
     controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
                                                                processIdentifier: 1, windowTitle: nil))
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))

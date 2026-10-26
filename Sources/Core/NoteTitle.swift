@@ -101,21 +101,24 @@ public enum NoteTitle {
 
     /// Resolves a user-entered destination name, preserving the legacy flat
     /// filename behavior for malformed relative slash forms.
-    public static func resolvedPathName(for rawName: String) throws -> NotePathName {
+    /// Typed notes pass `normalizingWhitespace: false` so `a  /  b` keeps resolving
+    /// to the same flat file (`a  -  b.md`) as before.
+    public static func resolvedPathName(for rawName: String, normalizingWhitespace: Bool = true) throws -> NotePathName {
         do {
             let path = try pathName(for: rawName)
             if canFallBackToFlatName(rawName, error: nil) {
-                return try flatPathName(for: rawName)
+                return try flatPathName(for: rawName, normalizingWhitespace: normalizingWhitespace)
             }
             return path
         } catch let error as NotePathNameError {
             guard canFallBackToFlatName(rawName, error: error) else { throw error }
-            return try flatPathName(for: rawName)
+            return try flatPathName(for: rawName, normalizingWhitespace: normalizingWhitespace)
         }
     }
 
-    private static func flatPathName(for rawName: String) throws -> NotePathName {
-        try NotePathName.validated(scope: .vault, components: [fileStem(for: cleanTitle(rawName))])
+    private static func flatPathName(for rawName: String, normalizingWhitespace: Bool) throws -> NotePathName {
+        try NotePathName.validated(scope: .vault,
+                                   components: [fileStem(for: normalizingWhitespace ? cleanTitle(rawName) : rawName)])
     }
 
     /// Returns whether a malformed or whitespace-qualified path should retain
