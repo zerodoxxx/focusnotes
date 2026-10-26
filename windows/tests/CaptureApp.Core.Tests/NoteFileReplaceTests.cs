@@ -182,8 +182,10 @@ public sealed class NoteFileReplaceTests
         var content = File.ReadAllText(kept);
         Assert.False(File.Exists(e.Registry));
         registry.Register("Desktop/B.md");
-        Assert.True(File.Exists(kept));
-        Assert.Equal(content, File.ReadAllText(kept));
+        // The fresh registry is installed; the old copy is retired under a plain name, content intact.
+        Assert.True(File.Exists(e.Registry));
+        Assert.NotEqual(content, File.ReadAllText(e.Registry));
+        Assert.Equal(content, File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, ".recovered-*"))));
     }
 
     [Fact]
@@ -242,6 +244,56 @@ public sealed class NoteFileReplaceTests
         NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
         Assert.Equal("data", File.ReadAllText(kept));
         Assert.Equal(before, Directory.EnumerateFileSystemEntries(e.Base, "*", SearchOption.AllDirectories).Order().ToArray());
+    }
+
+    [Fact]
+    public void FailedRestoreOfTheNewestCopyKeepsEverythingAndSkipsOlderOnes()
+    {
+        using var e = new CheckVault();
+        // Not the vault root, so the vault's background startup sweep cannot race this test.
+        var root = Directory.CreateDirectory(Path.Combine(e.Base, "isolated")).FullName;
+        var older = Recovered(root, "note.md", 'a');
+        var newer = Recovered(root, "note.md", 'b');
+        File.WriteAllText(older, "older");
+        File.WriteAllText(newer, "newer");
+        File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddMinutes(-5));
+        NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+        try { NoteFile.RestoreRecovered(root, Path.Combine(root, "note.md")); }
+        finally { NoteFile.MoveHook.Value = null; }
+        Assert.False(File.Exists(Path.Combine(root, "note.md")));
+        Assert.Equal("older", File.ReadAllText(older));
+        Assert.Equal("newer", File.ReadAllText(newer));
+    }
+
+    [Fact]
+    public void SweepSkipsRecoveredSymbolicLinks()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var real = Path.Combine(e.Base, "real.txt");
+        File.WriteAllText(real, "linked");
+        var link = Recovered(e.Vault.Root);
+        try { File.CreateSymbolicLink(link, real); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; }
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
+        Assert.False(File.Exists(Path.Combine(e.Vault.Root, "note.md")));
+        Assert.NotNull(new FileInfo(link).LinkTarget);
+        Assert.Equal("linked", File.ReadAllText(real));
+    }
+
+    [Fact]
+    public void InstallingAFreshTargetRetiresRestorableCopies()
+    {
+        using var e = new CheckVault();
+        var path = LoseTarget(e);
+        var kept = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+        var id = Path.GetFileName(kept)[".recovered-".Length..][..32];
+        NoteFile.Create("fresh"u8.ToArray(), e.Vault.Root, "note.md");
+        Assert.Equal("fresh", File.ReadAllText(path));
+        File.Delete(path);
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
+        Assert.False(File.Exists(path));
+        Assert.Equal("new", File.ReadAllText(Path.Combine(e.Vault.Root, ".recovered-" + id)));
     }
 
     [Fact]
