@@ -21,6 +21,8 @@ func checkAppReliability() async throws {
     try await checkFixedCapturePreparationBypassesRouting()
     try await checkSessionDrainWaitsForAcquisition()
     try await checkFailedChosenNoteCanBeRetried()
+    try await checkNewCaptureSavesRetryPendingCapture()
+    try await checkHotkeyRedirectEndsWithRetryWarning()
     try await checkAmbiguousCaptureDestinations()
 }
 
@@ -177,14 +179,6 @@ private func checkFailedChosenNoteCanBeRetried() async throws {
           toasts.last?.title == "Couldn't save to that note",
           toasts.last?.subtitle?.contains("Capture kept") == true else {
         throw SelfTestFailure("Failed chosen-note save did not preserve the capture with retry guidance")
-    }
-
-    // Implicit commits (toast, drain) must not route a retry-pending capture to the default.
-    controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
-    await controller.drainCaptures()
-    try await Task.sleep(for: .milliseconds(100))
-    guard controller.pendingForChecks?.id == capture.id, try await pipeline.index.capture(id: capture.id) == nil else {
-        throw SelfTestFailure("A toast or drain saved a retry-pending capture to the default destination")
     }
 
     controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
@@ -1013,4 +1007,82 @@ private func checkDraftTerminationVeto() async throws {
           try pipeline.drafts.load() == latestText else {
         throw SelfTestFailure("Quit could not retry after a draft failure or lost the newest editor text")
     }
+}
+
+/// Stages a capture, fails its chosen-note save, and waits until it is retry-pending.
+@MainActor
+private func makeRetryPendingCapture(_ controller: AppController, text: String) async throws -> PendingCapture {
+    let capture = PendingCapture(trigger: .selection, content: .text(text),
+                                 source: CaptureSource(appName: "Retry check"), subtitle: "check")
+    await controller.stage(capture, outsideSession: true)
+    _ = try? await controller.commitPending(noteTitle: "../escape")?.value
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while controller.pendingForChecks?.id != capture.id, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard controller.pendingForChecks?.id == capture.id else {
+        throw SelfTestFailure("Failed chosen-note save did not leave the capture retry-pending")
+    }
+    return capture
+}
+
+@MainActor
+private func checkNewCaptureSavesRetryPendingCapture() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-new-capture-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
+    let first = try await makeRetryPendingCapture(controller, text: "retry pending first capture")
+    let second = PendingCapture(trigger: .selection, content: .text("newer second capture"),
+                                source: CaptureSource(appName: "Retry check"), subtitle: "newer")
+    await controller.stage(second)
+
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    var savedFirst = try await pipeline.index.capture(id: first.id)
+    while (savedFirst == nil || controller.hasPreparedJobForChecks(first.id)), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+        savedFirst = try await pipeline.index.capture(id: first.id)
+    }
+    guard let savedFirst, controller.pendingForChecks?.id == second.id,
+          try await pipeline.index.capture(id: second.id) == nil,
+          !controller.hasPreparedJobForChecks(first.id) else {
+        throw SelfTestFailure("A newer capture did not save the retry-pending capture before itself")
+    }
+    guard toasts.contains(where: { $0.subtitle?.contains("Previous capture saved") == true }) else {
+        throw SelfTestFailure("Saving a retry-pending capture for a newer one gave no notice")
+    }
+    await controller.drainCaptures()
+    let note = try String(contentsOf: vaultRoot.appendingPathComponent(savedFirst.notePath), encoding: .utf8)
+    guard let firstRange = note.range(of: "retry pending first capture"),
+          let secondRange = note.range(of: "newer second capture"), firstRange.lowerBound < secondRange.lowerBound else {
+        throw SelfTestFailure("The retry-pending capture was not saved before the newer capture")
+    }
+}
+
+@MainActor
+private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-hotkey-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+    let controller = AppController(pipeline: pipeline, presentsUI: true)
+    let first = try await makeRetryPendingCapture(controller, text: "hotkey retry pending capture")
+    controller.hideToastForChecks()
+    // Implicit commits (toast, drain) must not route a retry-pending capture to the default.
+    controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
+    await controller.drainCaptures()
+    try await Task.sleep(for: .milliseconds(100))
+    guard controller.pendingForChecks?.id == first.id, try await pipeline.index.capture(id: first.id) == nil else {
+        throw SelfTestFailure("A toast or drain saved a retry-pending capture to the default destination")
+    }
+
+    controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
+                                                               processIdentifier: 1, windowTitle: nil))
+    try await Task.sleep(for: .milliseconds(500))
+    guard controller.inputForChecks == nil, controller.pendingForChecks?.id == first.id else {
+        throw SelfTestFailure("The capture hotkey reopened the picker after the retry warning was gone")
+    }
+    await controller.drainCaptures()
 }

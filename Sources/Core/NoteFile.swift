@@ -1,9 +1,11 @@
 import Darwin
 import Foundation
+import os
 
 /// O_APPEND protects capture writes. Session renames replace a complete snapshot atomically.
 enum NoteFile {
     private static let attempts = 4
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "dev", category: "NoteFile")
 
     struct ManagedDirectoryEntry: Sendable {
         let name: String
@@ -674,7 +676,10 @@ enum NoteFile {
                     // is edited elsewhere, so remove this attempt's bytes before
                     // allowing the error to trigger a journal replay.
                     // If rollback fails, still surface the original write error.
-                    _ = ftruncate(descriptor, off_t(end))
+                    if ftruncate(descriptor, off_t(end)) != 0 {
+                        let code = errno
+                        logger.error("Append rollback failed (errno \(code, privacy: .public)); partial bytes may remain")
+                    }
                     throw error
                 }
                 let written = try fingerprint(descriptor)
