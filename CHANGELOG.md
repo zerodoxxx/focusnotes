@@ -10,7 +10,7 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Fixed
 
-- macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A failed append now reports the original write error even when rollback fails.
+- macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A newer capture first saves a retry-pending one to its default destination with a notice, and the capture shortcut reopens the chooser only while the retry warning is visible. A failed append now reports the original write error even when rollback fails.
 
 ### Added
 
