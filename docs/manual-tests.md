@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-23 (previous commit: `3af31ff`)
+Last Updated: 2026-10-26 (previous commit: `3878ada`)
 
 The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
 from a signed development build. The handlers capture
@@ -52,6 +52,12 @@ Use the same signing identity across rebuilds.
    default shortcuts dispatch once to the correct handler. Unregister them and
    confirm dispatch stops. Leave the host idle and inspect Activity Monitor:
    CaptureKit has no polling, timers, event taps, or global NSEvent monitors.
+
+9. **Session changes during acquisition (macOS):** Force a clipboard fallback,
+   capture distinctive text in a session, then immediately end the session. Confirm
+   the captured text is saved once in that session. Repeat without a session and
+   immediately start one: the earlier capture must stay in Inbox. Repeat with an
+   area capture while session control is requested before acquisition completes.
 
 Permission and focus behavior require this signed host; `CaptureChecks` needs no
 privacy grants and uses a private named pasteboard, never the general pasteboard.
@@ -226,6 +232,31 @@ Use a temporary vault and a disposable test folder under your home directory.
    Markdown sibling there, and churn an unrelated HOME subtree. Confirm the
    registered replacement is reindexed, while neither the sibling nor unrelated
    HOME files are indexed or reported as note changes.
+
+# Capture destination recovery (macOS)
+
+Use a disposable vault and distinctive text for each capture.
+
+1. Create `Standup.md` and `Archive/Old.md` with the same `# Standup` heading.
+   Capture to `Standup` and confirm only the root note changes. Register a HOME
+   note with that heading and repeat; it must not intercept the bare title.
+2. Give two root notes the same heading. Capture to that title and confirm a
+   chooser lists both exact paths. Select the second row and confirm only that
+   file changes, once. Repeat with duplicate session headings and no matching
+   root heading. Escape from either chooser must keep the capture pending;
+   press its capture shortcut again and choose a valid destination.
+3. Choose `../escape` as a capture destination. Confirm the warning offers
+   another choice and neither Inbox nor the active session receives the capture.
+   Let the warning expire, then press the same capture shortcut, choose a valid
+   note, and confirm the original capture is saved exactly once.
+4. Try `pros / cons`, `TODO/`, and `a//b` through the capture title picker, typed
+   notes outside a session, and session start. Confirm the same flat filename
+   cleanup applies, with session files kept under `Sessions/`. A true nested
+   name such as `science/math` still uses folders. Traversal remains rejected.
+5. Run `CoreChecks --skip-performance` to exercise a forced partial typed-note
+   append: the original file must survive the failed write, then retry must
+   save the complete body once. Existing checks also verify that replay preserves
+   an externally edited body after a successful save.
 
 # One-off notes and captures outside a session
 
