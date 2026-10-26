@@ -134,6 +134,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var pendingToastID: UUID?
     private var pendingNeedsRetryChoice = false
     private var retryWarningShown = false
+    private var commitMonitor: Task<Void, Never>?
     private var isChoosingDestination = false
     private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Error>, persistence: Task<Void, Error>)?
     private(set) var commitTail: Task<SavedCapture, Error>?
@@ -405,6 +406,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !Task.isCancelled else { return nil }
             switch trigger {
             case .selection:
+                if let supplied = acquiredSelectionForChecks { return supplied }
                 switch await SelectionReader.read(context: context) {
                 case .success(let capture):
                     return CapturePipeline.selection(text: capture.text, context: capture.context)
@@ -506,9 +508,13 @@ final class AppController: NSObject, NSMenuDelegate {
         if pendingNeedsRetryChoice, let held = pending {
             let staged = stagedJob.flatMap { $0.id == held.id ? $0 : nil }
             let destination = try? await staged?.preparation.value.prepared.destination
-            if pendingNeedsRetryChoice, pending?.id == held.id {
-                _ = commitPending(force: true)
-                previousNotice = destination.map { "Previous capture saved to \($0.title)" } ?? "Previous capture saved"
+            if pendingNeedsRetryChoice, pending?.id == held.id, let commit = commitPending(force: true) {
+                // Finish A, including its failure handling, before B is staged.
+                let succeeded = (try? await commit.value) != nil
+                await commitMonitor?.value
+                previousNotice = succeeded
+                    ? destination.map { "Previous capture saved to \($0.title)" } ?? "Previous capture saved"
+                    : "Couldn't save the previous capture · recovery will retry"
             }
         }
         let pipeline = pipeline
@@ -547,8 +553,8 @@ final class AppController: NSObject, NSMenuDelegate {
         toast.show(saved)
     }
 
-    /// Implicit commits (drain, toast, new capture) skip a retry-pending capture; only an
-    /// explicit destination or shutdown may save it.
+    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an
+    /// explicit destination, shutdown, or a newer capture staged in `stage()` may save it.
     @discardableResult
     func commitPending(noteTitle: String? = nil, destination: Destination? = nil, announce: Bool = false, force: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
@@ -595,7 +601,7 @@ final class AppController: NSObject, NSMenuDelegate {
         commitTail = task
         commitGeneration += 1
         let generation = commitGeneration
-        Task { [weak self] in
+        commitMonitor = Task { [weak self] in
             do {
                 let saved = try await task.value
                 self?.preparedJobs.removeValue(forKey: capture.id)
@@ -925,7 +931,8 @@ final class AppController: NSObject, NSMenuDelegate {
     var isChoosingDestinationForChecks: Bool { isChoosingDestination }
     func showToastForChecks(_ value: Toast) { showToast(value) }
     func hasPreparedJobForChecks(_ id: UUID) -> Bool { preparedJobs[id] != nil }
-    func hideToastForChecks() { toast.dismiss(expire: false); retryWarningShown = false }
+    func hideToastForChecks() { toast.dismiss(expire: false) }
+    var acquiredSelectionForChecks: PendingCapture?
 
     func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
         let calendar = pipeline.calendar

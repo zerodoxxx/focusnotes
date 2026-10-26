@@ -1063,26 +1063,64 @@ private func checkNewCaptureSavesRetryPendingCapture() async throws {
 
 @MainActor
 private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-hotkey-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: root) }
-    let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
-    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
-    let controller = AppController(pipeline: pipeline, presentsUI: true)
-    let first = try await makeRetryPendingCapture(controller, text: "hotkey retry pending capture")
-    controller.hideToastForChecks()
-    // Implicit commits (toast, drain) must not route a retry-pending capture to the default.
-    controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
-    await controller.drainCaptures()
-    try await Task.sleep(for: .milliseconds(100))
-    guard controller.pendingForChecks?.id == first.id, try await pipeline.index.capture(id: first.id) == nil else {
-        throw SelfTestFailure("A toast or drain saved a retry-pending capture to the default destination")
+    let other = FrontmostContext(appName: "Other app", bundleIdentifier: nil, processIdentifier: 1, windowTitle: nil)
+    func open(_ name: String) async throws -> (CapturePipeline, URL, AppController, [Toast]) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-\(name)-\(UUID().uuidString)")
+        let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+        let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+        return (pipeline, root, AppController(pipeline: pipeline, presentsUI: true), [])
     }
 
-    controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
-                                                               processIdentifier: 1, windowTitle: nil))
-    try await Task.sleep(for: .milliseconds(500))
-    guard controller.inputForChecks == nil, controller.pendingForChecks?.id == first.id else {
-        throw SelfTestFailure("The capture hotkey reopened the picker after the retry warning was gone")
+    // While the retry warning is visible, the hotkey reopens the chooser for the kept capture.
+    do {
+        let (_, root, controller, _) = try await open("visible")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try await makeRetryPendingCapture(controller, text: "visible warning capture")
+        controller.capture(.selection, context: other)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while controller.inputForChecks == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard controller.inputForChecks != nil, controller.pendingForChecks?.id == first.id else {
+            throw SelfTestFailure("The capture hotkey did not reopen the chooser while the retry warning was visible")
+        }
     }
-    await controller.drainCaptures()
+
+    // Implicit commits (note, subheading, toast, drain) must not route a retry-pending capture.
+    do {
+        let (pipeline, root, controller, _) = try await open("implicit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try await makeRetryPendingCapture(controller, text: "implicit retry pending capture")
+        _ = try? await controller.addNote("implicit note")
+        _ = try? await controller.addSubheading("Implicit heading")
+        controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
+        await controller.drainCaptures()
+        try await Task.sleep(for: .milliseconds(100))
+        guard controller.pendingForChecks?.id == first.id, try await pipeline.index.capture(id: first.id) == nil else {
+            throw SelfTestFailure("An implicit commit saved a retry-pending capture to the default destination")
+        }
+    }
+
+    // Once the warning is gone, the hotkey captures a new selection instead (supplied, no real read).
+    do {
+        let (pipeline, root, controller, _) = try await open("hidden")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try await makeRetryPendingCapture(controller, text: "hidden warning capture")
+        let second = PendingCapture(trigger: .selection, content: .text("fresh hotkey capture"),
+                                    source: CaptureSource(appName: "Retry check"), subtitle: "fresh")
+        controller.acquiredSelectionForChecks = second
+        controller.hideToastForChecks()
+        controller.capture(.selection, context: other)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while controller.pendingForChecks?.id != second.id, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard controller.pendingForChecks?.id == second.id, controller.inputForChecks == nil else {
+            throw SelfTestFailure("The capture hotkey did not stage a new capture after the retry warning was gone")
+        }
+        await controller.drainCaptures()
+        guard try await pipeline.index.capture(id: first.id) != nil, try await pipeline.index.capture(id: second.id) != nil else {
+            throw SelfTestFailure("The retry-pending and newer captures were not both saved")
+        }
+    }
 }
