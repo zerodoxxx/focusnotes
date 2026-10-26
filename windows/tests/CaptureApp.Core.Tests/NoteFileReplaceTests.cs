@@ -266,7 +266,7 @@ public sealed class NoteFileReplaceTests
     }
 
     [Fact]
-    public void SweepSkipsRecoveredSymbolicLinks()
+    public void RestoreSkipsRecoveredSymbolicLinks()
     {
         using var e = new CheckVault();
         e.Vault.Prepare();
@@ -275,7 +275,7 @@ public sealed class NoteFileReplaceTests
         var link = Recovered(e.Vault.Root);
         try { File.CreateSymbolicLink(link, real); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; }
-        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
+        NoteFile.RestoreRecovered(e.Vault.Root, Path.Combine(e.Vault.Root, "note.md"));
         Assert.False(File.Exists(Path.Combine(e.Vault.Root, "note.md")));
         Assert.NotNull(new FileInfo(link).LinkTarget);
         Assert.Equal("linked", File.ReadAllText(real));
