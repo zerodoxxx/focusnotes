@@ -78,6 +78,8 @@ internal static class Program
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(app.Dispatcher));
             var crashLog = new AppLog(state, "unhandled");
+            var noteLog = new AppLog(state, "notefile");
+            NoteFile.Problem = message => noteLog.Error(message);
             app.DispatcherUnhandledException += (_, e) =>
             {
                 crashLog.Error($"Unhandled UI exception: {e.Exception}");

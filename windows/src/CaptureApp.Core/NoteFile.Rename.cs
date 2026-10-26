@@ -71,7 +71,7 @@ public static partial class NoteFile
                 // Replacement is atomic: the live note is never truncated. The original handle
                 // still denies writers, and every ancestor remains pinned until replacement.
                 replaced = true;
-                if (OperatingSystem.IsWindows()) { ReplaceFile(temporary, target, ref targetLost); }
+                if (OperatingSystem.IsWindows() || ReplaceHook.Value is not null) { ReplaceFile(temporary, target, ref targetLost); }
                 else { File.Move(temporary, target, true); }
             }
             catch (Exception error)
@@ -178,7 +178,7 @@ public static partial class NoteFile
             var target = SafePath(root, targetPath);
             if (FileMetadata.At(target) is not null) return;
             // Only the ".recovered-" sibling marks a replace that removed the target; a bare ".pending-" may predate it.
-            path = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1]));
+            path = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], targetParts[^1]));
             if (FileMetadata.At(path) is null) return;
             using (var stream = OpenRenameSource(path))
             {

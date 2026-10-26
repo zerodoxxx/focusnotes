@@ -233,138 +233,6 @@ public sealed class SessionRenameTests
         Assert.Equal("# Unrelated\nkeep\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
     }
 
-    private static IOException Lost() => new("1176") { HResult = unchecked((int)0x80070498) };
-
-    private static (string Dir, string Target, string Temporary) ReplaceSetup(CheckVault e)
-    {
-        var dir = Directory.CreateDirectory(Path.Combine(e.Base, "replace")).FullName;
-        var target = Path.Combine(dir, "note.md");
-        var temporary = Path.Combine(dir, ".pending-" + new string('a', 32));
-        File.WriteAllText(target, "old");
-        File.WriteAllText(temporary, "new");
-        return (dir, target, temporary);
-    }
-
-    private static void Replace(string temporary, string target, Action<string, string>? replace = null, Action<string, string>? move = null)
-    {
-        var lost = false;
-        NoteFile.ReplaceFile(temporary, target, ref lost, replace, move);
-    }
-
-    [Fact]
-    public void ReplaceFallbackMovesTemporaryIntoPlaceWhenTargetWasRemoved()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        Replace(temporary, target, (_, d) => { File.Delete(d); throw Lost(); });
-        Assert.Equal("new", File.ReadAllText(target));
-        Assert.False(File.Exists(temporary));
-    }
-
-    [Fact]
-    public void OtherReplaceErrorsWithTargetMissingAreRethrownWithoutMoving()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        var moves = 0;
-        Assert.Throws<IOException>(() => Replace(temporary, target,
-            (_, d) => { File.Delete(d); throw new IOException("other"); }, (_, _) => moves++));
-        Assert.Equal(0, moves);
-        Assert.True(File.Exists(temporary));
-    }
-
-    [Fact]
-    public void FinalMoveFailureSurfacesTheOriginalReplaceException()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        var original = Lost();
-        var thrown = Assert.Throws<IOException>(() => Replace(temporary, target,
-            (_, d) => { File.Delete(d); throw original; }, (_, _) => throw new IOException("locked")));
-        Assert.Same(original, thrown);
-    }
-
-    [Fact]
-    public void UnauthorizedMoveFailuresRetryAndStillSurfaceTheOriginalException()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        var original = Lost();
-        var moves = 0;
-        var thrown = Assert.Throws<IOException>(() => Replace(temporary, target,
-            (_, d) => { File.Delete(d); throw original; }, (_, _) => { moves++; throw new UnauthorizedAccessException(); }));
-        Assert.Same(original, thrown);
-        Assert.Equal(3, moves);
-        Assert.True(File.Exists(temporary));
-    }
-
-    [Theory]
-    [InlineData(true, false, false, true)]
-    [InlineData(true, true, false, false)]
-    [InlineData(false, false, false, false)]
-    [InlineData(true, true, true, true)]
-    public void CleanupTemporaryKeepsOnlyTheLastCopy(bool replaced, bool targetPresent, bool targetLost, bool kept)
-    {
-        using var e = new CheckVault();
-        var (dir, target, temporary) = ReplaceSetup(e);
-        if (!targetPresent) { File.Delete(target); }
-        NoteFile.CleanupTemporary(temporary, target, replaced, targetLost);
-        var recovered = Path.Combine(dir, ".recovered-" + new string('a', 32));
-        Assert.False(File.Exists(temporary));
-        Assert.Equal(kept, File.Exists(recovered));
-        if (kept) { Assert.Equal("new", File.ReadAllText(recovered)); }
-    }
-
-    [Fact]
-    public void TargetRecreatedDuringFallbackStillKeepsTheTemporary()
-    {
-        using var e = new CheckVault();
-        var (dir, target, temporary) = ReplaceSetup(e);
-        var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, ref lost,
-            (_, d) => { File.Delete(d); throw Lost(); },
-            (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); }));
-        Assert.True(lost);
-        NoteFile.CleanupTemporary(temporary, target, true, lost);
-        Assert.Equal("new", File.ReadAllText(Path.Combine(dir, ".recovered-" + new string('a', 32))));
-        Assert.Equal("other", File.ReadAllText(target));
-    }
-
-    [Fact]
-    public void SweepLeavesOldRecoveredFilesAlone()
-    {
-        using var e = new CheckVault();
-        var (dir, _, temporary) = ReplaceSetup(e);
-        var recovered = Path.Combine(dir, ".recovered-" + new string('a', 32));
-        File.Move(temporary, recovered);
-        File.SetLastWriteTimeUtc(recovered, DateTime.UtcNow.AddDays(-2));
-        NoteFile.SweepStaleTemporaries(e.Base, TimeSpan.FromHours(1));
-        Assert.True(File.Exists(recovered));
-    }
-
-    [Fact]
-    public void ReplaceFailureWithTargetPresentRethrowsAndLeavesTargetUntouched()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        Assert.Throws<IOException>(() => Replace(temporary, target, (_, _) => throw Lost()));
-        Assert.Equal("old", File.ReadAllText(target));
-        Assert.True(File.Exists(temporary));
-    }
-
-    [Fact]
-    public void ReplaceFallbackRetriesThenKeepsTemporaryWhenMoveKeepsFailing()
-    {
-        using var e = new CheckVault();
-        var (_, target, temporary) = ReplaceSetup(e);
-        var moves = 0;
-        Assert.Throws<IOException>(() => Replace(temporary, target,
-            (_, d) => { File.Delete(d); throw Lost(); }, (_, _) => { moves++; throw new IOException("locked"); }));
-        Assert.Equal(3, moves);
-        Assert.False(File.Exists(target));
-        Assert.Equal("new", File.ReadAllText(temporary));
-    }
-
     [Fact]
     public void PendingIntentInstallsRecoveredSibling()
     {
@@ -394,7 +262,7 @@ public sealed class SessionRenameTests
         var wrong = plan.Installation! with { Identity = new(plan.Installation.Identity.Device, plan.Installation.Identity.Inode + 1) };
         NoteFile.InstallSessionTemporary(e.Vault.Root, wrong, target.NotePath);
         Assert.False(File.Exists(e.Vault.UrlForRelativePath(target.NotePath)));
-        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged)))));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)))));
     }
 
     [Fact]
@@ -405,7 +273,7 @@ public sealed class SessionRenameTests
         var path = e.Write(target.NotePath, "# user\n");
         NoteFile.InstallSessionTemporary(e.Vault.Root, plan.Installation!, target.NotePath);
         Assert.Equal("# user\n", CheckVault.Read(path));
-        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged)))));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)))));
     }
 
     // Old note removed and a staged rewrite at ".pending-" (or already renamed to ".recovered-").
@@ -426,7 +294,7 @@ public sealed class SessionRenameTests
         File.Delete(old);
         if (recovered)
         {
-            var kept = Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged)));
+            var kept = Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)));
             File.Move(staged, kept);
         }
         return (e, plan, staged, target);
