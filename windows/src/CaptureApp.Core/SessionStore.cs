@@ -244,6 +244,10 @@ public sealed class SessionStore
             {
                 throw new VaultFileException(VaultFileError.Changed);
             }
+            if (plan.Installation is { } staged && vault.FileSnapshot(plan.Target.NotePath, false) is null)
+            {
+                NoteFile.InstallSessionTemporary(vault.Root, staged, plan.Target.NotePath);
+            }
             var snapshot = vault.FileSnapshot(plan.Target.NotePath) ?? throw new FileNotFoundException(plan.Target.NotePath);
             var hash = Hash(snapshot.Contents!);
             var isSource = plan.Source.Matches(snapshot);

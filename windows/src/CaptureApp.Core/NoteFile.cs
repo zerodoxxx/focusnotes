@@ -308,6 +308,8 @@ public static partial class NoteFile
         var existing = FileMetadata.At(target);
         existing?.Validate();
         var temporary = Path.Combine(Path.GetDirectoryName(target)!, ".pending-" + Guid.NewGuid().ToString("N"));
+        var replaced = false;
+        var targetLost = false;
         try
         {
             using (var stream = OpenExclusive(temporary, FileMode.CreateNew, FileAccess.ReadWrite))
@@ -326,7 +328,8 @@ public static partial class NoteFile
             current?.Validate();
             if (overwrite && current is not null && OperatingSystem.IsWindows())
             {
-                File.Replace(temporary, target, null);
+                replaced = true;
+                ReplaceFile(temporary, target, ref targetLost);
             }
             else
             {
@@ -335,9 +338,52 @@ public static partial class NoteFile
         }
         finally
         {
-            if (File.Exists(temporary))
+            CleanupTemporary(temporary, target, replaced, targetLost);
+        }
+    }
+
+    // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
+    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it.
+    internal static void CleanupTemporary(string temporary, string target, bool replaced, bool targetLost)
+    {
+        if (!File.Exists(temporary)) { return; }
+        if (!targetLost && (!replaced || File.Exists(target))) { File.Delete(temporary); return; }
+        var name = Path.GetFileName(temporary);
+        var kept = Path.Combine(Path.GetDirectoryName(temporary)!, RecoveredName(name));
+        try { File.Move(temporary, kept, false); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            kept = temporary;
+            System.Diagnostics.Trace.TraceError($"Could not rename kept temporary: {error}");
+        }
+        System.Diagnostics.Trace.TraceError($"Kept the only remaining copy at {kept}");
+    }
+
+    internal static string RecoveredName(string pendingName) => ".recovered-" + pendingName[".pending-".Length..];
+
+    // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
+    // targetLost is set before the fallback so a racing target creation can't make cleanup delete the lone copy.
+    internal static void ReplaceFile(string temporary, string target, ref bool targetLost, Action<string, string>? replace = null,
+        Action<string, string>? move = null)
+    {
+        try { (replace ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
+        catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !File.Exists(target) && File.Exists(temporary))
+        {
+            targetLost = true;
+            const int attempts = 3;
+            for (var attempt = 1; ; attempt++)
             {
-                File.Delete(temporary);
+                try { (move ?? ((t, d) => File.Move(t, d, false)))(temporary, target); return; }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < attempts && !File.Exists(target))
+                {
+                    System.Diagnostics.Trace.TraceError($"Move fallback attempt {attempt} failed: {error}");
+                    Thread.Sleep(75);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    System.Diagnostics.Trace.TraceError($"Move fallback failed: {error}");
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(original).Throw();
+                }
             }
         }
     }

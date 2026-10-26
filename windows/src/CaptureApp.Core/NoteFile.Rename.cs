@@ -39,6 +39,8 @@ public static partial class NoteFile
             var temporaryName = ".pending-" + Guid.NewGuid().ToString("N");
             var temporary = Path.Combine(Path.GetDirectoryName(source)!, temporaryName);
             var moved = false;
+            var replaced = false;
+            var targetLost = false;
             var published = opened;
             try
             {
@@ -68,7 +70,8 @@ public static partial class NoteFile
                 EnsureOriginal(temporary, temporaryIdentity);
                 // Replacement is atomic: the live note is never truncated. The original handle
                 // still denies writers, and every ancestor remains pinned until replacement.
-                if (OperatingSystem.IsWindows()) { File.Replace(temporary, target, null); }
+                replaced = true;
+                if (OperatingSystem.IsWindows()) { ReplaceFile(temporary, target, ref targetLost); }
                 else { File.Move(temporary, target, true); }
             }
             catch (Exception error)
@@ -98,7 +101,7 @@ public static partial class NoteFile
             }
             finally
             {
-                try { if (File.Exists(temporary)) { File.Delete(temporary); } }
+                try { CleanupTemporary(temporary, target, replaced, targetLost); }
                 catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
                 {
                     // The durable staging identity allows later cleanup. Preserve the transaction's real error.
@@ -157,6 +160,36 @@ public static partial class NoteFile
             if (!RenameNative.SetInformation(stream.SafeFileHandle, 4, disposition, 1)) throw RenameError();
         }
         finally { Marshal.FreeHGlobal(disposition); }
+    }
+
+    // Installs a verified ".recovered-" copy of a staged temporary at a missing session target; never overwrites.
+    internal static void InstallSessionTemporary(string root, SessionRenameStage stage, string targetPath)
+    {
+        var parts = PathComponents(stage.TemporaryPath);
+        if (!PendingName.IsMatch(parts[^1]))
+            throw new VaultFileException(VaultFileError.InvalidFileName);
+        var targetParts = PathComponents(targetPath);
+        if (!parts.SkipLast(1).SequenceEqual(targetParts.SkipLast(1)))
+            throw new VaultFileException(VaultFileError.InvalidFileName);
+        lock (Gate(SafePath(root, targetPath)))
+        using (var ancestors = RenameAncestors.Lock(root, parts))
+        {
+            var path = SafePath(root, stage.TemporaryPath);
+            var target = SafePath(root, targetPath);
+            if (FileMetadata.At(target) is not null) return;
+            // Only the ".recovered-" sibling marks a replace that removed the target; a bare ".pending-" may predate it.
+            path = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1]));
+            if (FileMetadata.At(path) is null) return;
+            using (var stream = OpenRenameSource(path))
+            {
+                var current = FileMetadata.Of(stream);
+                current.Validate();
+                if (current.Device != stage.Identity.Device || current.Inode != stage.Identity.Inode) return;
+                ancestors.Validate();
+                if (OperatingSystem.IsWindows()) { RenameByHandle(stream.SafeFileHandle, target); }
+                else { File.Move(path, target, false); }
+            }
+        }
     }
 
     private static void EnsureOriginal(string path, FileMetadata expected)
