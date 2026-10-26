@@ -133,7 +133,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var pendingOutsideSession = false
     private var pendingToastID: UUID?
     private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Error>, persistence: Task<Void, Error>)?
-    private var commitTail: Task<SavedCapture, Error>?
+    private(set) var commitTail: Task<SavedCapture, Error>?
     private var commitGeneration = 0
     private var preparedJobs: [UUID: Task<CaptureJob, Error>] = [:]
     private var acquisitionTask: Task<Void, Never>?
@@ -1134,9 +1134,10 @@ final class AppController: NSObject, NSMenuDelegate {
         commitTail = task
         commitGeneration += 1
         let generation = commitGeneration
+        // A failed commit must clear the tail too, or later editor opens keep rethrowing it.
+        defer { if commitGeneration == generation { commitTail = nil } }
         let saved = try await task.value
         preparedJobs.removeValue(forKey: noteID)
-        if commitGeneration == generation { commitTail = nil }
         return saved
     }
 
@@ -1191,9 +1192,9 @@ final class AppController: NSObject, NSMenuDelegate {
         commitTail = task
         commitGeneration += 1
         let generation = commitGeneration
+        defer { if commitGeneration == generation { commitTail = nil } }
         let saved = try await task.value
         preparedJobs.removeValue(forKey: capture.id)
-        if commitGeneration == generation { commitTail = nil }
         showToast(Toast(style: .success, title: "Subheading added", subtitle: text))
         return saved
     }

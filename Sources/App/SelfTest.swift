@@ -620,6 +620,7 @@ extension AppController {
         }
         _ = await controller.beginTermination().value
         try await checkQuickNotePinSaveFailures(in: base)
+        try await checkFailedSubheadingClearsCommitTail(in: base)
         try await checkQuickNotePinRecovery(in: base)
     }
 
@@ -643,6 +644,9 @@ extension AppController {
                 throw SelfTestFailure("Read-only note commit unexpectedly succeeded")
             } catch let error as POSIXError where error.code == .EACCES {
                 // NoteFile cannot create its temporary note in the read-only vault.
+            }
+            guard retryController.commitTail == nil else {
+                throw SelfTestFailure("Failed note save left a stale commit tail that blocks the editor")
             }
         }
         let failedJobs = try await selfTestJournalJobs(retryPipeline.journal)
@@ -718,6 +722,31 @@ extension AppController {
             throw SelfTestFailure("A note identity lookup failure was not surfaced as a nonfatal pin warning")
         }
         _ = await resolveController.beginTermination().value
+    }
+
+    private func checkFailedSubheadingClearsCommitTail(in base: URL) async throws {
+        let fm = FileManager.default
+        let failBase = base.appendingPathComponent("SubheadingFailure", isDirectory: true)
+        let failPipeline = try await CapturePipeline.open(vaultRoot: failBase.appendingPathComponent("Vault"),
+            stateDirectory: failBase.appendingPathComponent("State"), calendar: pipeline.calendar)
+        let failController = AppController(pipeline: failPipeline, presentsUI: false)
+        // A read-only journal makes the commit task throw before the note is touched.
+        let journal = failPipeline.journal.directory
+        try fm.createDirectory(at: journal, withIntermediateDirectories: true)
+        guard let permissions = try fm.attributesOfItem(atPath: journal.path)[.posixPermissions] else {
+            throw SelfTestFailure("Couldn't read temporary journal permissions")
+        }
+        do {
+            try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: journal.path)
+            defer { try? fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: journal.path) }
+            if (try? await failController.addSubheading("Blocked")) != nil {
+                throw SelfTestFailure("Read-only subheading commit unexpectedly succeeded")
+            }
+            guard failController.commitTail == nil else {
+                throw SelfTestFailure("Failed subheading save left a stale commit tail that blocks the editor")
+            }
+        }
+        _ = await failController.beginTermination().value
     }
 
     private func checkQuickNotePinRecovery(in base: URL) async throws {
