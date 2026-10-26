@@ -16,7 +16,7 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Fixed
 
-- macOS: after a quick note or subheading failed to save, the quick-note editor would not open again and showed "Couldn't save pending capture" each time. It now opens with the kept draft.
+- macOS and Windows: after a quick note or subheading failed to save, the quick-note editor would not open again and showed "Couldn't save pending capture" each time. It now opens with the kept draft.
 
 ## [0.1.0] - Unreleased
 
