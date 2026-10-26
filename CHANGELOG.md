@@ -18,7 +18,7 @@ All notable changes to focusnotes are recorded here. The format follows
 
 - macOS and Windows: after a quick note or subheading failed to save, the quick-note editor would not open again and showed "Couldn't save pending capture" each time. It now opens with the kept draft.
 - macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A newer capture first saves a retry-pending one to its default destination with a notice, and the capture shortcut reopens the chooser only while the retry warning is visible. A failed append now reports the original write error even when rollback fails.
-- Windows: when a note replace removes the note and cannot put the new copy back, the kept `.recovered-` copy is restored (never over an existing file) by the startup sweep, the next note append, or session rename recovery, and the event is written to the app log. Very long note names and case-only mismatches are not auto-restored.
+- Windows: when a note replace removes the note and cannot put the new copy back, the kept `.recovered-` copy is restored (never over an existing file) by the startup sweep (vault roots only), the next note append, or session rename recovery, and the event is written to the app log. Copies of state files (`session.json`, the external-note registry) are kept for manual recovery only. Very long note names and case-only mismatches are not auto-restored.
 
 ## [0.1.0] - Unreleased
 
