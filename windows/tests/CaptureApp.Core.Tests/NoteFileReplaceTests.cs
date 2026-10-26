@@ -5,8 +5,11 @@ namespace CaptureApp.Core.Tests;
 
 public sealed class NoteFileReplaceTests
 {
-    private static string Recovered(string dir, string name = "note.md") =>
-        Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string('a', 32), name));
+    private static string Recovered(string dir, string name = "note.md", char id = 'a') =>
+        Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string(id, 32), name));
+
+    private static string Plain(string dir, char id = 'a') =>
+        Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string(id, 32), null));
 
     private static IOException Lost() => new("1176") { HResult = unchecked((int)0x80070498) };
 
@@ -84,7 +87,7 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         if (!targetPresent) { File.Delete(target); }
         NoteFile.CleanupTemporary(temporary, target, replaced, targetLost);
-        var recovered = Recovered(dir);
+        var recovered = targetLost ? Recovered(dir) : Plain(dir);
         Assert.False(File.Exists(temporary));
         Assert.Equal(kept, File.Exists(recovered));
         if (kept) { Assert.Equal("new", File.ReadAllText(recovered)); }
@@ -106,7 +109,7 @@ public sealed class NoteFileReplaceTests
     }
 
     [Fact]
-    public void SweepLeavesOldRecoveredFilesAlone()
+    public void SweepLeavesRecoveredFileAloneWhenItsTargetExists()
     {
         using var e = new CheckVault();
         var (dir, _, temporary) = ReplaceSetup(e);
@@ -166,14 +169,96 @@ public sealed class NoteFileReplaceTests
     }
 
     [Fact]
-    public void AtomicWriteRestoresTheRecoveredCopyBeforeTheNextWrite()
+    public void AtomicWriteNeverConsumesTheRecoveredCopyOfARegistry()
+    {
+        using var e = new CheckVault(registry: true);
+        var registry = e.Vault.ExternalNoteRegistry!;
+        registry.Register("Desktop/A.md");
+        using (new Hooks())
+        {
+            Assert.Throws<IOException>(() => NoteFile.AtomicWrite("{\"version\":1,\"paths\":[\"Desktop/A.md\"]}"u8.ToArray(), Path.GetDirectoryName(e.Registry)!, "external-notes.json"));
+        }
+        var kept = Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, ".recovered-*"));
+        var content = File.ReadAllText(kept);
+        Assert.False(File.Exists(e.Registry));
+        registry.Register("Desktop/B.md");
+        Assert.True(File.Exists(kept));
+        Assert.Equal(content, File.ReadAllText(kept));
+    }
+
+    [Fact]
+    public void AppendRestoresTheRecoveredNoteBeforeWriting()
     {
         using var e = new CheckVault();
-        var path = LoseTarget(e);
-        // A create-only write must find the restored note rather than make a new one.
-        Assert.Throws<IOException>(() => NoteFile.AtomicWrite("other"u8.ToArray(), e.Vault.Root, "note.md", overwrite: false));
-        Assert.Equal("new", File.ReadAllText(path));
+        e.Vault.Prepare();
+        e.Write("Note.md", "# Note\n\nbefore\n");
+        using (new Hooks())
+        {
+            Assert.Throws<IOException>(() => NoteFile.AtomicWrite("# Note\n\nkept\n"u8.ToArray(), e.Vault.Root, "Note.md"));
+        }
+        var path = e.Vault.UrlForRelativePath("Note.md");
+        Assert.False(File.Exists(path));
+        var capture = CheckVault.Capture("appended");
+        e.Writer.Append(capture, path, "Note");
+        var text = CheckVault.Read(path);
+        Assert.StartsWith("# Note\n\nkept\n", text, StringComparison.Ordinal);
+        Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
         Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+    }
+
+    private static string Hex(string value) => Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(value));
+
+    [Theory]
+    [InlineData("../evil.md")]
+    [InlineData("..\\evil.md")]
+    [InlineData("/tmp/evil.md")]
+    [InlineData("C:\\evil.md")]
+    [InlineData("sub/evil.md")]
+    [InlineData(".hidden.md")]
+    [InlineData(".pending-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("..")]
+    [InlineData("a:b.md")]
+    [InlineData("nul\0.md")]
+    public void SweepIgnoresRecoveredNamesThatEncodeUnsafeTargets(string decoded) => SweepLeaves(Hex(decoded));
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("zz")]
+    [InlineData("")]
+    [InlineData("ff")]
+    public void SweepIgnoresMalformedRecoveredNames(string suffix) => SweepLeaves(suffix);
+
+    [Fact]
+    public void SweepIgnoresOverlongRecoveredNames() => SweepLeaves(new string('6', 202));
+
+    private static void SweepLeaves(string suffix)
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var dir = Directory.CreateDirectory(Path.Combine(e.Vault.Root, "sub")).FullName;
+        var kept = Path.Combine(dir, ".recovered-" + new string('a', 32) + "-" + suffix);
+        File.WriteAllText(kept, "data");
+        var before = Directory.EnumerateFileSystemEntries(e.Base, "*", SearchOption.AllDirectories).Order().ToArray();
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
+        Assert.Equal("data", File.ReadAllText(kept));
+        Assert.Equal(before, Directory.EnumerateFileSystemEntries(e.Base, "*", SearchOption.AllDirectories).Order().ToArray());
+    }
+
+    [Fact]
+    public void RestoreTakesTheNewestCopyAndKeepsOlderOnesUnderPlainNames()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var older = Recovered(e.Vault.Root, "note.md", 'a');
+        var newer = Recovered(e.Vault.Root, "note.md", 'b');
+        File.WriteAllText(older, "older");
+        File.WriteAllText(newer, "newer");
+        File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddMinutes(-5));
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
+        Assert.Equal("newer", File.ReadAllText(Path.Combine(e.Vault.Root, "note.md")));
+        Assert.False(File.Exists(newer));
+        Assert.False(File.Exists(older));
+        Assert.Equal("older", File.ReadAllText(Plain(e.Vault.Root, 'a')));
     }
 
     [Fact]
@@ -181,6 +266,7 @@ public sealed class NoteFileReplaceTests
     {
         using var e = new CheckVault();
         var path = LoseTarget(e);
+        Assert.False(File.Exists(path));
         var other = e.Write("keep.md", "user");
         File.WriteAllText(Recovered(e.Vault.Root, "keep.md"), "stale");
         NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));

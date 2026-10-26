@@ -178,7 +178,8 @@ public static partial class NoteFile
             var target = SafePath(root, targetPath);
             if (FileMetadata.At(target) is not null) return;
             // Only the ".recovered-" sibling marks a replace that removed the target; a bare ".pending-" may predate it.
-            path = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], targetParts[^1]));
+            var kept = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], targetParts[^1]));
+            path = FileMetadata.At(kept) is not null ? kept : Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], null));
             if (FileMetadata.At(path) is null) return;
             using (var stream = OpenRenameSource(path))
             {
