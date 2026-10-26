@@ -13,6 +13,8 @@ func checkNoteWriter() async throws {
     let writer = NoteWriter(vault: vault, calendar: calendar)
     let when = checkDate(2026, 10, 13, 14, 30)
 
+    try await checkTypedNoteShortWrite(vault: vault, calendar: calendar, date: when)
+
     let captureID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
     let block = "### Safari\n\(checkCaptureMarker(captureID)) at=2026-10-13T14:30:00+05:30 app=\"Safari\" -->\n\nHello\n"
     let capture = Capture(
@@ -93,6 +95,50 @@ func checkNoteWriter() async throws {
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
+}
+
+private func checkTypedNoteShortWrite(vault: Vault, calendar: Calendar, date: Date) async throws {
+    let url = vault.root.appendingPathComponent("Typed short write.md")
+    let original = "# Typed short write\n\nExisting body.\n"
+    try checkWrite(original, to: url)
+    let capture = Capture(id: UUID(), createdAt: date, content: .note("A complete typed body"), source: CaptureSource())
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+
+    var limit = rlimit()
+    try require(getrlimit(RLIMIT_FSIZE, &limit) == 0, "could not read the file-size limit")
+    let oldLimit = limit.rlim_cur
+    // 90 bytes include the complete marker and separator, followed by only
+    // part of the body, which reproduces the journal-replay failure mode.
+    let appendAllowance = rlim_t(90)
+    limit.rlim_cur = rlim_t(original.utf8.count) + appendAllowance
+    try require(setrlimit(RLIMIT_FSIZE, &limit) == 0, "could not set the file-size limit")
+    let oldHandler = signal(SIGXFSZ, SIG_IGN)
+    defer {
+        _ = signal(SIGXFSZ, oldHandler)
+        limit.rlim_cur = oldLimit
+        _ = setrlimit(RLIMIT_FSIZE, &limit)
+    }
+
+    do {
+        try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed short write", kind: .note),
+                                         noteMarkerIsIdentity: true)
+        throw CheckFailure.failed("a typed-note append beyond RLIMIT_FSIZE must fail")
+    } catch let error as POSIXError {
+        try require(error.code == .EFBIG, "a forced short write should report EFBIG")
+    }
+    let rolledBack = try checkRead(url)
+    try require(rolledBack == original, "a failed typed-note append must roll back its marker and partial body")
+
+    limit.rlim_cur = oldLimit
+    try require(setrlimit(RLIMIT_FSIZE, &limit) == 0, "could not restore the file-size limit before replay")
+    try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed short write", kind: .note),
+                                     noteMarkerIsIdentity: true)
+    try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed short write", kind: .note),
+                                     noteMarkerIsIdentity: true)
+    let contents = try checkRead(url)
+    try require(contents.hasPrefix(original) && contents.contains("\nA complete typed body\n") &&
+                contents.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1 == 1,
+                "the retry after a short write must save the full typed note exactly once")
 }
 
 private func checkImageLinksForManagedLocations(vault: Vault, home: URL, writer: NoteWriter, assetPath: String,

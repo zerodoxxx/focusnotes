@@ -16,6 +16,14 @@ func checkRouter() throws {
     let nestedDirectory = root.appendingPathComponent("Science/Math", isDirectory: true)
     try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
     try checkWrite("# Existing nested note\n", to: nestedDirectory.appendingPathComponent("Trigonometry.md"))
+    let archive = root.appendingPathComponent("Archive", isDirectory: true)
+    try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+    try checkWrite("# Standup\n", to: archive.appendingPathComponent("Old.md"))
+    try checkWrite("# Twin\n", to: root.appendingPathComponent("Twin A.md"))
+    try checkWrite("# Twin\n", to: root.appendingPathComponent("Twin B.md"))
+    try checkWrite("# Twin\n", to: vault.sessionsURL.appendingPathComponent("Twin Session.md"))
+    try checkWrite("# Repeated session\n", to: vault.sessionsURL.appendingPathComponent("Repeated A.md"))
+    try checkWrite("# Repeated session\n", to: vault.sessionsURL.appendingPathComponent("archive/Repeated B.md"))
     try checkWrite("# 2026-10-13 Design\n", to: vault.sessionsURL.appendingPathComponent("2026-10-13 Design.md"))
     try checkWrite("# Standup\n", to: vault.sessionsURL.appendingPathComponent("2026-10-13 Standup.md"))
     let notes = try vault.listNotes()
@@ -48,6 +56,32 @@ func checkRouter() throws {
                "heading match ignores case and extra spaces")
     try expect(try route("Something Else", nil), path: "Foo.md", title: "Something Else", kind: .note,
                "heading matches a note by its title, not its file name")
+    try expect(try route("Standup", nil), path: "Sessions/2026-10-13 Standup.md", title: "Standup", kind: .session,
+               "a nested note heading must not hijack a bare capture title")
+    try expect(try route("Old", nil), path: "Old.md", title: "Old", kind: .note,
+               "a nested note filename must not match a bare capture title")
+    try expect(try route("pros / cons", nil), path: "pros - cons.md", title: "pros / cons", kind: .note,
+               "capture names with legacy flat slashes should match typed-note filenames")
+    let externalMatch = home.appendingPathComponent("Remote.md")
+    try checkWrite("# Remote\n", to: externalMatch)
+    let externalRef = NoteRef(url: externalMatch, title: "Remote", kind: .note)
+    let remoteRoute = try Router.destination(noteTitle: "Remote", activeSession: nil,
+                                             notes: notes + [externalRef], vault: vault)
+    try require(remoteRoute.url == root.appendingPathComponent("Remote.md") && remoteRoute.kind == .note,
+                "an external HOME note heading must not match a bare capture title")
+    for (title, expectedPaths, expectedKind) in [
+        ("Twin", ["Twin A.md", "Twin B.md"], NoteKind.note),
+        ("Repeated session", ["Sessions/Repeated A.md", "Sessions/archive/Repeated B.md"], NoteKind.session)
+    ] {
+        do {
+            _ = try route(title, nil)
+            throw CheckFailure.failed("duplicate \(expectedKind) headings must request an explicit choice")
+        } catch RouterError.ambiguous(let candidates) {
+            let paths = candidates.map { $0.url.path.replacingOccurrences(of: root.path + "/", with: "") }
+            try require(candidates.allSatisfy { $0.kind == expectedKind }, "ambiguous \(expectedKind) headings returned another destination kind")
+            try require(paths == expectedPaths.sorted(), "ambiguous headings must have stable path order: \(paths)")
+        }
+    }
     try expect(try route("Foo", nil), path: "Foo.md", title: "Foo", kind: .note,
                "unmatched heading appends to an existing filename rather than replacing it")
     try expect(try route("New Thing", nil), path: "New Thing.md", title: "New Thing", kind: .note,

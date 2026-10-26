@@ -31,7 +31,7 @@ public struct NotePathName: Sendable, Equatable {
     }
 
     /// Creates a path value from already-sanitized filename components.
-    /// User-facing names should normally go through `NoteTitle.pathName(for:)`;
+    /// User-facing names should normally go through a `NoteTitle` resolver;
     /// this factory is for trusted code that adds validated path components.
     static func validated(scope: NotePathScope, components: [String]) throws -> NotePathName {
         guard !components.isEmpty else { throw NotePathNameError.emptyPath }
@@ -72,7 +72,7 @@ public enum NoteTitle {
             .lowercased()
     }
 
-    /// Parses a note name into a safe relative path. A leading slash selects
+    /// Strictly parses a note name into a safe relative path. A leading slash selects
     /// the user's home directory; an unprefixed name is relative to the vault.
     /// Each path component uses the same bounded filename sanitization as a
     /// single-component title.
@@ -97,6 +97,25 @@ public enum NoteTitle {
             components.append(fileStem(for: component))
         }
         return try NotePathName.validated(scope: scope, components: components)
+    }
+
+    /// Resolves a user-entered destination name, preserving the legacy flat
+    /// filename behavior for malformed relative slash forms.
+    public static func resolvedPathName(for rawName: String) throws -> NotePathName {
+        do {
+            let path = try pathName(for: rawName)
+            if canFallBackToFlatName(rawName, error: nil) {
+                return try flatPathName(for: rawName)
+            }
+            return path
+        } catch let error as NotePathNameError {
+            guard canFallBackToFlatName(rawName, error: error) else { throw error }
+            return try flatPathName(for: rawName)
+        }
+    }
+
+    private static func flatPathName(for rawName: String) throws -> NotePathName {
+        try NotePathName.validated(scope: .vault, components: [fileStem(for: cleanTitle(rawName))])
     }
 
     /// Returns whether a malformed or whitespace-qualified path should retain

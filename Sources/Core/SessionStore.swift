@@ -139,21 +139,8 @@ public actor SessionStore {
         try vault.prepare()
 
         if cleaned.contains("/") {
-            let parsed: Result<NotePathName, NotePathNameError>
-            do {
-                parsed = .success(try NoteTitle.pathName(for: name))
-            } catch let error as NotePathNameError {
-                parsed = .failure(error)
-            } catch { throw error }
-            let pathName: NotePathName
-            switch parsed {
-            case .success(let value):
-                if NoteTitle.canFallBackToFlatName(name, error: nil) {
-                    return try startFlat(title: cleaned, existingSessions: existingSessions())
-                }
-                pathName = value
-            case .failure(let error):
-                guard NoteTitle.canFallBackToFlatName(name, error: error) else { throw error }
+            let pathName = try NoteTitle.resolvedPathName(for: name)
+            if pathName.scope == .vault, pathName.components.count == 1 {
                 return try startFlat(title: cleaned, existingSessions: existingSessions())
             }
             guard pathName.scope == .vault else { throw NotePathNameError.invalidComponent }

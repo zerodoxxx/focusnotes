@@ -19,6 +19,205 @@ func checkAppReliability() async throws {
     try await checkSessionPickerEscapeRestoresSelection()
     try await checkOutsideCaptureInboxCollisions()
     try await checkFixedCapturePreparationBypassesRouting()
+    try await checkSessionDrainWaitsForAcquisition()
+    try await checkFailedChosenNoteCanBeRetried()
+    try await checkAmbiguousCaptureDestinations()
+}
+
+@MainActor
+private func checkAmbiguousCaptureDestinations() async throws {
+    for outcome in ["cancel", "choose"] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ambiguous-capture-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+        let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+        let firstURL = vaultRoot.appendingPathComponent("Sessions/First.md")
+        let secondURL = vaultRoot.appendingPathComponent("Sessions/Second.md")
+        try FileManager.default.createDirectory(at: firstURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("# Target\n".utf8).write(to: firstURL)
+        try Data("# Target\n".utf8).write(to: secondURL)
+        try await pipeline.index.reindex(note: firstURL)
+        try await pipeline.index.reindex(note: secondURL)
+        var toasts: [Toast] = []
+        let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
+        let capture = PendingCapture(trigger: .selection, content: .text("save to the selected duplicate"),
+                                     source: CaptureSource(appName: "Ambiguity check"), subtitle: "check")
+        await controller.stage(capture, outsideSession: true)
+        do {
+            _ = try await controller.commitPending(noteTitle: "Target")?.value
+            throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination")
+        } catch is SelfTestFailure { throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination") }
+        catch {}
+
+        let pickerDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !controller.isChoosingDestinationForChecks, ContinuousClock.now < pickerDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard controller.isChoosingDestinationForChecks, let picker = controller.inputForChecks,
+              controller.pendingForChecks?.id == capture.id else {
+            throw SelfTestFailure("Ambiguous title did not retain the capture and show exact destinations")
+        }
+
+        if outcome == "cancel" {
+            guard let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53) else {
+                throw SelfTestFailure("Could not create destination picker cancel event")
+            }
+            _ = picker.handleKeyForChecks(escape)
+            let closeDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while controller.isChoosingDestinationForChecks, ContinuousClock.now < closeDeadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            guard controller.pendingForChecks?.id == capture.id,
+                  toasts.last?.title == "Choose where to save",
+                  (try await pipeline.index.captureCount(notePath: "Sessions/First.md")) == 0,
+                  (try await pipeline.index.captureCount(notePath: "Sessions/Second.md")) == 0 else {
+                throw SelfTestFailure("Canceling exact destination choice saved or discarded the pending capture")
+            }
+            continue
+        }
+
+        let selectedURL = URL(fileURLWithPath: secondURL.path).absoluteString
+        var selectedSecond = false
+        for _ in 0..<8 {
+            if picker.selectedValueForChecks == selectedURL {
+                selectedSecond = true
+                break
+            }
+            guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                              windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) else { break }
+            _ = picker.handleKeyForChecks(down)
+        }
+        guard selectedSecond,
+              let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                           windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+            throw SelfTestFailure("Exact destination picker did not expose the second candidate path")
+        }
+        _ = picker.handleKeyForChecks(enter)
+        let savedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        var saved = try await pipeline.index.capture(id: capture.id)
+        while saved == nil, ContinuousClock.now < savedDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+            saved = try await pipeline.index.capture(id: capture.id)
+        }
+        guard saved?.notePath == "Sessions/Second.md",
+              try await pipeline.index.captureCount(notePath: "Sessions/First.md") == 0,
+              try await pipeline.index.captureCount(notePath: "Sessions/Second.md") == 1 else {
+            throw SelfTestFailure("Capture title ambiguity did not save exactly once to the selected path")
+        }
+        _ = await controller.beginTermination().value
+    }
+}
+
+@MainActor
+private func checkSessionDrainWaitsForAcquisition() async throws {
+    for transition in ["end", "start"] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("acquisition-session-drain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"),
+                                                      stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+        let initialSession = transition == "end" ? try await pipeline.sessions.start(name: "Acquisition destination") : nil
+        let capture = PendingCapture(trigger: .selection, content: .text("acquisition before session \(transition)"),
+                                     source: CaptureSource(appName: "Drain check"), subtitle: "check")
+        var release: (() -> Void)?
+        let controller = AppController(pipeline: pipeline, presentsUI: false)
+        guard controller.beginAcquisition({
+            await withCheckedContinuation { continuation in
+                release = { continuation.resume(returning: capture) }
+            }
+        }) else { throw SelfTestFailure("Could not begin the gated capture acquisition") }
+        await Task.yield()
+        let changing = Task {
+            await controller.drainCaptures()
+            if let initialSession { _ = try await controller.endSession(initialSession) }
+            else { _ = try await controller.startSession(name: "Started after acquisition") }
+        }
+        await Task.yield()
+        guard await pipeline.sessions.current() == initialSession else {
+            throw SelfTestFailure("Session changed before the in-flight capture acquired its contents")
+        }
+        guard let release else { throw SelfTestFailure("Capture acquisition did not reach its deterministic gate") }
+        release()
+        try await changing.value
+        let saved = try await pipeline.index.capture(id: capture.id)
+        let finalSession = await pipeline.sessions.current()
+        let expectedPath = initialSession?.notePath ?? "Inbox.md"
+        guard saved?.notePath == expectedPath,
+              transition == "end" ? finalSession == nil : finalSession?.name == "Started after acquisition" else {
+            throw SelfTestFailure("Capture acquired before session \(transition) was saved to \(saved?.notePath ?? "no note") instead of \(expectedPath)")
+        }
+    }
+}
+
+@MainActor
+private func checkFailedChosenNoteCanBeRetried() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-chosen-note-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
+    let targetURL = vaultRoot.appendingPathComponent("Target.md")
+    try Data("# Target\n".utf8).write(to: targetURL)
+    try await pipeline.index.reindex(note: targetURL)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
+    let capture = PendingCapture(trigger: .selection, content: .text("retry this capture once"),
+                                 source: CaptureSource(appName: "Retry check"), subtitle: "check")
+    await controller.stage(capture, outsideSession: true)
+    do {
+        _ = try await controller.commitPending(noteTitle: "../escape")?.value
+        throw SelfTestFailure("Invalid chosen note unexpectedly saved")
+    } catch is SelfTestFailure { throw SelfTestFailure("Invalid chosen note unexpectedly saved") }
+    catch {}
+
+    let failureDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while controller.pendingForChecks?.id != capture.id, ContinuousClock.now < failureDeadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard controller.pendingForChecks?.id == capture.id,
+          toasts.last?.title == "Couldn't save to that note",
+          toasts.last?.subtitle?.contains("Capture kept") == true else {
+        throw SelfTestFailure("Failed chosen-note save did not preserve the capture with retry guidance")
+    }
+
+    controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
+                                                               processIdentifier: 1, windowTitle: nil))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while controller.inputForChecks == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard let input = controller.inputForChecks else {
+        throw SelfTestFailure("Repeating the capture shortcut did not reopen the note chooser")
+    }
+    var selectedTarget = false
+    for _ in 0..<32 {
+        if input.selectedValueForChecks == "Target.md" || input.selectedValueForChecks == "Target" {
+            selectedTarget = true
+            break
+        }
+        guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                          windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) else { break }
+        _ = input.handleKeyForChecks(down)
+    }
+    guard selectedTarget,
+          let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                       windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+        throw SelfTestFailure("Retry chooser did not offer the existing target note")
+    }
+    _ = input.handleKeyForChecks(enter)
+    let saveDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while controller.pendingForChecks != nil, ContinuousClock.now < saveDeadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    var saved = try await pipeline.index.capture(id: capture.id)
+    while saved == nil, ContinuousClock.now < saveDeadline {
+        try await Task.sleep(for: .milliseconds(20))
+        saved = try await pipeline.index.capture(id: capture.id)
+    }
+    let targetCount = try await pipeline.index.captureCount(notePath: "Target.md")
+    guard controller.pendingForChecks == nil, saved?.notePath == "Target.md", targetCount == 1 else {
+        throw SelfTestFailure("Retry did not save the retained capture exactly once to the selected note")
+    }
+    _ = await controller.beginTermination().value
 }
 
 @MainActor

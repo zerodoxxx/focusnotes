@@ -664,7 +664,17 @@ enum NoteFile {
                 beforeWrite?(url)
                 guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial else { return false }
                 _ = try validateManagedFile(descriptor)
-                try writeAll(appended, to: descriptor)
+                do {
+                    try writeAll(appended, to: descriptor)
+                } catch {
+                    // A failed append can leave a valid note marker followed by
+                    // only part of its body. Retries intentionally accept that
+                    // marker after a successful save, including after the body
+                    // is edited elsewhere, so remove this attempt's bytes before
+                    // allowing the error to trigger a journal replay.
+                    guard ftruncate(descriptor, off_t(end)) == 0 else { throw posixError() }
+                    throw error
+                }
                 let written = try fingerprint(descriptor)
                 afterWrite?(url)
                 let current = try isCurrent(descriptor, at: location)
