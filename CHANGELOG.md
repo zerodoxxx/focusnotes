@@ -8,6 +8,10 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A failed append now reports the original write error even when rollback fails.
+
 ### Added
 
 - Implemented Windows edition: a tray app for Windows 10 22H2 and Windows 11 (x64 and arm64) with the same capture, quick note, session and search features, Windows default shortcuts with rebinding, a first-launch Setup, bundled offline OCR, optional semantic search, and Velopack installs with signed-index updates. Windows x64 and arm64 installers and portable ZIPs first shipped in v0.1.5; the Mac app is unchanged.
