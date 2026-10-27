@@ -70,18 +70,8 @@ internal sealed partial class AppController
     {
         RegisterHotkeys();
         RefreshMenu();
-        if (updates is { IsEnabled: true } && Settings.UpdatesChoice != UpdatesChoice.Manual && !updateSchedulerStarted)
-        {
-            updateSchedulerStarted = true;
-            _ = Task.Run(async () =>
-            {
-                try { await updates.RunAutomaticChecksAsync(lifetime.Token).ConfigureAwait(false); }
-                catch (OperationCanceledException) { }
-            });
-        }
+        StartUpdateScheduler();
     }
-
-    private bool updateSchedulerStarted;
 
     internal bool IsRegistered(HotkeyAction action) => hotkeys is not null && Setup.ConsentAnswered && !failures.ContainsKey(action)
                                                        && !Settings.DisabledShortcuts.Contains(action.ToString());

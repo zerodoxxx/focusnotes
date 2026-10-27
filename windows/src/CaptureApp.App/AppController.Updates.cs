@@ -15,13 +15,31 @@ internal sealed partial class AppController
     {
         updates = UpdateServiceFactory.Create(SettingsPath);
         updates.StateChanged += snapshot => dispatcher.BeginInvoke(() => OnUpdateState(snapshot));
+        var service = updates;
+        updateStartup = Task.Run(async () =>
+        {
+            try { await service.StartAsync(lifetime.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception error) { log.Error($"Update startup failed ({error.GetType().Name}): {error.Message}"); }
+        });
+        StartUpdateScheduler();
+    }
+
+    private Task updateStartup = Task.CompletedTask;
+    private int updateSchedulerStarted;
+
+    /// Only an explicit "automatically" answer starts the one schedule; "Check for Updates…" always works.
+    private void StartUpdateScheduler()
+    {
+        if (updates is not { IsEnabled: true } service || Settings.UpdatesChoice != UpdatesChoice.Auto
+            || Interlocked.Exchange(ref updateSchedulerStarted, 1) == 1) { return; }
+        var startup = updateStartup;
         _ = Task.Run(async () =>
         {
             try
             {
-                await updates.StartAsync(lifetime.Token).ConfigureAwait(false);
-                // "Only when I ask" keeps the schedule off; "Check for Updates…" always works.
-                if (Settings.UpdatesChoice != UpdatesChoice.Manual) { await updates.RunAutomaticChecksAsync(lifetime.Token).ConfigureAwait(false); }
+                await startup.ConfigureAwait(false);
+                await service.RunAutomaticChecksAsync(lifetime.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
             catch (Exception error) { log.Error($"Automatic update checks stopped ({error.GetType().Name}): {error.Message}"); }
