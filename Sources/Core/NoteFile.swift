@@ -612,6 +612,9 @@ enum NoteFile {
             let current = try withLockedDescriptor(descriptor) {
                 // Inspect the locked inode, rather than a path an editor may have replaced.
                 let reader = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+                // A rename or editor save while we waited for the lock leaves an
+                // unlinked inode (nlink 0); retry rather than fail its validation.
+                guard try isCurrent(descriptor, at: location) else { return false }
                 _ = try validateManagedFile(descriptor)
                 let initial = try fingerprint(descriptor)
                 let end = UInt64(initial.size)

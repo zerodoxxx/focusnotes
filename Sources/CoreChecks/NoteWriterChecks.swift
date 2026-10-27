@@ -93,6 +93,7 @@ func checkNoteWriter() async throws {
     try await checkAppendCache(vault: vault, calendar: calendar, capture: capture)
     try await checkCachedSourceParsing(vault: vault, calendar: calendar, capture: capture)
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
+    try await checkReplacementWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
 }
@@ -315,6 +316,32 @@ private func checkInPlaceEditBeforeAppend(vault: Vault, calendar: Calendar, capt
                 contents.contains("### Safari\n" + checkCaptureMarker(next.id)),
                 "a detected edit must recompute the source heading and preserve editor bytes")
     try require(contents.components(separatedBy: checkCaptureMarker(next.id)).count - 1 == 1, "prewrite retry must append the new capture exactly once")
+}
+
+private func checkReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
+    let url = vault.root.appendingPathComponent("Lock replacement.md")
+    try checkWrite("# Lock replacement\n\nold body\n", to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let append = Task.detached { try await writer.append(capture, to: url, title: "Lock replacement") }
+    // The append blocks on the held flock. If it has not opened the note yet, it
+    // simply sees the replacement, so a slow start can only weaken this check.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    // An atomic save unlinks the locked inode (nlink 0) and installs a new one.
+    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    try await append.value
+
+    let text = try checkRead(url)
+    try require(text.hasPrefix("# Replacement\n\neditor kept this\n"), "a replacement must keep the editor's bytes")
+    try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+                "an append interrupted by a replacement must land once on the current note")
 }
 
 private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture) async throws {
