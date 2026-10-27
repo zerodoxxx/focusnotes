@@ -93,6 +93,10 @@ func checkNoteWriter() async throws {
     try await checkAppendCache(vault: vault, calendar: calendar, capture: capture)
     try await checkCachedSourceParsing(vault: vault, calendar: calendar, capture: capture)
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
+    try await checkReplacementWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
+    try await checkRenameAwayWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
+    try await checkTypedNoteReplacementWhileWaitingForLock(vault: vault, calendar: calendar, date: when)
+    try await checkTypedNoteMovedWhileWaitingForLock(vault: vault, calendar: calendar, date: when)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
 }
@@ -222,7 +226,9 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
         try await writer.append(capture, to: symlink, title: "Linked")
         throw CheckFailure.failed("note appends must reject a symlink target")
     } catch is CheckFailure { throw CheckFailure.failed("note symlink unexpectedly accepted") }
-    catch {}
+    catch let error as POSIXError {
+        try require(error.code == .ELOOP, "a symlink note append should report ELOOP (O_NOFOLLOW), got \(error.code)")
+    }
     let afterSymlink = try checkRead(outside)
     try require(afterSymlink == "outside bytes\n", "a symlink note append changed the outside file")
 
@@ -233,7 +239,9 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
         try await writer.append(capture, to: hardlink, title: "Hardlinked")
         throw CheckFailure.failed("note appends must reject a hard-linked target")
     } catch is CheckFailure { throw CheckFailure.failed("hard-linked note unexpectedly accepted") }
-    catch {}
+    catch let error as POSIXError {
+        try require(error.code == .EPERM, "a hard-linked note append should report EPERM, got \(error.code)")
+    }
     let afterHardlink = try checkRead(outside)
     try require(afterHardlink == "outside bytes\n", "a hard-linked note append changed the outside file")
 
@@ -315,6 +323,184 @@ private func checkInPlaceEditBeforeAppend(vault: Vault, calendar: Calendar, capt
                 contents.contains("### Safari\n" + checkCaptureMarker(next.id)),
                 "a detected edit must recompute the source heading and preserve editor bytes")
     try require(contents.components(separatedBy: checkCaptureMarker(next.id)).count - 1 == 1, "prewrite retry must append the new capture exactly once")
+}
+
+private func checkReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
+    let url = vault.root.appendingPathComponent("Lock replacement.md")
+    try checkWrite("# Lock replacement\n\nold body\n", to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let append = Task.detached { try await writer.append(capture, to: url, title: "Lock replacement") }
+    // The append blocks on the held flock. If it has not opened the note yet, it
+    // simply sees the replacement, so a slow start can only weaken this check.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    // An atomic save unlinks the locked inode (nlink 0) and installs a new one.
+    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    try await append.value
+
+    let text = try checkRead(url)
+    try require(text.hasPrefix("# Replacement\n\neditor kept this\n"), "a replacement must keep the editor's bytes")
+    try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+                "an append interrupted by a replacement must land once on the current note")
+}
+
+/// Waits until another descriptor in this process refers to the same inode as `lockDescriptor`: a
+/// background save has opened the note and is queued on its flock. Returns false after 3 seconds.
+private func checkWaitForQueuedWriter(on lockDescriptor: Int32) async -> Bool {
+    var target = stat()
+    guard fstat(lockDescriptor, &target) == 0 else { return false }
+    for _ in 0..<300 {
+        for descriptor in 0..<min(getdtablesize(), 4096) where descriptor != lockDescriptor {
+            var candidate = stat()
+            if fstat(descriptor, &candidate) == 0, candidate.st_dev == target.st_dev, candidate.st_ino == target.st_ino { return true }
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return false
+}
+
+/// A note moved away (for example by a session rename) while an append waited must not be recreated at its old path.
+/// If the append never queued on the lock, it is a first attempt that may create the note; that run is inconclusive.
+private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
+    let url = vault.root.appendingPathComponent("Moved away.md")
+    let movedURL = vault.root.appendingPathComponent("Moved away elsewhere.md")
+    let original = "# Moved away\n\nold body\n"
+    try checkWrite(original, to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let append = Task.detached { () -> Error? in
+        do { try await writer.append(capture, to: url, title: "Moved away"); return nil }
+        catch { return error }
+    }
+    let queued = await checkWaitForQueuedWriter(on: lockDescriptor)
+    try FileManager.default.moveItem(at: url, to: movedURL)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    let failure = await append.value
+
+    let movedText = try checkRead(movedURL)
+    try require(movedText == original, "the moved note must stay untouched")
+    if failure == nil {
+        try require(!queued, "an append queued on the lock must not succeed once its note moved away")
+        // The append never queued, so it only began after the move and legitimately created a fresh
+        // note on the missing path (first attempt). Accept only that, as an inconclusive run.
+        let fresh = try checkRead(url)
+        try require(fresh.hasPrefix("# Moved away\n\n") && !fresh.contains("old body") &&
+                    fresh.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+                    "an append that succeeded must have created a fresh note, not touched the old one")
+        return
+    }
+    try require((failure as? POSIXError)?.code == .ENOENT, "an append to a moved-away note must fail with ENOENT, got \(String(describing: failure))")
+    try require(!FileManager.default.fileExists(atPath: url.path), "an append must not recreate the moved-away path")
+}
+
+/// A typed-note save to an existing note locks it first; a replacement while waiting must be retried, not rejected.
+private func checkTypedNoteReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, date: Date) async throws {
+    let url = vault.root.appendingPathComponent("Typed lock replacement.md")
+    try checkWrite("# Typed lock replacement\n\nold body\n", to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let capture = Capture(id: UUID(), createdAt: date, content: .note("typed body after replacement"), source: CaptureSource())
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let save = Task.detached {
+        try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed lock replacement", kind: .note),
+                                         noteMarkerIsIdentity: true)
+    }
+    // As above, a slow start can only weaken this check.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    try await save.value
+
+    let text = try checkRead(url)
+    try require(text.hasPrefix("# Replacement\n\neditor kept this\n") && text.contains("\ntyped body after replacement\n") &&
+                text.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1 == 1,
+                "a typed-note save interrupted by a replacement must land once on the current note")
+}
+
+/// Parks a typed-note save on the note's flock, runs `mutate` while it waits, then releases it.
+/// `queued` is false if the save never reached the lock; it then simply sees the mutated path.
+private func checkParkedTypedSave(vault: Vault, calendar: Calendar, date: Date, url: URL, title: String,
+                                  mutate: () throws -> Void) async throws -> (capture: Capture, failure: Error?, queued: Bool) {
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    defer { _ = flock(lockDescriptor, LOCK_UN); close(lockDescriptor) }
+    try require(flock(lockDescriptor, LOCK_EX) == 0, "could not lock the fixture note")
+
+    let capture = Capture(id: UUID(), createdAt: date, content: .note("typed body after the move"), source: CaptureSource())
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let save = Task.detached { () -> Error? in
+        do {
+            try await writer.appendIfMissing(capture, to: Destination(url: url, title: title, kind: .note), noteMarkerIsIdentity: true)
+            return nil
+        } catch { return error }
+    }
+    let queued = await checkWaitForQueuedWriter(on: lockDescriptor)
+    try mutate()
+    _ = flock(lockDescriptor, LOCK_UN)
+    return (capture, await save.value, queued)
+}
+
+private func typedMarkerCount(_ text: String, _ capture: Capture) -> Int {
+    text.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1
+}
+
+/// A typed save must not recreate a note moved away while it waited (journal replay keeps the record),
+/// and must follow an editor that renamed the note to a backup and installed a new file at its path.
+private func checkTypedNoteMovedWhileWaitingForLock(vault: Vault, calendar: Calendar, date: Date) async throws {
+    // Moved away: nothing at the old path afterwards, unless the save started only after the move.
+    let url = vault.root.appendingPathComponent("Typed moved away.md")
+    let movedURL = vault.root.appendingPathComponent("Typed moved elsewhere.md")
+    let original = "# Typed moved away\n\nold body\n"
+    try checkWrite(original, to: url)
+    let moved = try await checkParkedTypedSave(vault: vault, calendar: calendar, date: date, url: url, title: "Typed moved away") {
+        try FileManager.default.moveItem(at: url, to: movedURL)
+    }
+    let movedText = try checkRead(movedURL)
+    try require(movedText == original, "the moved typed note must stay untouched")
+    if moved.failure == nil {
+        try require(!moved.queued, "a typed save queued on the lock must not succeed once its note moved away")
+        // The save never queued: it began after the move and legitimately created a fresh note. Inconclusive.
+        let fresh = try checkRead(url)
+        try require(fresh.hasPrefix("# Typed moved away\n\n") && !fresh.contains("old body") && typedMarkerCount(fresh, moved.capture) == 1,
+                    "a typed save that succeeded must have created a fresh note, not touched the old one")
+    } else {
+        try require((moved.failure as? POSIXError)?.code == .ENOENT, "a typed save to a moved-away note must fail with ENOENT, got \(String(describing: moved.failure))")
+        try require(!FileManager.default.fileExists(atPath: url.path), "a typed save must not recreate the moved-away path")
+    }
+
+    // Renamed to a backup with a new file at the path: the save lands in the new file.
+    let editedURL = vault.root.appendingPathComponent("Typed backup swap.md")
+    let backupURL = vault.root.appendingPathComponent("Typed backup swap backup.md")
+    let backupBody = "# Typed backup swap\n\nbackup body\n"
+    try checkWrite(backupBody, to: editedURL)
+    let swapped = try await checkParkedTypedSave(vault: vault, calendar: calendar, date: date, url: editedURL, title: "Typed backup swap") {
+        try FileManager.default.moveItem(at: editedURL, to: backupURL)
+        try checkWrite("# Replacement\n\neditor kept this\n", to: editedURL)
+    }
+    try require(swapped.failure == nil, "a typed save must follow a rename-to-backup replacement, got \(String(describing: swapped.failure))")
+    let swappedText = try checkRead(editedURL)
+    try require(swappedText.hasPrefix("# Replacement\n\neditor kept this\n") && typedMarkerCount(swappedText, swapped.capture) == 1,
+                "the typed save must land once in the new file")
+    let backupText = try checkRead(backupURL)
+    try require(backupText == backupBody, "the backup must stay untouched")
 }
 
 private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture) async throws {

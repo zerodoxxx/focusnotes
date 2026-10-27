@@ -6,6 +6,8 @@ public struct SyncStats: Sendable, Equatable {
     public let updated: Int
     public let removed: Int
     public let unchanged: Int
+    /// Notes that kept changing mid-read; their index rows are left for the next sync.
+    public let skipped: Int
 }
 
 public struct SearchHit: Sendable {
@@ -70,15 +72,34 @@ public actor SearchIndex {
         var added = 0
         var updated = 0
         var unchanged = 0
+        var skipped = 0
         for ref in refs {
             let path = ref.id
-            guard let metadata = ref.snapshot else { continue }
+            guard ref.snapshot != nil || ref.isChanging else { continue }
             let old = previous[path]
-            if old == Self.fingerprint(metadata) {
+            if let metadata = ref.snapshot, old == Self.fingerprint(metadata) {
                 previous.removeValue(forKey: path)
                 unchanged += 1
             } else {
-                guard let snapshot = try vault.fileSnapshot(noteID: path), let contents = snapshot.contents else { continue }
+                // EAGAIN means the note is mid-change. Retry briefly, then keep its old row
+                // and move on; the watcher's next sync picks it up once the write settles.
+                var read: VaultFileSnapshot?
+                var changing = true
+                for _ in 0..<3 {
+                    do {
+                        read = try vault.fileSnapshot(noteID: path)
+                        changing = false
+                        break
+                    } catch let error as POSIXError where error.code == .EAGAIN {
+                        continue
+                    }
+                }
+                if changing {
+                    previous.removeValue(forKey: path)
+                    skipped += 1
+                    continue
+                }
+                guard let snapshot = read, let contents = snapshot.contents else { continue }
                 let fingerprint = Self.fingerprint(snapshot)
                 try index(contents: contents, path: path, kind: ref.kind,
                           titleFallback: ref.url.deletingPathExtension().lastPathComponent,
@@ -93,7 +114,7 @@ public actor SearchIndex {
                 try database.execute("DELETE FROM notes WHERE path = ?", [.text(path)])
             }
         }
-        return SyncStats(added: added, updated: updated, removed: previous.count, unchanged: unchanged)
+        return SyncStats(added: added, updated: updated, removed: previous.count, unchanged: unchanged, skipped: skipped)
     }
 
     public func reindex(note: URL) throws {

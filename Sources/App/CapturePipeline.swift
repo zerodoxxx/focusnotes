@@ -382,7 +382,7 @@ struct CapturePipeline: Sendable {
         guard !Task.isCancelled else { return }
         do {
             let stats = try await index.sync()
-            logger.notice("Index sync: added=\(stats.added) updated=\(stats.updated) removed=\(stats.removed) unchanged=\(stats.unchanged)")
+            logger.notice("Index sync: added=\(stats.added) updated=\(stats.updated) removed=\(stats.removed) unchanged=\(stats.unchanged) skipped=\(stats.skipped)")
             await semantic.schedule()
         } catch {
             logger.error("Index sync failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")

@@ -11,6 +11,8 @@ enum NoteFile {
         let name: String
         let isDirectory: Bool
         let noteSnapshot: VaultFileSnapshot?
+        /// The note changed while its metadata was read; callers keep any prior state.
+        let noteIsChanging: Bool
     }
 
     private struct FileIdentity: Equatable {
@@ -135,11 +137,17 @@ enum NoteFile {
             }
 
             var noteSnapshot: VaultFileSnapshot? = nil
+            var noteIsChanging = false
             if includeNoteMetadata, !isDirectory, !name.hasPrefix("."),
                !name.hasPrefix("~$"), URL(fileURLWithPath: name).pathExtension.lowercased() == "md" {
-                noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
+                do {
+                    noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
+                } catch let error as POSIXError where error.code == .EAGAIN {
+                    noteIsChanging = true
+                }
             }
-            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory, noteSnapshot: noteSnapshot))
+            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory,
+                                                 noteSnapshot: noteSnapshot, noteIsChanging: noteIsChanging))
         }
         guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
         return entries
@@ -157,8 +165,10 @@ enum NoteFile {
 
         var opened = stat()
         guard fstat(descriptor, &opened) == 0 else { throw posixError() }
-        guard opened.st_mode & S_IFMT == S_IFREG,
-              opened.st_uid == getuid(), opened.st_nlink == 1 else { return nil }
+        guard opened.st_mode & S_IFMT == S_IFREG, opened.st_uid == getuid() else { return nil }
+        // Unlinked between openat and fstat: the note is changing, not foreign.
+        if opened.st_nlink == 0 { throw POSIXError(.EAGAIN) }
+        guard opened.st_nlink == 1 else { return nil }
 
         var current = stat()
         guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0 else {
@@ -213,11 +223,11 @@ enum NoteFile {
             throw posixError()
         }
         defer { close(descriptor) }
-        let initialAttributes = try validateManagedFile(descriptor)
+        let initialAttributes = try validateManagedFile(descriptor, at: location)
         guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
         let initial = try fingerprint(descriptor)
         let contents = includingContents ? try readAll(descriptor) : nil
-        let finalAttributes = try validateManagedFile(descriptor)
+        let finalAttributes = try validateManagedFile(descriptor, at: location)
         guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial,
               FileIdentity(initialAttributes) == FileIdentity(finalAttributes) else { throw POSIXError(.EAGAIN) }
         return VaultFileSnapshot(contents: contents, attributes: finalAttributes)
@@ -327,6 +337,25 @@ enum NoteFile {
         guard attributes.st_mode & S_IFMT == S_IFREG,
               attributes.st_uid == getuid(), attributes.st_nlink == 1 else { throw POSIXError(.EPERM) }
         return attributes
+    }
+
+    /// True for a regular, app-owned inode that is no longer the file at `location`. Whatever its
+    /// link count (nlink 0 after an unlink, or a stale link), it is treated as replaced, not foreign.
+    private static func isReplacedManagedFile(_ descriptor: Int32, at location: FileLocation) throws -> Bool {
+        var attributes = stat()
+        guard fstat(descriptor, &attributes) == 0 else { throw posixError() }
+        guard attributes.st_mode & S_IFMT == S_IFREG, attributes.st_uid == getuid() else { return false }
+        return try !isCurrent(descriptor, at: location)
+    }
+
+    /// A note replaced or unlinked mid-read reports EAGAIN; genuine ownership, type or link problems stay EPERM.
+    private static func validateManagedFile(_ descriptor: Int32, at location: FileLocation) throws -> stat {
+        do {
+            return try validateManagedFile(descriptor)
+        } catch let error as POSIXError where error.code == .EPERM {
+            guard try isReplacedManagedFile(descriptor, at: location) else { throw error }
+            throw POSIXError(.EAGAIN)
+        }
     }
 
     /// Inbox is app-managed: migrate legacy broad modes without following a
@@ -598,21 +627,37 @@ enum NoteFile {
                        afterWrite: (@Sendable (URL) -> Void)? = nil) throws {
         if savedNoteMarker != nil { try createCompleteNote(Data((header + block).utf8), root: root, relativePath: relativePath) }
         let blockData = Data(block.utf8)
+        // Once a locked inode was replaced or unlinked, never recreate the path: a rename
+        // may have moved the note away, and a recreated file would be a stray duplicate.
+        var sawReplacement = false
         for attempt in 0..<attempts {
             let location = try openLocation(root: root, relativePath: relativePath)
             guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
-            var descriptor = openat(location.parentDescriptor, location.name,
+            var descriptor: Int32 = -1
+            if !sawReplacement {
+                descriptor = openat(location.parentDescriptor, location.name,
                                     O_RDWR | O_APPEND | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-            if descriptor < 0, errno == EEXIST {
+            }
+            if sawReplacement || (descriptor < 0 && errno == EEXIST) {
                 descriptor = openat(location.parentDescriptor, location.name,
                                     O_RDWR | O_APPEND | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
             }
-            if descriptor < 0, errno == ENOENT { continue }
+            if descriptor < 0, errno == ENOENT {
+                if sawReplacement { throw POSIXError(.ENOENT) }
+                continue
+            }
             guard descriptor >= 0 else { throw posixError() }
             let current = try withLockedDescriptor(descriptor) {
                 // Inspect the locked inode, rather than a path an editor may have replaced.
                 let reader = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-                _ = try validateManagedFile(descriptor)
+                // A rename or editor save while we waited for the lock leaves an
+                // unlinked inode (nlink 0); retry rather than fail its validation.
+                do { _ = try validateManagedFile(descriptor) }
+                catch let error as POSIXError where error.code == .EPERM {
+                    guard try isReplacedManagedFile(descriptor, at: location) else { throw error }
+                    sawReplacement = true
+                    return false
+                }
                 let initial = try fingerprint(descriptor)
                 let end = UInt64(initial.size)
                 var state = cache.take(url.path, matching: initial)
@@ -643,8 +688,8 @@ enum NoteFile {
                     // A marker alone can be left by a failed write; that path truncates its bytes back.
                     // A crash, kill or power loss mid-write can still leave a marker without its body.
                     if alreadySaved {
-                        let current = try isCurrent(descriptor, at: location)
-                        guard current, try fingerprint(descriptor) == initial else { return false }
+                        guard try isCurrent(descriptor, at: location) else { sawReplacement = true; return false }
+                        guard try fingerprint(descriptor) == initial else { return false }
                         if let state { cache.store(state, at: url.path) }
                         return true
                     }
@@ -665,8 +710,14 @@ enum NoteFile {
                 // Non-cooperating external editors can change the inode despite
                 // flock. Recompute both replay and source decisions on mutation.
                 beforeWrite?(url)
-                guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial else { return false }
-                _ = try validateManagedFile(descriptor)
+                guard try isCurrent(descriptor, at: location) else { sawReplacement = true; return false }
+                guard try fingerprint(descriptor) == initial else { return false }
+                do { _ = try validateManagedFile(descriptor) }
+                catch let error as POSIXError where error.code == .EPERM {
+                    guard try isReplacedManagedFile(descriptor, at: location) else { throw error }
+                    sawReplacement = true
+                    return false
+                }
                 do {
                     try writeAll(appended, to: descriptor)
                 } catch {
@@ -691,6 +742,7 @@ enum NoteFile {
                     state.fingerprint = written
                     cache.store(state, at: url.path)
                 }
+                if !current { sawReplacement = true }
                 return current
             }
             if current { return }
@@ -839,17 +891,35 @@ enum NoteFile {
     /// under the lock. Thus a crash cannot expose a saved marker with a short body.
     /// link() installs without replacing a file that appeared since title routing.
     private static func createCompleteNote(_ data: Data, root: VaultDirectoryAnchor, relativePath: String) throws {
+        // An existing note replaced while we waited for its lock is reopened, not failed. After
+        // that, a missing path means the note moved away: fail rather than recreate a stray copy.
+        var sawReplacement = false
+        for _ in 0..<attempts {
+            if try createCompleteNoteOnce(data, root: root, relativePath: relativePath, mayCreate: !sawReplacement) { return }
+            sawReplacement = true
+        }
+        throw POSIXError(.EAGAIN)
+    }
+
+    /// Returns false when the existing note's inode was replaced under the lock and the caller should retry.
+    private static func createCompleteNoteOnce(_ data: Data, root: VaultDirectoryAnchor, relativePath: String,
+                                               mayCreate: Bool) throws -> Bool {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
         let existing = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         if existing >= 0 {
-            try withLockedDescriptor(existing) {
-                _ = try validateManagedFile(existing)
-                guard try isCurrent(existing, at: location) else { throw POSIXError(.EAGAIN) }
+            return try withLockedDescriptor(existing) {
+                do { _ = try validateManagedFile(existing) }
+                catch let error as POSIXError where error.code == .EPERM {
+                    guard try isReplacedManagedFile(existing, at: location) else { throw error }
+                    return false
+                }
+                // Renamed away or replaced since the open (even with a valid link count): retry.
+                return try isCurrent(existing, at: location)
             }
-            return
         }
         if errno != ENOENT { throw posixError() }
+        guard mayCreate else { throw POSIXError(.ENOENT) }
 
         let temporaryName = ".note-\(UUID().uuidString).pending"
         let temporaryLocation = FileLocation(directories: location.directories, name: temporaryName)
@@ -883,6 +953,7 @@ enum NoteFile {
                 guard try isCurrent(installed, at: location) else { throw POSIXError(.EAGAIN) }
             }
         }
+        return true
     }
 
     private static func withLockedDescriptor<T>(_ descriptor: Int32, operation: () throws -> T) throws -> T {

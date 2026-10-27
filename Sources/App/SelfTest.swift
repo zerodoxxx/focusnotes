@@ -56,7 +56,7 @@ extension AppController {
             let saved = try await task.value
             guard saved.destination.kind == .session else { throw SelfTestFailure("Session routing failed") }
         }
-        let sessionCount = try await endSession(session)
+        guard let sessionCount = try await endSession(session) else { throw SelfTestFailure("Session capture count was unavailable") }
         let ownExternal = PendingCapture(trigger: .selection, content: .text("coalescedownneedle app append"),
                                          source: CapturePipeline.source(context), subtitle: "App append")
         let ownJob = try await pipeline.prepare(ownExternal, noteTitle: "External Edit")

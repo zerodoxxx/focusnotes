@@ -150,6 +150,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var processingGeneration = 0
     private var isTerminating = false
     private var shutdownFinished = false
+    private var shutdownDeadline: ContinuousClock.Instant?
     private var shutdownTask: Task<Bool, Never>?
     private var startupReplayTask: Task<Int, Never>?
     private var startupIndexTask: Task<Void, Never>?
@@ -338,10 +339,9 @@ final class AppController: NSObject, NSMenuDelegate {
                         suggestionValue: { "/" + $0.path },
                         onSubmit: { [weak controller] name in
                             guard !NoteTitle.cleanTitle(name).isEmpty else { return }
-                            controller?.enqueue { controller in
+                            controller?.enqueue(runsDuringQuit: true) { controller in
                                 _ = controller.commitPending()
                                 await controller.waitForCommits()
-                                guard !controller.isTerminating else { return }
                                 do {
                                     if let selected = suggestions.first(where: { "/" + $0.path == name }),
                                        Self.sessionPath(selected.path, isIn: folder) {
@@ -352,7 +352,8 @@ final class AppController: NSObject, NSMenuDelegate {
                                     }
                                 }
                                 catch SessionStoreError.ambiguous(let candidates) {
-                                    controller.presentSessionCandidates(candidates.filter { Self.sessionPath($0.notePath, isIn: folder) })
+                                    if controller.isTerminating { controller.logger.warning("Session name was ambiguous during quit; not started") }
+                                    else { controller.presentSessionCandidates(candidates.filter { Self.sessionPath($0.notePath, isIn: folder) }) }
                                 } catch { controller.report(error, title: "Couldn't start folder session") }
                             }
                         }, onCancel: {})
@@ -375,14 +376,19 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
-    private func enqueue(_ action: @escaping @MainActor (AppController) async -> Void) {
+    /// `runsDuringQuit` keeps an already-queued user submission alive into the shutdown drain
+    /// (until its deadline); new submissions are still refused once termination begins.
+    private func enqueue(runsDuringQuit: Bool = false, _ action: @escaping @MainActor (AppController) async -> Void) {
         guard !isTerminating else { return }
         let previous = actionTail
         actionGeneration += 1
         let generation = actionGeneration
         actionTail = Task { [weak self] in
             await previous?.value
-            guard let self, !self.isTerminating else { return }
+            guard let self else { return }
+            // `shutdownFinished` flips only when the timeout task runs, so also compare the clock.
+            let quitWindowOpen = !self.shutdownFinished && self.shutdownDeadline.map { ContinuousClock.now < $0 } == true
+            guard !self.isTerminating || (runsDuringQuit && quitWindowOpen) else { return }
             await action(self)
             if self.actionGeneration == generation { self.actionTail = nil }
         }
@@ -665,6 +671,7 @@ final class AppController: NSObject, NSMenuDelegate {
         editor?.dismiss()
         guard editor?.isVisible != true else { return Task { false } }
         let deadline = ContinuousClock.now.advanced(by: timeout)
+        shutdownDeadline = deadline
         isTerminating = true
         folderShortcutsPanel?.close()
         permissionGuide.dismiss()
@@ -884,12 +891,13 @@ final class AppController: NSObject, NSMenuDelegate {
             } else {
                 let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                 controller.presentInput(placeholder: "Session name", suggestions: suggestions, onSubmit: { [weak controller] name in
-                    controller?.enqueue { controller in
+                    controller?.enqueue(runsDuringQuit: true) { controller in
                         _ = controller.commitPending()
                         await controller.waitForCommits()
                         do { _ = try await controller.startSession(name: name) }
                         catch SessionStoreError.ambiguous(let candidates) {
-                            controller.presentSessionCandidates(candidates)
+                            if controller.isTerminating { controller.logger.warning("Session name was ambiguous during quit; not started") }
+                            else { controller.presentSessionCandidates(candidates) }
                         } catch { controller.report(error, title: "Couldn't start session") }
                     }
                 }, onCancel: {})
@@ -933,7 +941,9 @@ final class AppController: NSObject, NSMenuDelegate {
     private func activateSession(_ session: Session) async throws -> Session {
         activeSession = session
         refreshStatus()
-        try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath))
+        // The session is already active; an index failure must not report the start/resume as failed.
+        do { try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath)) }
+        catch { logger.error("Session activated; index update failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)") }
         showToast(Toast(style: .session, title: "Session \(session.resumed == true ? "resumed" : "started") · \(session.name)", subtitle: "Captures go here until ⌥⇧A"))
         return session
     }
@@ -971,7 +981,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }, onSubmit: { [weak self] path in
             self?.inputClosed()
             guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
-            self.enqueue { controller in
+            self.enqueue(runsDuringQuit: true) { controller in
                 _ = controller.commitPending()
                 await controller.waitForCommits()
                 do { _ = try await controller.resumeSession(candidate) }
@@ -1006,13 +1016,20 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     @discardableResult
-    func endSession(_ session: Session) async throws -> Int {
+    func endSession(_ session: Session) async throws -> Int? {
         try await pipeline.recoverSessionIdentity()
         try await pipeline.sessions.end()
         activeSession = nil
         refreshStatus()
-        let count = try await pipeline.index.captureCount(notePath: session.notePath)
-        showToast(Toast(style: .session, title: "Session ended · \(session.name)", subtitle: count == 1 ? "1 capture" : "\(count) captures"))
+        // The session has ended; an unreadable count only drops the toast subtitle.
+        let count: Int?
+        do { count = try await pipeline.index.captureCount(notePath: session.notePath) }
+        catch {
+            logger.error("Session ended; capture count unavailable (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+            count = nil
+        }
+        showToast(Toast(style: .session, title: "Session ended · \(session.name)",
+                        subtitle: count.map { $0 == 1 ? "1 capture" : "\($0) captures" }))
         return count
     }
 
@@ -1078,7 +1095,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     onSubmit: { [weak controller] text in
-                        controller?.enqueue { controller in
+                        controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller) }
                             catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
@@ -1090,7 +1107,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                             return
                         }
-                        controller?.enqueue { controller in
+                        controller?.enqueue(runsDuringQuit: true) { controller in
                             do {
                                 _ = try await save(text, controller: controller)
                                 controller.openNoteEditor(folder: state.folder, outsideSession: requestedOutside)
@@ -1098,12 +1115,16 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     onOpenAsNote: { [weak controller] text in
-                        controller?.enqueue { controller in
+                        controller?.enqueue(runsDuringQuit: true) { controller in
                             do {
                                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    if let saved = try await save(text, controller: controller) { controller.openNote(saved.destination.url); return }
+                                    if let saved = try await save(text, controller: controller) {
+                                        if !controller.isTerminating { controller.openNote(saved.destination.url) }
+                                        return
+                                    }
                                 } else if let url = state.destination?.url, FileManager.default.fileExists(atPath: url.path) {
-                                    controller.openNote(url); return
+                                    if !controller.isTerminating { controller.openNote(url) }
+                                    return
                                 }
                                 controller.showToast(Toast(style: .warning, title: "Nothing to open yet", subtitle: "Write something first"))
                             } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
@@ -1168,7 +1189,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault, folder: state.folder))?.title
                     },
                     onSaveAsNew: { [weak controller] text in
-                        controller?.enqueue { controller in
+                        controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller, newNote: true) }
                             catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
                         }
@@ -1199,7 +1220,6 @@ final class AppController: NSObject, NSMenuDelegate {
     /// `newNote` forces a new note (Save as New Note) even when the title names an existing one.
     @discardableResult
     func addNote(_ rawText: String, destination: Destination? = nil, pinOnSave: Bool = false, newNote: Bool = false, outsideSession: Bool = false, folder: NoteFolder? = nil) async throws -> SavedCapture? {
-        guard !isTerminating else { return nil }
         try pipeline.drafts.store(rawText, pinOnSave: pinOnSave, folder: folder)
         let text = CaptureFormat.noteBody(rawText)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -1279,7 +1299,7 @@ final class AppController: NSObject, NSMenuDelegate {
             }
             controller.presentInput(placeholder: "Subheading", title: "Add subheading", secondary: "In \(destination.title)",
                                     suggestions: [], onSubmit: { [weak controller] text in
-                controller?.enqueue { controller in
+                controller?.enqueue(runsDuringQuit: true) { controller in
                     do { _ = try await controller.addSubheading(text, destination: destination) }
                     catch { controller.report(error, title: "Couldn't add subheading") }
                 }
@@ -1291,7 +1311,7 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func addSubheading(_ text: String, destination: Destination? = nil) async throws -> SavedCapture? {
         let text = CaptureFormat.cleanSubheading(text)
-        guard !text.isEmpty, !isTerminating else { return nil }
+        guard !text.isEmpty else { return nil }
         _ = commitPending()
         await processingTail?.value
         _ = commitPending()

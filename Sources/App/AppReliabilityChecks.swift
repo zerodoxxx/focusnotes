@@ -1,5 +1,6 @@
 import AppKit
 import CaptureKit
+import SQLite3
 @_spi(Checks) import Core
 @_spi(Checks) import OverlayKit
 
@@ -24,6 +25,8 @@ func checkAppReliability() async throws {
     try await checkNewCaptureSavesRetryPendingCapture()
     try await checkHotkeyRedirectEndsWithRetryWarning()
     try await checkAmbiguousCaptureDestinations()
+    try await checkQueuedSubmissionSurvivesQuit()
+    try await checkSessionChangeSurvivesIndexFailure()
 }
 
 @MainActor
@@ -1132,5 +1135,100 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         guard try await pipeline.index.capture(id: first.id) != nil, try await pipeline.index.capture(id: second.id) != nil else {
             throw SelfTestFailure("The retry-pending and newer captures were not both saved")
         }
+    }
+}
+
+@MainActor
+private func editableField(in view: NSView?, label: String) -> NSTextField? {
+    guard let view else { return nil }
+    if let field = view as? NSTextField, field.isEditable, field.accessibilityLabel() == label { return field }
+    return view.subviews.lazy.compactMap { editableField(in: $0, label: label) }.first
+}
+
+/// The prompt's own window (read from its private `panel`), so a stale panel from an earlier prompt cannot match.
+@MainActor
+private func promptWindow(of input: InputPanelController) -> NSWindow? {
+    Mirror(reflecting: input).children.first { $0.label == "panel" }?.value as? NSWindow
+}
+
+/// A subheading submitted behind a busy action must still save during quit, but not after the deadline.
+@MainActor
+private func checkQueuedSubmissionSurvivesQuit() async throws {
+    for pastDeadline in [false, true] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("queued-submit-quit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"),
+                                                      stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+        let controller = AppController(pipeline: pipeline, presentsUI: false)
+        let heading = pastDeadline ? "Late quit heading" : "Queued quit heading"
+        func inbox() -> String { (try? String(contentsOf: pipeline.vault.inboxURL, encoding: .utf8)) ?? "" }
+        func waitForInput() async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while controller.inputForChecks == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard controller.inputForChecks != nil else { throw SelfTestFailure("Subheading prompt was not presented") }
+        }
+        controller.openSubheading()
+        try await waitForInput()
+        // The second open parks behind an unfinished acquisition, so the submission below queues after it.
+        var release: (() -> Void)?
+        guard controller.beginAcquisition({
+            await withCheckedContinuation { continuation in release = { continuation.resume(returning: nil) } }
+        }) else { throw SelfTestFailure("Could not begin the gated acquisition") }
+        await Task.yield()
+        controller.openSubheading()
+        try await Task.sleep(for: .milliseconds(100))
+        guard let release,
+              let input = controller.inputForChecks,
+              let field = promptWindow(of: input).flatMap({ editableField(in: $0.contentView, label: "Add subheading") }),
+              let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                           context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 36) else {
+            throw SelfTestFailure("Could not submit the queued subheading")
+        }
+        field.stringValue = heading
+        _ = input.handleKeyForChecks(enter)
+        try await Task.sleep(for: .milliseconds(100))
+        guard !inbox().contains(heading) else { throw SelfTestFailure("Subheading saved before the busy action finished") }
+        let quit = controller.beginTermination(timeout: pastDeadline ? .milliseconds(300) : .seconds(5))
+        // New work after quit began is refused.
+        controller.openSubheading()
+        if !pastDeadline { release() }
+        _ = await quit.value
+        if pastDeadline { release(); try await Task.sleep(for: .milliseconds(300)) }
+        guard controller.inputForChecks == nil else { throw SelfTestFailure("A subheading prompt opened after quit began") }
+        guard inbox().contains(heading) == !pastDeadline else {
+            throw SelfTestFailure(pastDeadline ? "A queued subheading started after the shutdown deadline"
+                                               : "A subheading queued behind a busy action was dropped on quit")
+        }
+    }
+}
+
+/// Renames a core table through a second connection so index reads and writes fail.
+private func breakIndex(at url: URL) throws {
+    var database: OpaquePointer?
+    defer { sqlite3_close(database) }
+    guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+          sqlite3_exec(database, "ALTER TABLE blocks RENAME TO blocks_unavailable", nil, nil, nil) == SQLITE_OK else {
+        throw SelfTestFailure("Could not make the search index unavailable")
+    }
+}
+
+/// An unavailable index must not turn a session that already started or ended into an error.
+@MainActor
+private func checkSessionChangeSurvivesIndexFailure() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("session-index-failure-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: false, onToast: { toasts.append($0) })
+    try breakIndex(at: state.appendingPathComponent("index.sqlite"))
+    let session = try await controller.startSession(name: "Index down")
+    guard await pipeline.sessions.current() == session, toasts.last?.title == "Session started · Index down" else {
+        throw SelfTestFailure("Session start was reported as failed because the index update failed")
+    }
+    let count = try await controller.endSession(session)
+    guard count == nil, await pipeline.sessions.current() == nil,
+          toasts.last?.title == "Session ended · Index down", toasts.last?.subtitle == nil else {
+        throw SelfTestFailure("Session end was reported as failed because the capture count was unavailable")
     }
 }
