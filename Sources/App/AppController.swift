@@ -150,6 +150,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var processingGeneration = 0
     private var isTerminating = false
     private var shutdownFinished = false
+    private var shutdownDeadline: ContinuousClock.Instant?
     private var shutdownTask: Task<Bool, Never>?
     private var startupReplayTask: Task<Int, Never>?
     private var startupIndexTask: Task<Void, Never>?
@@ -384,7 +385,10 @@ final class AppController: NSObject, NSMenuDelegate {
         let generation = actionGeneration
         actionTail = Task { [weak self] in
             await previous?.value
-            guard let self, !self.isTerminating || (runsDuringQuit && !self.shutdownFinished) else { return }
+            guard let self else { return }
+            // `shutdownFinished` flips only when the timeout task runs, so also compare the clock.
+            let quitWindowOpen = !self.shutdownFinished && self.shutdownDeadline.map { ContinuousClock.now < $0 } == true
+            guard !self.isTerminating || (runsDuringQuit && quitWindowOpen) else { return }
             await action(self)
             if self.actionGeneration == generation { self.actionTail = nil }
         }
@@ -667,6 +671,7 @@ final class AppController: NSObject, NSMenuDelegate {
         editor?.dismiss()
         guard editor?.isVisible != true else { return Task { false } }
         let deadline = ContinuousClock.now.advanced(by: timeout)
+        shutdownDeadline = deadline
         isTerminating = true
         folderShortcutsPanel?.close()
         permissionGuide.dismiss()
