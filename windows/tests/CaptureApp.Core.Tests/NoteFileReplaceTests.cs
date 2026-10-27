@@ -11,6 +11,13 @@ public sealed class NoteFileReplaceTests
     private static string Plain(string dir, char id = 'a') =>
         Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string(id, 32), null));
 
+    // Puts a different file at path; writing it before the old one goes away keeps the inode from being reused.
+    private static void Swap(string path, string contents)
+    {
+        File.WriteAllText(path + ".swap", contents);
+        File.Move(path + ".swap", path, true);
+    }
+
     private static IOException Lost() => new("1176") { HResult = unchecked((int)0x80070498) };
 
     private static (string Dir, string Target, string Temporary) ReplaceSetup(CheckVault e)
@@ -26,7 +33,7 @@ public sealed class NoteFileReplaceTests
     private static void Replace(string temporary, string target, Action<string, string>? replace = null, Action<string, string>? move = null)
     {
         var lost = false;
-        NoteFile.ReplaceFile(temporary, target, ref lost, replace, move);
+        NoteFile.ReplaceFile(temporary, target, FileMetadata.At(target)!, ref lost, replace, move);
     }
 
     [Fact]
@@ -85,8 +92,9 @@ public sealed class NoteFileReplaceTests
     {
         using var e = new CheckVault();
         var (dir, target, temporary) = ReplaceSetup(e);
+        var before = FileMetadata.At(target)!;
         if (!targetPresent) { File.Delete(target); }
-        NoteFile.CleanupTemporary(temporary, target, replaced, targetLost);
+        NoteFile.CleanupTemporary(temporary, target, replaced ? before : null, targetLost);
         var recovered = targetLost ? Recovered(dir) : Plain(dir);
         Assert.False(File.Exists(temporary));
         Assert.Equal(kept, File.Exists(recovered));
@@ -98,14 +106,55 @@ public sealed class NoteFileReplaceTests
     {
         using var e = new CheckVault();
         var (dir, target, temporary) = ReplaceSetup(e);
+        var before = FileMetadata.At(target)!;
         var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, ref lost,
+        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
             (_, d) => { File.Delete(d); throw Lost(); },
             (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); }));
         Assert.True(lost);
-        NoteFile.CleanupTemporary(temporary, target, true, lost);
+        NoteFile.CleanupTemporary(temporary, target, before, lost);
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
         Assert.Equal("other", File.ReadAllText(target));
+    }
+
+    [Fact]
+    public void ReplaceTreatsAVisibleTargetThatIsNotTheReplacedFileAsLost()
+    {
+        // Stands in for a delete-pending name, which File.Exists still reports as present on Windows.
+        using var e = new CheckVault();
+        var (dir, target, temporary) = ReplaceSetup(e);
+        var before = FileMetadata.At(target)!;
+        var lost = false;
+        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
+            (_, d) => { Swap(d, "other"); throw Lost(); }));
+        Assert.True(lost);
+        NoteFile.CleanupTemporary(temporary, target, before, lost);
+        Assert.Equal("new", File.ReadAllText(Recovered(dir)));
+    }
+
+    [Fact]
+    public void CleanupKeepsTheTemporaryWhenTheReplacedFileIsNoLongerAtTheTarget()
+    {
+        using var e = new CheckVault();
+        var (dir, target, temporary) = ReplaceSetup(e);
+        var before = FileMetadata.At(target)!;
+        Swap(target, "other");
+        NoteFile.CleanupTemporary(temporary, target, before, false);
+        Assert.Equal("new", File.ReadAllText(Plain(dir)));
+        Assert.Equal("other", File.ReadAllText(target));
+    }
+
+    [Fact]
+    public void CleanupCopiesTheTemporaryWhenRenamingItFails()
+    {
+        using var e = new CheckVault();
+        var (dir, target, temporary) = ReplaceSetup(e);
+        var before = FileMetadata.At(target)!;
+        File.Delete(target);
+        NoteFile.CleanupTemporary(temporary, target, before, true, (_, _) => throw new IOException("locked"));
+        Assert.Equal("new", File.ReadAllText(Recovered(dir)));
+        NoteFile.SweepStaleTemporaries(e.Base, TimeSpan.Zero);
+        Assert.Equal("new", File.ReadAllText(target));
     }
 
     [Fact]

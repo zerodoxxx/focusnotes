@@ -39,7 +39,7 @@ public static partial class NoteFile
             var temporaryName = ".pending-" + Guid.NewGuid().ToString("N");
             var temporary = Path.Combine(Path.GetDirectoryName(source)!, temporaryName);
             var moved = false;
-            var replaced = false;
+            FileMetadata? replaced = null;
             var targetLost = false;
             var published = opened;
             try
@@ -70,8 +70,8 @@ public static partial class NoteFile
                 EnsureOriginal(temporary, temporaryIdentity);
                 // Replacement is atomic: the live note is never truncated. The original handle
                 // still denies writers, and every ancestor remains pinned until replacement.
-                replaced = true;
-                if (OperatingSystem.IsWindows() || ReplaceHook.Value is not null) { ReplaceFile(temporary, target, ref targetLost); }
+                replaced = published;
+                if (OperatingSystem.IsWindows() || ReplaceHook.Value is not null) { ReplaceFile(temporary, target, published, ref targetLost); }
                 else { File.Move(temporary, target, true); }
             }
             catch (Exception error)
@@ -139,7 +139,9 @@ public static partial class NoteFile
         }
     }
 
-    internal static void RemoveSessionTemporary(string root, SessionRenameStage stage)
+    // With `keepFor` (the session note's file name), the staged copy may be the only one left: it is renamed to
+    // the restorable ".recovered-" name instead of deleted, unless that copy already exists.
+    internal static void RemoveSessionTemporary(string root, SessionRenameStage stage, string? keepFor = null)
     {
         var parts = PathComponents(stage.TemporaryPath);
         if (!System.Text.RegularExpressions.Regex.IsMatch(parts[^1], @"^\.pending-[0-9a-f]{32}$"))
@@ -152,6 +154,14 @@ public static partial class NoteFile
         current.Validate();
         if (current.Device != stage.Identity.Device || current.Inode != stage.Identity.Inode) return;
         ancestors.Validate();
+        var kept = keepFor is null ? null : Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], keepFor));
+        if (kept is not null && FileMetadata.At(kept) is null)
+        {
+            if (OperatingSystem.IsWindows()) { RenameByHandle(stream.SafeFileHandle, kept); }
+            else { File.Move(path, kept, false); }
+            Report($"Kept the only remaining copy of {keepFor} at {kept}");
+            return;
+        }
         if (!OperatingSystem.IsWindows()) { File.Delete(path); return; }
         var disposition = Marshal.AllocHGlobal(1);
         try

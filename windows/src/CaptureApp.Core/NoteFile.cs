@@ -411,7 +411,7 @@ public static partial class NoteFile
         var existing = FileMetadata.At(target);
         existing?.Validate();
         var temporary = Path.Combine(Path.GetDirectoryName(target)!, ".pending-" + Guid.NewGuid().ToString("N"));
-        var replaced = false;
+        FileMetadata? replaced = null;
         var targetLost = false;
         try
         {
@@ -431,8 +431,8 @@ public static partial class NoteFile
             current?.Validate();
             if (overwrite && current is not null && (OperatingSystem.IsWindows() || ReplaceHook.Value is not null))
             {
-                replaced = true;
-                ReplaceFile(temporary, target, ref targetLost);
+                replaced = current;
+                ReplaceFile(temporary, target, current, ref targetLost);
             }
             else
             {
@@ -452,20 +452,36 @@ public static partial class NoteFile
     }
 
     // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
-    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it.
-    internal static void CleanupTemporary(string temporary, string target, bool replaced, bool targetLost)
+    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
+    // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
+    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
+        Action<string, string>? keep = null)
     {
         if (!File.Exists(temporary)) { return; }
-        if (!targetLost && (!replaced || File.Exists(target))) { File.Delete(temporary); return; }
+        if (!targetLost && (replaced is null || TargetIntact(target, replaced))) { File.Delete(temporary); return; }
         var name = Path.GetFileName(temporary);
         var kept = Path.Combine(Path.GetDirectoryName(temporary)!, RecoveredName(name, targetLost ? Path.GetFileName(target) : null));
-        try { File.Move(temporary, kept, false); }
+        try { (keep ?? ((t, d) => File.Move(t, d, false)))(temporary, kept); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            kept = temporary;
+            // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
+            // ".pending-" name is later deleted. Copying only needs read sharing.
             Report($"Could not rename kept temporary: {error}");
+            try { File.Copy(temporary, kept, false); }
+            catch (Exception copy) when (copy is IOException or UnauthorizedAccessException)
+            {
+                kept = temporary;
+                Report($"Could not copy kept temporary: {copy}");
+            }
         }
         Report($"Kept the only remaining copy of {Path.GetFileName(target)} at {kept}");
+    }
+
+    // File.Exists reports a delete-pending name as present; only the expected file, still openable, is intact.
+    private static bool TargetIntact(string target, FileMetadata expected)
+    {
+        try { return FileMetadata.At(target) is { } current && expected.SameFile(current); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
     }
 
     // Only a lost target gets the restorable name (target filename hex-encoded); names over 100 UTF-8 bytes stay plain.
@@ -477,11 +493,12 @@ public static partial class NoteFile
 
     // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
     // targetLost is set before the fallback so a racing target creation can't make cleanup delete the lone copy.
-    internal static void ReplaceFile(string temporary, string target, ref bool targetLost, Action<string, string>? replace = null,
-        Action<string, string>? move = null)
+    // `expected` is the target's identity before the replace; a delete-pending or different file there counts as lost.
+    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost,
+        Action<string, string>? replace = null, Action<string, string>? move = null)
     {
         try { (replace ?? ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
-        catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !File.Exists(target) && File.Exists(temporary))
+        catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !TargetIntact(target, expected) && File.Exists(temporary))
         {
             targetLost = true;
             const int attempts = 3;

@@ -276,6 +276,36 @@ public sealed class SessionRenameTests
         Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)))));
     }
 
+    [Fact]
+    public void PendingIntentWhoseSessionFolderIsGoneIsAbandonedNotFatal()
+    {
+        var (e, plan, staged, _) = Staged(true);
+        using var _ = e;
+        Directory.Delete(Path.GetDirectoryName(staged)!, true);
+        Assert.Throws<FileNotFoundException>(() => e.Sessions.CompleteRename(plan));
+    }
+
+    [Fact]
+    public void CleanupKeepsTheStagedCopyRestorableWhenBothSessionNamesAreGone()
+    {
+        var (e, plan, staged, target) = Staged(false);
+        using var _ = e;
+        e.Sessions.CleanupRename(plan);
+        Assert.False(File.Exists(staged));
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.Zero);
+        Assert.Equal("# Daily sync\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
+    }
+
+    [Fact]
+    public void CleanupDeletesTheStagedCopyOnceASessionNameExists()
+    {
+        var (e, plan, staged, target) = Staged(false);
+        using var _ = e;
+        e.Write(target.NotePath, "# Daily sync\nbody\n");
+        e.Sessions.CleanupRename(plan);
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, ".*-*"));
+    }
+
     // Old note removed and a staged rewrite at ".pending-" (or already renamed to ".recovered-").
     private static (CheckVault E, SessionRenamePlan Plan, string Staged, Session Target) Staged(bool recovered)
     {
