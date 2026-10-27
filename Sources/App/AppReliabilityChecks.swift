@@ -27,6 +27,7 @@ func checkAppReliability() async throws {
     try await checkAmbiguousCaptureDestinations()
     try await checkQueuedSubmissionSurvivesQuit()
     try await checkSessionChangeSurvivesIndexFailure()
+    try await checkFailedCaptureDoesNotBlockNote()
 }
 
 @MainActor
@@ -1230,5 +1231,32 @@ private func checkSessionChangeSurvivesIndexFailure() async throws {
     guard count == nil, await pipeline.sessions.current() == nil,
           toasts.last?.title == "Session ended · Index down", toasts.last?.subtitle == nil else {
         throw SelfTestFailure("Session end was reported as failed because the capture count was unavailable")
+    }
+}
+
+@MainActor
+private func checkFailedCaptureDoesNotBlockNote() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("unrelated-commit-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: false, onToast: { toasts.append($0) })
+    let session = try await controller.startSession(name: "Linked")
+    // A second hard link makes the session note unsafe to write, so the capture's own commit fails.
+    try FileManager.default.linkItem(at: vaultRoot.appendingPathComponent(session.notePath),
+                                     to: root.appendingPathComponent("second-link.md"))
+    await controller.stage(PendingCapture(trigger: .selection, content: .text("capture for a linked session"),
+                                          source: CaptureSource(appName: "Commit check"), subtitle: "check"))
+    let saved = try await controller.addNote("Unblocked note\nstill saved", outsideSession: true)
+    guard saved != nil, FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent("Unblocked note.md").path) else {
+        throw SelfTestFailure("An unrelated failed capture commit blocked saving a quick note")
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !toasts.contains(where: { $0.title == "Couldn't save capture" }), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard toasts.contains(where: { $0.title == "Couldn't save capture" }) else {
+        throw SelfTestFailure("The failed capture commit did not report its own failure")
     }
 }

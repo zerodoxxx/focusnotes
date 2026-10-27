@@ -1043,12 +1043,12 @@ final class AppController: NSObject, NSMenuDelegate {
             await controller.processingTail?.value
             let processedCommit = controller.commitPending()
             guard await controller.closePanels() else { return }
+            // Earlier captures finish first. Each commit reports its own failure, which
+            // must not keep the editor closed.
             let tail = controller.commitTail
-            do {
-                _ = try await pendingCommit?.value
-                _ = try await processedCommit?.value
-                _ = try await tail?.value
-            } catch { controller.report(error, title: "Couldn't save pending capture"); return }
+            _ = try? await pendingCommit?.value
+            _ = try? await processedCommit?.value
+            _ = try? await tail?.value
             guard !controller.isTerminating else { return }
             let pipeline = controller.pipeline
             do { try await pipeline.recoverSessionIdentity() }
@@ -1226,8 +1226,10 @@ final class AppController: NSObject, NSMenuDelegate {
         let pendingCommit = commitPending()
         await processingTail?.value
         let processedCommit = commitPending()
-        _ = try await pendingCommit?.value
-        _ = try await processedCommit?.value
+        // Earlier captures save first, but their commits report their own failures; one
+        // must not fail this note.
+        _ = try? await pendingCommit?.value
+        _ = try? await processedCommit?.value
         let pipeline = pipeline
         var retry: Task<CaptureJob, Error>?
         var superseded: [UUID: UUID] = [:]
