@@ -93,6 +93,10 @@ public sealed class VaultNamingWindowsTests
         Assert.Equal(e.Vault.UrlForRelativePath(stem + ".md"), prepared.Destination.Url);
         Assert.Equal(title, prepared.Destination.Title);
         Assert.StartsWith("# " + title + "\n", CheckVault.Read(prepared.Destination.Url), StringComparison.Ordinal);
+        var again = e.Service.PrepareNote(CheckVault.Capture(title + "\nsecondneedle", CaptureContentKind.Note), CheckVault.Zone);
+        e.Service.Save(again);
+        Assert.Equal(prepared.Destination.Url, again.Destination.Url);
+        Assert.Contains("secondneedle", CheckVault.Read(prepared.Destination.Url), StringComparison.Ordinal);
     }
 
     [Fact]
