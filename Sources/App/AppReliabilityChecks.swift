@@ -27,6 +27,9 @@ func checkAppReliability() async throws {
     try await checkAmbiguousCaptureDestinations()
     try await checkQueuedSubmissionSurvivesQuit()
     try await checkSessionChangeSurvivesIndexFailure()
+    try await checkFailedCaptureDoesNotBlockNote()
+    try await checkBlockedTitlePickerKeepsRetryWarning()
+    try await checkQueuedPanelWaitsForSelectionRead()
 }
 
 @MainActor
@@ -1230,5 +1233,146 @@ private func checkSessionChangeSurvivesIndexFailure() async throws {
     guard count == nil, await pipeline.sessions.current() == nil,
           toasts.last?.title == "Session ended · Index down", toasts.last?.subtitle == nil else {
         throw SelfTestFailure("Session end was reported as failed because the capture count was unavailable")
+    }
+}
+
+@MainActor
+private func checkFailedCaptureDoesNotBlockNote() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("unrelated-commit-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: false, onToast: { toasts.append($0) })
+    let session = try await controller.startSession(name: "Linked")
+    // A second hard link makes the session note unsafe to write, so the capture's own commit fails.
+    try FileManager.default.linkItem(at: vaultRoot.appendingPathComponent(session.notePath),
+                                     to: root.appendingPathComponent("second-link.md"))
+    await controller.stage(PendingCapture(trigger: .selection, content: .text("capture for a linked session"),
+                                          source: CaptureSource(appName: "Commit check"), subtitle: "check"))
+    let saved = try await controller.addNote("Unblocked note\nstill saved", outsideSession: true)
+    guard saved != nil, FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent("Unblocked note.md").path) else {
+        throw SelfTestFailure("An unrelated failed capture commit blocked saving a quick note")
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !toasts.contains(where: { $0.title == "Couldn't save capture" }), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard toasts.contains(where: { $0.title == "Couldn't save capture" }) else {
+        throw SelfTestFailure("The failed capture commit did not report its own failure")
+    }
+}
+
+/// The capture shortcut reopens the picker for a retry-pending capture. If the editor can't close
+/// (its draft can't be saved), the picker can't open and the editor's error toast replaces the retry
+/// warning; the capture must stay kept, with the warning back so the shortcut can reopen the picker.
+@MainActor
+private func checkBlockedTitlePickerKeepsRetryWarning() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("blocked-picker-\(UUID().uuidString)", isDirectory: true)
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let other = FrontmostContext(appName: "Other app", bundleIdentifier: nil, processIdentifier: 1, windowTitle: nil)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
+    let first = try await makeRetryPendingCapture(controller, text: "capture behind a stuck editor")
+    let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+    controller.openNoteEditor()
+    // Match the editor's own text view: a picker opened by the retry setup has a field editor too.
+    func textView(in view: NSView) -> NSTextView? {
+        if let text = view as? NSTextView, String(describing: type(of: text)) == "NoteTextView" { return text }
+        return view.subviews.lazy.compactMap { textView(in: $0) }.first
+    }
+    var panel: OverlayPanel?
+    defer {
+        if (try? pipeline.drafts.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            try? FileManager.default.removeItem(at: pipeline.drafts.url)
+        }
+        panel?.dismiss(animated: false)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let opened = ContinuousClock.now.advanced(by: .seconds(3))
+    while panel == nil, ContinuousClock.now < opened {
+        panel = NSApp.windows.compactMap { $0 as? OverlayPanel }.first {
+            $0.isVisible && !existingWindows.contains(ObjectIdentifier($0)) && $0.contentView.flatMap(textView(in:)) != nil
+        }
+        if panel == nil { try await Task.sleep(for: .milliseconds(20)) }
+    }
+    guard let editorPanel = panel, let text = editorPanel.contentView.flatMap(textView(in:)) else {
+        throw SelfTestFailure("Could not open the editor for the blocked title picker regression")
+    }
+    // A directory in place of the draft file fails the editor's save, so it stays open.
+    text.string = "Draft that keeps the editor open"
+    try? FileManager.default.removeItem(at: pipeline.drafts.url)
+    try FileManager.default.createDirectory(at: pipeline.drafts.url, withIntermediateDirectories: false)
+    try Data("block replacement".utf8).write(to: pipeline.drafts.url.appendingPathComponent("blocker"))
+
+    let shown = toasts.count
+    controller.capture(.selection, context: other)
+    func restoredWarning() -> Bool {
+        toasts.dropFirst(shown).last.map {
+            $0.title == "Couldn't keep draft; editor stays open" && $0.subtitle?.contains("Capture kept") == true
+        } ?? false
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !restoredWarning(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard restoredWarning(), controller.pendingForChecks?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
+        throw SelfTestFailure("A picker blocked by an editor that can't close left a retry-pending capture without its warning")
+    }
+}
+
+/// Holds a simulated selection read open until the check releases it.
+@MainActor
+private final class ReadGate {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        waiter?.resume()
+        waiter = nil
+    }
+}
+
+/// A queued panel must not appear while a capture reads the selection: the clipboard
+/// fallback's ⌘C would land in it. The editor action has no drain, so it reached the panel first.
+@MainActor
+private func checkQueuedPanelWaitsForSelectionRead() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("held-read-\(UUID().uuidString)", isDirectory: true)
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+    let controller = AppController(pipeline: pipeline, presentsUI: false)
+    let gate = ReadGate()
+    func editorPanel() -> OverlayPanel? {
+        NSApp.windows.compactMap { $0 as? OverlayPanel }.first { $0.isVisible && !existingWindows.contains(ObjectIdentifier($0)) }
+    }
+    defer {
+        gate.open()
+        editorPanel()?.dismiss(animated: false)
+        try? FileManager.default.removeItem(at: root)
+    }
+    guard controller.beginAcquisition({ await gate.wait(); return nil }) else {
+        throw SelfTestFailure("Could not start the held selection read")
+    }
+    controller.openNoteEditor()
+    let held = ContinuousClock.now.advanced(by: .milliseconds(500))
+    while ContinuousClock.now < held {
+        guard editorPanel() == nil else {
+            throw SelfTestFailure("The quick-note editor appeared while a capture was reading the selection")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    gate.open()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while editorPanel() == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard editorPanel() != nil else {
+        throw SelfTestFailure("The queued editor did not open after the selection read finished")
     }
 }

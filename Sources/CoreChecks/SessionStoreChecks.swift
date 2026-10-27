@@ -1,4 +1,5 @@
 import Core
+import Darwin
 import Foundation
 
 func checkSessionStore() async throws {
@@ -208,7 +209,64 @@ func checkSessionStore() async throws {
     try require(retained == kept && FileManager.default.fileExists(atPath: stateFile.path), "failed state deletion must keep the session active")
     try await store.end()
     try await checkSessionStartRejectsLinkedDirectory(calendar: calendar, now: now)
+    try await checkNewNoteShortWrite(calendar: calendar, now: now)
     print("SessionStore checks passed.")
+}
+
+private func checkNewNoteShortWrite(calendar: Calendar, now: Date) async throws {
+    let base = try checkMakeDirectory("session-short-write")
+    defer { checkRemoveDirectory(base) }
+    let fm = FileManager.default
+    let vault = Vault(root: base.appendingPathComponent("Vault", isDirectory: true))
+    let stateDirectory = base.appendingPathComponent("State", isDirectory: true)
+    let store = SessionStore(stateDirectory: stateDirectory, vault: vault, calendar: calendar, now: { now })
+    let noteURL = vault.sessionsURL.appendingPathComponent("Short Write.md")
+
+    // setrlimit is process-wide; CoreChecks awaits each check in sequence, so nothing else writes meanwhile.
+    var limit = rlimit()
+    try require(getrlimit(RLIMIT_FSIZE, &limit) == 0, "could not read the file-size limit")
+    let oldLimit = limit.rlim_cur
+    let oldHandler = signal(SIGXFSZ, SIG_IGN)
+    defer {
+        _ = signal(SIGXFSZ, oldHandler)
+        limit.rlim_cur = oldLimit
+        _ = setrlimit(RLIMIT_FSIZE, &limit)
+    }
+    // Only the first four header bytes (such as `# In`) fit, as when the disk fills mid-write.
+    func setShortLimit(_ short: Bool) throws {
+        limit.rlim_cur = short ? 4 : oldLimit
+        try require(setrlimit(RLIMIT_FSIZE, &limit) == 0, "could not change the file-size limit")
+    }
+
+    try setShortLimit(true)
+    do {
+        try vault.prepare()
+        throw CheckFailure.failed("preparing Inbox.md beyond RLIMIT_FSIZE must fail")
+    } catch let error as POSIXError {
+        try require(error.code == .EFBIG, "a forced short Inbox.md write should report EFBIG")
+    }
+    try require(!fm.fileExists(atPath: vault.inboxURL.path), "a failed Inbox.md write must not keep a partial header")
+    try setShortLimit(false)
+    try vault.prepare()
+    let inbox = try checkRead(vault.inboxURL)
+    try require(inbox == "# Inbox\n", "preparing again after a short write must write the full Inbox.md header")
+
+    try setShortLimit(true)
+    do {
+        _ = try await store.start(name: "Short Write")
+        throw CheckFailure.failed("a session note header beyond RLIMIT_FSIZE must fail")
+    } catch let error as POSIXError {
+        try require(error.code == .EFBIG, "a forced short session note write should report EFBIG")
+    }
+    try require(!fm.fileExists(atPath: noteURL.path), "a failed session start must not keep a partial note header")
+    let failed = await store.current()
+    try require(failed == nil, "a failed session note write must not start the session")
+    try setShortLimit(false)
+    let retried = try await store.start(name: "Short Write")
+    try require(retried.notePath == "Sessions/Short Write.md" && retried.resumed == false,
+                "retrying the session start must create the session note again")
+    let note = try checkRead(noteURL)
+    try require(note == "# Short Write\n", "the retried session note must have its full header")
 }
 
 private func checkSessionStartRejectsLinkedDirectory(calendar: Calendar, now: Date) async throws {

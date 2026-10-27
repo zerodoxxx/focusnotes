@@ -78,6 +78,7 @@ func checkVault() throws {
         "a taken Foo 2.md should map to Foo 3.md"
     )
     try checkUnsafeNoteListing()
+    try checkListingSurvivesAtomicSaves()
     try checkSelectedRootSymlink()
     try checkRootAnchorAdoptsExternalCreation()
     try checkNoteNameResolution()
@@ -189,6 +190,55 @@ private func checkUnsafeNoteListing() throws {
     try require(!names.contains("Waiting.md"), "listNotes must skip FIFOs without blocking")
     let paths = Set(try vault.listNotes().compactMap { vault.relativePath(of: $0.url) })
     try require(!paths.contains("Linked folder/Nested.md"), "recursive listing must not follow symlink directories")
+}
+
+/// Replaces a note the way editors save (write a hidden temporary, then rename it over the
+/// note) on its own thread, so listings race the replacement.
+private final class AtomicSaver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    private let group = DispatchGroup()
+
+    init(url: URL, contents: String) {
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).saving")
+        let data = Data(contents.utf8)
+        group.enter()
+        Thread.detachNewThread { [self] in
+            defer { group.leave() }
+            while !isStopped {
+                guard (try? data.write(to: temporary)) != nil, rename(temporary.path, url.path) == 0 else { return }
+            }
+        }
+    }
+
+    private var isStopped: Bool { lock.withLock { stopped } }
+
+    func stop() {
+        lock.withLock { stopped = true }
+        group.wait()
+    }
+}
+
+/// A note replaced by an editor's atomic save while it is listed must stay listed, or routing
+/// and session matching could create a duplicate. The race may not land on a given run, so a
+/// regression is caught probabilistically but a pass never flakes.
+private func checkListingSurvivesAtomicSaves() throws {
+    let base = try checkMakeDirectory("vault-atomic-save")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault", isDirectory: true))
+    try vault.prepare()
+    let note = vault.root.appendingPathComponent("proj.md")
+    let session = vault.sessionsURL.appendingPathComponent("2026-10-01 Standup.md")
+    try checkWrite("# Project X\n", to: note)
+    try checkWrite("# Standup\n", to: session)
+    let savers = [AtomicSaver(url: note, contents: "# Project X\n\nsaved\n"),
+                  AtomicSaver(url: session, contents: "# Standup\n\nsaved\n")]
+    defer { savers.forEach { $0.stop() } }
+    for _ in 0..<300 {
+        let paths = Set(try vault.listNotes().compactMap { vault.relativePath(of: $0.url) })
+        try require(paths.contains("proj.md") && paths.contains("Sessions/2026-10-01 Standup.md"),
+                    "a note replaced by an atomic save while listing must stay listed (listed \(paths.sorted()))")
+    }
 }
 
 private func checkSelectedRootSymlink() throws {

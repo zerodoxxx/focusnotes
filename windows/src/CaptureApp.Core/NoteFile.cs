@@ -136,7 +136,7 @@ public static partial class NoteFile
     internal static readonly AsyncLocal<Action<string, string>?> ReplaceHook = new();
     internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
 
-    private static void Report(string message)
+    internal static void Report(string message)
     {
         System.Diagnostics.Trace.TraceError(message);
         try { Problem?.Invoke(message); }

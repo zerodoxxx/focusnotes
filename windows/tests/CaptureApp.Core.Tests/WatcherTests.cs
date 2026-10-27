@@ -133,6 +133,42 @@ public sealed class WatcherTests
     }
 
     [Fact]
+    public void WatcherReportsAnObserverFailureAndKeepsDelivering()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var recorder = new Recorder();
+        var problems = new List<string>();
+        var previous = NoteFile.Problem;
+        NoteFile.Problem = message => { lock (problems) { problems.Add(message); } };
+        try
+        {
+            var failed = 0;
+            using var watcher = new VaultWatcher(e.Vault, 0.05, change =>
+            {
+                if (change.NotesChanged.Contains("Fails.md") && Interlocked.Exchange(ref failed, 1) == 0)
+                {
+                    throw new InvalidOperationException("observer failure for checks");
+                }
+
+                recorder.Append(change);
+            });
+            watcher.Start();
+            recorder.Drain();
+
+            e.Write("Fails.md", "# Fails\n");
+            Eventually(() => { lock (problems) { return problems.Any(p => p.Contains("observer failure for checks", StringComparison.Ordinal)); } });
+            var offset = recorder.Count;
+            e.Write("Later.md", "# Later\n");
+            recorder.Wait(c => c.NotesChanged.Contains("Later.md"), offset);
+        }
+        finally
+        {
+            NoteFile.Problem = previous;
+        }
+    }
+
+    [Fact]
     public void WatcherIgnoresHiddenMetadataTemporaryAndUnrelatedFiles()
     {
         using var e = new CheckVault();

@@ -195,7 +195,20 @@ enum NoteFile {
     /// Reads only a bounded prefix from a regular, app-owned, single-link note.
     /// O_NONBLOCK makes an attacker-created FIFO fail the type check without
     /// hanging note enumeration.
+    /// A note replaced or unlinked mid-read (an editor's atomic save) is read again from the
+    /// current path instead of reading as absent. Throws EAGAIN if it keeps changing.
     static func readManagedPrefix(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {
+        for attempt in 1...attempts {
+            do {
+                return try readManagedPrefixOnce(count, in: root, relativePath: relativePath)
+            } catch let error as POSIXError where error.code == .EAGAIN && attempt < attempts {
+                continue
+            }
+        }
+        throw POSIXError(.EAGAIN)
+    }
+
+    private static func readManagedPrefixOnce(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { return nil }
         let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
@@ -204,12 +217,12 @@ enum NoteFile {
             throw posixError()
         }
         defer { close(descriptor) }
-        _ = try validateManagedFile(descriptor)
-        guard try isCurrent(descriptor, at: location) else { return nil }
+        _ = try validateManagedFile(descriptor, at: location)
+        guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
         let reader = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
         let data = try reader.read(upToCount: count) ?? Data()
-        guard try isCurrent(descriptor, at: location) else { return nil }
-        _ = try validateManagedFile(descriptor)
+        guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+        _ = try validateManagedFile(descriptor, at: location)
         return data
     }
 
@@ -372,16 +385,18 @@ enum NoteFile {
         }
         guard descriptor >= 0 else { throw posixError() }
         try withLockedDescriptor(descriptor) {
-            let attributes = try validateManagedFile(descriptor)
+            // A creator whose header write failed may have removed the file while we waited.
+            let attributes = try validateManagedFile(descriptor, at: location)
             guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
             let privateMode = attributes.st_mode & 0o700
             if attributes.st_mode & 0o7777 != privateMode {
                 guard fchmod(descriptor, privateMode) == 0 else { throw posixError() }
             }
-            if created {
+            // A capture that took the lock first has already written the header.
+            if created, attributes.st_size == 0 {
                 _ = try validateManagedFile(descriptor)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
-                try writeAll(data, to: descriptor)
+                try writeNewFile(data, to: descriptor, at: location)
             }
             // The directory descriptor anchors both open operations. A rename or
             // replacement during preparation must not be reported as success.
@@ -474,7 +489,8 @@ enum NoteFile {
             descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
             guard descriptor >= 0 else { throw posixError() }
             try withLockedDescriptor(descriptor) {
-                _ = try validateManagedFile(descriptor)
+                // A creator whose header write failed may have removed the file while we waited.
+                _ = try validateManagedFile(descriptor, at: location)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
             }
             return
@@ -486,7 +502,7 @@ enum NoteFile {
             if attributes.st_size == 0 {
                 _ = try validateManagedFile(descriptor)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
-                try writeAll(data, to: descriptor)
+                try writeNewFile(data, to: descriptor, at: location)
             }
             _ = try validateManagedFile(descriptor)
             guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
@@ -964,6 +980,25 @@ enum NoteFile {
     }
 
     private static func posixError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+
+    /// Writes the header of an empty note this call created and holds locked. A failed write
+    /// removes the note again so a retry writes the full header; otherwise a cut-off header
+    /// such as `# Fo` would stay and become the note's title.
+    private static func writeNewFile(_ data: Data, to descriptor: Int32, at location: FileLocation) throws {
+        do {
+            try writeAll(data, to: descriptor)
+        } catch {
+            // If rollback fails, still surface the original write error.
+            if ftruncate(descriptor, 0) != 0 {
+                let code = errno
+                logger.error("New note rollback failed (errno \(code, privacy: .public)); a partial header may remain")
+            }
+            if (try? isCurrent(descriptor, at: location)) == true {
+                _ = unlinkat(location.parentDescriptor, location.name, 0)
+            }
+            throw error
+        }
+    }
 
     private static func writeAll(_ data: Data, to descriptor: Int32) throws {
         try data.withUnsafeBytes { bytes in

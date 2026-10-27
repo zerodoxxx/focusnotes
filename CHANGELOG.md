@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `69e5fba`)
+Last Updated: 2026-10-28 (previous commit: `d2abe21`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -16,6 +16,14 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Fixed
 
+- macOS: a failed write while creating a session note or `Inbox.md` (for example, on a full disk) no longer leaves a cut-off heading such as `# Fo` that then became the note's title. The new file is removed, so a retry writes the whole heading.
+- macOS: a note that an editor saves while focusnotes lists notes no longer drops out of capture routing and session matching, which could create a duplicate note. It is read again; one that keeps changing stays listed under its file name, so session matching by file name still finds it. Hard links, symlinks and unreadable files are still not listed.
+- macOS: a failed capture save no longer also fails the next quick-note save or keeps the quick-note editor from opening; the capture's own failure is still reported.
+- macOS: reopening the note picker for a capture kept for retry while the quick-note editor can't close (its draft failed to save) no longer drops the retry warning. The warning comes back with the draft error, so the capture shortcut can reopen the picker once the editor closes. A note picked in the several-notes chooser is saved even if the editor can't close.
+- macOS: a search, note picker or quick-note panel requested during a selection capture now appears only after the selection is read, so the clipboard fallback's ⌘C can't land in that panel and report "No text selected".
+- macOS: quitting while the app is still launching no longer starts the initial index scan during shutdown.
+- Windows: after a second failed update apply, the next launch now deletes the downloaded package for that version, and any damaged package, so Retry downloads it again instead of reusing the failing package. Readable packages of other versions are kept, and a package that can't be deleted is logged without hiding the "Update failed" state.
+- Windows: an exception in a vault-change observer is now written to the app log instead of being ignored.
 - macOS: starting, resuming or ending a session no longer shows an error when only the search-index update afterwards fails; the session change and its toast stand.
 - macOS: a quick note, subheading or session name submitted while the app was busy is no longer dropped when the app quits; it is saved or applied during the five-second quit drain if it starts before that deadline. An ambiguous session name submitted then is logged rather than started.
 - macOS: one note changing while the search index syncs no longer aborts the whole sync; that note keeps its existing results and is picked up by the next sync, and deleted notes are still removed.
