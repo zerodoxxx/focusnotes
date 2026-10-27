@@ -1145,6 +1145,12 @@ private func editableField(in view: NSView?, label: String) -> NSTextField? {
     return view.subviews.lazy.compactMap { editableField(in: $0, label: label) }.first
 }
 
+/// The prompt's own window (read from its private `panel`), so a stale panel from an earlier prompt cannot match.
+@MainActor
+private func promptWindow(of input: InputPanelController) -> NSWindow? {
+    Mirror(reflecting: input).children.first { $0.label == "panel" }?.value as? NSWindow
+}
+
 /// A subheading submitted behind a busy action must still save during quit, but not after the deadline.
 @MainActor
 private func checkQueuedSubmissionSurvivesQuit() async throws {
@@ -1173,7 +1179,7 @@ private func checkQueuedSubmissionSurvivesQuit() async throws {
         try await Task.sleep(for: .milliseconds(100))
         guard let release,
               let input = controller.inputForChecks,
-              let field = NSApp.windows.lazy.compactMap({ editableField(in: $0.contentView, label: "Add subheading") }).first,
+              let field = promptWindow(of: input).flatMap({ editableField(in: $0.contentView, label: "Add subheading") }),
               let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
                                            context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 36) else {
             throw SelfTestFailure("Could not submit the queued subheading")
