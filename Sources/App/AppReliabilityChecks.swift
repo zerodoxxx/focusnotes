@@ -29,6 +29,7 @@ func checkAppReliability() async throws {
     try await checkSessionChangeSurvivesIndexFailure()
     try await checkFailedCaptureDoesNotBlockNote()
     try await checkBlockedTitlePickerSettlesCapture()
+    try await checkQueuedPanelWaitsForSelectionRead()
 }
 
 @MainActor
@@ -1310,5 +1311,61 @@ private func checkBlockedTitlePickerSettlesCapture() async throws {
     }
     guard saved != nil, controller.pendingForChecks == nil, editorPanel.isVisible else {
         throw SelfTestFailure("A title picker blocked by an open editor left its capture pending with no toast")
+    }
+}
+
+/// Holds a simulated selection read open until the check releases it.
+@MainActor
+private final class ReadGate {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        waiter?.resume()
+        waiter = nil
+    }
+}
+
+/// A queued panel must not appear while a capture reads the selection: the clipboard
+/// fallback's ⌘C would land in it. The editor action has no drain, so it reached the panel first.
+@MainActor
+private func checkQueuedPanelWaitsForSelectionRead() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("held-read-\(UUID().uuidString)", isDirectory: true)
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+    let controller = AppController(pipeline: pipeline, presentsUI: false)
+    let gate = ReadGate()
+    func editorPanel() -> OverlayPanel? {
+        NSApp.windows.compactMap { $0 as? OverlayPanel }.first { $0.isVisible && !existingWindows.contains(ObjectIdentifier($0)) }
+    }
+    defer {
+        gate.open()
+        editorPanel()?.dismiss(animated: false)
+        try? FileManager.default.removeItem(at: root)
+    }
+    guard controller.beginAcquisition({ await gate.wait(); return nil }) else {
+        throw SelfTestFailure("Could not start the held selection read")
+    }
+    controller.openNoteEditor()
+    let held = ContinuousClock.now.advanced(by: .milliseconds(500))
+    while ContinuousClock.now < held {
+        guard editorPanel() == nil else {
+            throw SelfTestFailure("The quick-note editor appeared while a capture was reading the selection")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    gate.open()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while editorPanel() == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard editorPanel() != nil else {
+        throw SelfTestFailure("The queued editor did not open after the selection read finished")
     }
 }
