@@ -95,6 +95,7 @@ func checkNoteWriter() async throws {
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
     try await checkReplacementWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
     try await checkRenameAwayWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
+    try await checkTypedNoteReplacementWhileWaitingForLock(vault: vault, calendar: calendar, date: when)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
 }
@@ -224,7 +225,9 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
         try await writer.append(capture, to: symlink, title: "Linked")
         throw CheckFailure.failed("note appends must reject a symlink target")
     } catch is CheckFailure { throw CheckFailure.failed("note symlink unexpectedly accepted") }
-    catch {}
+    catch let error as POSIXError {
+        try require(error.code == .ELOOP, "a symlink note append should report ELOOP (O_NOFOLLOW), got \(error.code)")
+    }
     let afterSymlink = try checkRead(outside)
     try require(afterSymlink == "outside bytes\n", "a symlink note append changed the outside file")
 
@@ -235,7 +238,9 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
         try await writer.append(capture, to: hardlink, title: "Hardlinked")
         throw CheckFailure.failed("note appends must reject a hard-linked target")
     } catch is CheckFailure { throw CheckFailure.failed("hard-linked note unexpectedly accepted") }
-    catch {}
+    catch let error as POSIXError {
+        try require(error.code == .EPERM, "a hard-linked note append should report EPERM, got \(error.code)")
+    }
     let afterHardlink = try checkRead(outside)
     try require(afterHardlink == "outside bytes\n", "a hard-linked note append changed the outside file")
 
@@ -346,6 +351,7 @@ private func checkReplacementWhileWaitingForLock(vault: Vault, calendar: Calenda
 }
 
 /// A note moved away (for example by a session rename) while an append waited must not be recreated at its old path.
+/// If the append starts only after the move, it is a first attempt that may create the note; that run is inconclusive.
 private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
     let url = vault.root.appendingPathComponent("Moved away.md")
     let movedURL = vault.root.appendingPathComponent("Moved away elsewhere.md")
@@ -362,17 +368,54 @@ private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar
         do { try await writer.append(capture, to: url, title: "Moved away"); return nil }
         catch { return error }
     }
-    // As above, a slow start can only weaken this check.
     try await Task.sleep(nanoseconds: 300_000_000)
     try FileManager.default.moveItem(at: url, to: movedURL)
     _ = flock(lockDescriptor, LOCK_UN)
     held = false
     let failure = await append.value
 
-    try require((failure as? POSIXError)?.code == .ENOENT, "an append to a moved-away note must fail with ENOENT, got \(String(describing: failure))")
-    try require(!FileManager.default.fileExists(atPath: url.path), "an append must not recreate the moved-away path")
     let movedText = try checkRead(movedURL)
     try require(movedText == original, "the moved note must stay untouched")
+    if failure == nil {
+        // Slow start: the append only began after the move, so it legitimately created a fresh
+        // note on the missing path (first attempt). Accept only that, as an inconclusive run.
+        let fresh = try checkRead(url)
+        try require(fresh.hasPrefix("# Moved away\n\n") && !fresh.contains("old body") &&
+                    fresh.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+                    "an append that succeeded must have created a fresh note, not touched the old one")
+        return
+    }
+    try require((failure as? POSIXError)?.code == .ENOENT, "an append to a moved-away note must fail with ENOENT, got \(String(describing: failure))")
+    try require(!FileManager.default.fileExists(atPath: url.path), "an append must not recreate the moved-away path")
+}
+
+/// A typed-note save to an existing note locks it first; a replacement while waiting must be retried, not rejected.
+private func checkTypedNoteReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, date: Date) async throws {
+    let url = vault.root.appendingPathComponent("Typed lock replacement.md")
+    try checkWrite("# Typed lock replacement\n\nold body\n", to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let capture = Capture(id: UUID(), createdAt: date, content: .note("typed body after replacement"), source: CaptureSource())
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let save = Task.detached {
+        try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed lock replacement", kind: .note),
+                                         noteMarkerIsIdentity: true)
+    }
+    // As above, a slow start can only weaken this check.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    try await save.value
+
+    let text = try checkRead(url)
+    try require(text.hasPrefix("# Replacement\n\neditor kept this\n") && text.contains("\ntyped body after replacement\n") &&
+                text.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1 == 1,
+                "a typed-note save interrupted by a replacement must land once on the current note")
 }
 
 private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture) async throws {

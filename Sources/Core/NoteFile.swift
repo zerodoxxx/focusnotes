@@ -339,8 +339,8 @@ enum NoteFile {
         return attributes
     }
 
-    /// True for a regular, app-owned inode that is no longer the file at `location`. Such a
-    /// descriptor can only have failed validation on its link count (nlink 0 after a replace).
+    /// True for a regular, app-owned inode that is no longer the file at `location`. Whatever its
+    /// link count (nlink 0 after an unlink, or a stale link), it is treated as replaced, not foreign.
     private static func isReplacedManagedFile(_ descriptor: Int32, at location: FileLocation) throws -> Bool {
         var attributes = stat()
         guard fstat(descriptor, &attributes) == 0 else { throw posixError() }
@@ -891,15 +891,28 @@ enum NoteFile {
     /// under the lock. Thus a crash cannot expose a saved marker with a short body.
     /// link() installs without replacing a file that appeared since title routing.
     private static func createCompleteNote(_ data: Data, root: VaultDirectoryAnchor, relativePath: String) throws {
+        // An existing note replaced while we waited for its lock is reopened, not failed.
+        for _ in 0..<attempts {
+            if try createCompleteNoteOnce(data, root: root, relativePath: relativePath) { return }
+        }
+        throw POSIXError(.EAGAIN)
+    }
+
+    /// Returns false when the existing note's inode was replaced under the lock and the caller should retry.
+    private static func createCompleteNoteOnce(_ data: Data, root: VaultDirectoryAnchor, relativePath: String) throws -> Bool {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
         let existing = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         if existing >= 0 {
-            try withLockedDescriptor(existing) {
-                _ = try validateManagedFile(existing)
+            return try withLockedDescriptor(existing) {
+                do { _ = try validateManagedFile(existing) }
+                catch let error as POSIXError where error.code == .EPERM {
+                    guard try isReplacedManagedFile(existing, at: location) else { throw error }
+                    return false
+                }
                 guard try isCurrent(existing, at: location) else { throw POSIXError(.EAGAIN) }
+                return true
             }
-            return
         }
         if errno != ENOENT { throw posixError() }
 
@@ -935,6 +948,7 @@ enum NoteFile {
                 guard try isCurrent(installed, at: location) else { throw POSIXError(.EAGAIN) }
             }
         }
+        return true
     }
 
     private static func withLockedDescriptor<T>(_ descriptor: Int32, operation: () throws -> T) throws -> T {
