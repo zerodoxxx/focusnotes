@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-28 (previous commit: `166152a`)
+Last Updated: 2026-10-28 (previous commit: `69e5fba`)
 
 ## Product surfaces
 
@@ -143,7 +143,7 @@ Each difference below is intentional, has a cited platform cause, and is checked
 | DV4 | The English-first Windows POC uses RapidOcrNet's bundled PP-OCRv5 Latin set through ONNX Runtime. | Multilingual language selection is deferred; recognised text can differ slightly from the Mac. |
 | DV5 | No thermal signal exists. | Background embedding runs at low priority with EcoQoS instead of waiting on temperature. |
 | DV6 | A stricter clipboard fallback: it aborts if the clipboard is too large or unreadable, or while keys are held. | A refusal toast where the Mac would capture. |
-| DV7 | Windows file-name rules reject names the Mac accepts (`CON`, `a:b`, a trailing dot). | The same reserved-name message. |
+| DV7 | Windows file-name rules reject names the Mac accepts (`CON`, `C:\Notes\a`, a trailing dot) and replace `<>"\|?*` with `-` in file names, as both editions do for `:`. | The same reserved-name message; titles and headings keep the typed characters. |
 | DV8 | The target app's own copy may appear in Windows clipboard history during the fallback. | One extra history entry; disclosed in Setup. |
 | DV9 | Ctrl for ⌘, File Explorer for Finder, tray for menu bar. | Wording and keys only. |
 | DV10 | ONNX Runtime ships in the installer, so the semantic opt-in downloads only models. | Larger installer, smaller opt-in. |
