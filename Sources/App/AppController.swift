@@ -231,6 +231,9 @@ final class AppController: NSObject, NSMenuDelegate {
                 self?.reportedExternalRegistryWarnings.removeAll()
             }
         }
+        // Quit may have begun during the awaits above. It stops the monitor and cancels
+        // startupIndexTask, which is not set yet, so the initial scan must not start now.
+        guard !isTerminating else { return restored }
         do {
             try pipeline.vault.validateExternalNoteRegistry()
         } catch {
