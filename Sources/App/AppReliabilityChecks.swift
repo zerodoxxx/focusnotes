@@ -153,13 +153,23 @@ private func checkSessionDrainWaitsForAcquisition() async throws {
 
 @MainActor
 private func checkFailedChosenNoteCanBeRetried() async throws {
+    try await checkChosenNoteRetry(notes: ["Target.md"], pick: "Target.md")
+    // A picked nested note is saved there, not to a root note with the same heading (title routing is root-only).
+    try await checkChosenNoteRetry(notes: ["Roadmap.md", "Projects/Roadmap.md"], pick: "Projects/Roadmap.md")
+}
+
+@MainActor
+private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("retry-chosen-note-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let vaultRoot = root.appendingPathComponent("Vault"), state = root.appendingPathComponent("State")
     let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
-    let targetURL = vaultRoot.appendingPathComponent("Target.md")
-    try Data("# Target\n".utf8).write(to: targetURL)
-    try await pipeline.index.reindex(note: targetURL)
+    for note in notes {
+        let url = vaultRoot.appendingPathComponent(note)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("# \(url.deletingPathExtension().lastPathComponent)\n".utf8).write(to: url)
+        try await pipeline.index.reindex(note: url)
+    }
     var toasts: [Toast] = []
     let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
     let capture = PendingCapture(trigger: .selection, content: .text("retry this capture once"),
@@ -192,7 +202,7 @@ private func checkFailedChosenNoteCanBeRetried() async throws {
     }
     var selectedTarget = false
     for _ in 0..<32 {
-        if input.selectedValueForChecks == "Target.md" || input.selectedValueForChecks == "Target" {
+        if input.selectedValueForChecks == pick {
             selectedTarget = true
             break
         }
@@ -215,8 +225,8 @@ private func checkFailedChosenNoteCanBeRetried() async throws {
         try await Task.sleep(for: .milliseconds(20))
         saved = try await pipeline.index.capture(id: capture.id)
     }
-    let targetCount = try await pipeline.index.captureCount(notePath: "Target.md")
-    guard controller.pendingForChecks == nil, saved?.notePath == "Target.md", targetCount == 1 else {
+    let targetCount = try await pipeline.index.captureCount(notePath: pick)
+    guard controller.pendingForChecks == nil, saved?.notePath == pick, targetCount == 1 else {
         throw SelfTestFailure("Retry did not save the retained capture exactly once to the selected note")
     }
     _ = await controller.beginTermination().value

@@ -580,9 +580,10 @@ final class AppController: NSObject, NSMenuDelegate {
             else if noteTitle == nil { resolvedDestination = try? await staged?.preparation.value.prepared.destination }
             else { resolvedDestination = nil }
             if destination != nil {
+                // noteLocation covers HOME notes too; it fails when the note no longer exists.
                 guard let resolvedDestination,
                       let noteID = try? pipeline.vault.noteID(for: resolvedDestination.url),
-                      try pipeline.vault.fileSnapshot(relativePath: noteID, includingContents: false) != nil else {
+                      (try? pipeline.vault.noteLocation(forID: noteID)) != nil else {
                     throw CocoaError(.fileNoSuchFile)
                 }
             }
@@ -737,9 +738,20 @@ final class AppController: NSObject, NSMenuDelegate {
             guard controller.pending?.id == id else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
             guard controller.pending?.id == id, !controller.isTerminating else { return }
-            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, onAccept: { [weak controller] noteTitle in
-                guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending(noteTitle: noteTitle, announce: true)
+            // A picked suggestion names one exact note. Title routing only matches root notes, so a nested
+            // or HOME note must be saved by destination, not by its title.
+            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, suggestionValue: { $0.path },
+                                    onAccept: { [weak controller] text in
+                guard let controller, controller.pending?.id == id else { return }
+                guard let picked = suggestions.first(where: { $0.path == text }) else {
+                    _ = controller.commitPending(noteTitle: text, announce: true)
+                    return
+                }
+                // A note removed since the picker opened fails commitPending's existence check and keeps the capture.
+                let url = (try? controller.pipeline.vault.noteLocation(forID: picked.path).url)
+                    ?? controller.pipeline.vault.url(forRelativePath: picked.path)
+                _ = controller.commitPending(destination: Destination(url: url, title: picked.title, kind: picked.kind),
+                                             announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 guard controller?.pending?.id == id else { return }
                 if let controller, controller.pendingNeedsRetryChoice, let capture = controller.pending {

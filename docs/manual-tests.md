@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-26 (previous commit: `3878ada`)
+Last Updated: 2026-10-27 (previous commit: `d5f24d6`)
 
 The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
 from a signed development build. The handlers capture
@@ -247,13 +247,18 @@ Use a disposable vault and distinctive text for each capture.
    press its capture shortcut again and choose a valid destination.
 3. Choose `../escape` as a capture destination. Confirm the warning offers
    another choice and neither Inbox nor the active session receives the capture.
-   Let the warning expire, then press the same capture shortcut, choose a valid
-   note, and confirm the original capture is saved exactly once.
-4. Try `pros / cons`, `TODO/`, and `a//b` through the capture title picker, typed
+   While the warning is still visible, press the same capture shortcut, choose a
+   valid note, and confirm the original capture is saved exactly once. Repeat,
+   but let the warning expire before pressing the shortcut: it now starts a new
+   capture and saves the earlier one to its default destination.
+4. From the capture title picker, select `Archive/Old.md` from step 1 (not the
+   root `Standup.md` with the same heading). Confirm only `Archive/Old.md`
+   changes.
+5. Try `pros / cons`, `TODO/`, and `a//b` through the capture title picker, typed
    notes outside a session, and session start. Confirm the same flat filename
    cleanup applies, with session files kept under `Sessions/`. A true nested
    name such as `science/math` still uses folders. Traversal remains rejected.
-5. Run `CoreChecks --skip-performance` to exercise a forced partial typed-note
+6. Run `CoreChecks --skip-performance` to exercise a forced partial typed-note
    append: the original file must survive the failed write, then retry must
    save the complete body once. Existing checks also verify that replay preserves
    an externally edited body after a successful save.
