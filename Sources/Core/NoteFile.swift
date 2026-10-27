@@ -891,15 +891,19 @@ enum NoteFile {
     /// under the lock. Thus a crash cannot expose a saved marker with a short body.
     /// link() installs without replacing a file that appeared since title routing.
     private static func createCompleteNote(_ data: Data, root: VaultDirectoryAnchor, relativePath: String) throws {
-        // An existing note replaced while we waited for its lock is reopened, not failed.
+        // An existing note replaced while we waited for its lock is reopened, not failed. After
+        // that, a missing path means the note moved away: fail rather than recreate a stray copy.
+        var sawReplacement = false
         for _ in 0..<attempts {
-            if try createCompleteNoteOnce(data, root: root, relativePath: relativePath) { return }
+            if try createCompleteNoteOnce(data, root: root, relativePath: relativePath, mayCreate: !sawReplacement) { return }
+            sawReplacement = true
         }
         throw POSIXError(.EAGAIN)
     }
 
     /// Returns false when the existing note's inode was replaced under the lock and the caller should retry.
-    private static func createCompleteNoteOnce(_ data: Data, root: VaultDirectoryAnchor, relativePath: String) throws -> Bool {
+    private static func createCompleteNoteOnce(_ data: Data, root: VaultDirectoryAnchor, relativePath: String,
+                                               mayCreate: Bool) throws -> Bool {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
         let existing = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
@@ -910,11 +914,12 @@ enum NoteFile {
                     guard try isReplacedManagedFile(existing, at: location) else { throw error }
                     return false
                 }
-                guard try isCurrent(existing, at: location) else { throw POSIXError(.EAGAIN) }
-                return true
+                // Renamed away or replaced since the open (even with a valid link count): retry.
+                return try isCurrent(existing, at: location)
             }
         }
         if errno != ENOENT { throw posixError() }
+        guard mayCreate else { throw POSIXError(.ENOENT) }
 
         let temporaryName = ".note-\(UUID().uuidString).pending"
         let temporaryLocation = FileLocation(directories: location.directories, name: temporaryName)
