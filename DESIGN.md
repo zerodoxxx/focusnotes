@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-28 (previous commit: `433fea5`)
+Last Updated: 2026-10-28 (previous commit: `166152a`)
 
 ## Product surfaces
 
