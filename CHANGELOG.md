@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `69e5fba`)
+Last Updated: 2026-10-28 (previous commit: `2cb53df`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -16,6 +16,14 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Fixed
 
+- macOS: a failed write while creating a session note or `Inbox.md` (for example, on a full disk) no longer leaves a cut-off heading such as `# Fo` that then became the note's title. The new file is removed, so a retry writes the whole heading.
+- macOS: a note that an editor saves while focusnotes lists notes no longer drops out of capture routing and session matching, which could create a duplicate note. It is read again, or listed under its file name if it keeps changing. Hard links, symlinks and unreadable files are still not listed.
+- macOS: a failed capture save no longer also fails the next quick-note save or keeps the quick-note editor from opening; the capture's own failure is still reported.
+- macOS: choosing a note for a capture while the quick-note editor can't close (its draft failed to save) no longer leaves the capture pending with no toast. It is saved to its default note as Escape in the picker would, or a capture kept for retry shows its warning again.
+- macOS: a search, note picker or quick-note panel requested during a selection capture now appears only after the selection is read, so the clipboard fallback's ⌘C can't land in that panel and report "No text selected".
+- macOS: quitting while the app is still launching no longer starts the initial index scan during shutdown.
+- Windows: after a second failed update apply, the next launch now deletes the downloaded package for that version, so Retry downloads it again instead of reusing the failing package. Packages of other versions are kept.
+- Windows: an exception in a vault-change observer is now written to the app log instead of being ignored.
 - macOS: starting, resuming or ending a session no longer shows an error when only the search-index update afterwards fails; the session change and its toast stand.
 - macOS: a quick note, subheading or session name submitted while the app was busy is no longer dropped when the app quits; it is saved or applied during the five-second quit drain if it starts before that deadline. An ambiguous session name submitted then is logged rather than started.
 - macOS: one note changing while the search index syncs no longer aborts the whole sync; that note keeps its existing results and is picked up by the next sync, and deleted notes are still removed.
