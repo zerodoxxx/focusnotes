@@ -15,7 +15,7 @@ public sealed class VelopackUpdateClientTests
     }
 
     [Fact]
-    public void DiscardDeletesOnlyTheFailedVersionsPackagesFoundOnDisk()
+    public void DiscardDeletesTheFailedVersionsAndUnreadablePackagesFoundOnDisk()
     {
         var directory = Path.Combine(Path.GetTempPath(), "updates-discard-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -26,12 +26,15 @@ public sealed class VelopackUpdateClientTests
             WritePackage(directory, "app-1.1.0-delta.nupkg", "1.1.0");
             WritePackage(directory, "app-1.1.0-beta.1-full.nupkg", "1.1.0-beta.1");
             WritePackage(directory, "app-11.1.0-full.nupkg", "11.1.0");
+            // A damaged download Velopack can't read would otherwise be reused on Retry.
+            File.WriteAllBytes(Path.Combine(directory, "app-1.1.0-damaged-full.nupkg"), [0x50, 0x4B, 0x03]);
+            File.WriteAllText(Path.Combine(directory, "unrelated.txt"), "kept");
 
             // A new process: nothing was downloaded by this client, as after the relaunch that discards.
             VelopackUpdateClient.DiscardPackages(new TestVelopackLocator("app", "1.0.0", directory, null), "1.1.0");
 
             var left = Directory.EnumerateFiles(directory).Select(Path.GetFileName).Order(StringComparer.Ordinal);
-            Assert.Equal(["app-1.0.0-full.nupkg", "app-1.1.0-beta.1-full.nupkg", "app-11.1.0-full.nupkg"], left);
+            Assert.Equal(["app-1.0.0-full.nupkg", "app-1.1.0-beta.1-full.nupkg", "app-11.1.0-full.nupkg", "unrelated.txt"], left);
         }
         finally
         {

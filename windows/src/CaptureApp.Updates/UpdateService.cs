@@ -71,13 +71,14 @@ public sealed class UpdateService
                 await CheckAsync(manual: true, cancellationToken).ConfigureAwait(false);
                 break;
             case StartupOutcome.Discard:
+                ready = null;
+                Publish(new UpdateSnapshot(UpdateStatus.Failed, ledger.State.PausedVersion, "Update failed", options.InstallerUrl));
+                // After publishing, so a package that can't be deleted (the caller logs it) can't hide the Failed state.
                 if (ledger.State.PausedVersion is { } failed)
                 {
                     client.DiscardDownloads(failed);
                 }
 
-                ready = null;
-                Publish(new UpdateSnapshot(UpdateStatus.Failed, ledger.State.PausedVersion, "Update failed", options.InstallerUrl));
                 break;
         }
     }

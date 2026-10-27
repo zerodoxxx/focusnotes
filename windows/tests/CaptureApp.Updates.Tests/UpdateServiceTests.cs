@@ -29,6 +29,7 @@ public sealed class UpdateServiceTests
         public Exception? Failure { get; set; }
         public int Checks { get; private set; }
         public List<string> Discarded { get; } = [];
+        public Exception? DiscardFailure { get; set; }
         public List<string> Applied { get; } = [];
 
         public Task<UpdateOffer?> CheckAsync(CancellationToken cancellationToken)
@@ -44,7 +45,14 @@ public sealed class UpdateServiceTests
 
         public Task DownloadAsync(UpdateOffer offer, Action<int> progress, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public void DiscardDownloads(string version) => Discarded.Add(version);
+        public void DiscardDownloads(string version)
+        {
+            Discarded.Add(version);
+            if (DiscardFailure is not null)
+            {
+                throw DiscardFailure;
+            }
+        }
 
         public void ApplyAndRestart(UpdateOffer offer) => Applied.Add("restart " + offer.Version);
 
@@ -147,6 +155,18 @@ public sealed class UpdateServiceTests
         time3.Advance(TimeSpan.FromHours(25));
         Assert.True(await third.CheckAsync(manual: false, CancellationToken.None));
         Assert.Equal("1.2.0", third.Snapshot.Version);
+    }
+
+    [Fact]
+    public async Task UndeletablePackageStillShowsTheFailedState()
+    {
+        var store = new MemoryStore { State = new UpdateLedgerState { PendingApplyVersion = "1.1.0", ApplyFailureVersion = "1.1.0", ApplyFailures = 1 } };
+        var (service, client, _, _) = Create(existing: store);
+        client.DiscardFailure = new IOException("package in use");
+        await Assert.ThrowsAsync<IOException>(() => service.StartAsync(CancellationToken.None));
+        Assert.Equal(["1.1.0"], client.Discarded);
+        Assert.Equal(UpdateStatus.Failed, service.Snapshot.Status);
+        Assert.Equal(Options.InstallerUrl, service.Snapshot.InstallerUrl);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Velopack;
 using Velopack.Locators;
 
@@ -26,8 +27,10 @@ public sealed class VelopackUpdateClient(UpdateManager manager) : IUpdateClient,
     }
 
     /// <summary>
-    /// Deletes the full and delta packages of <paramref name="version"/>. Velopack reuses a package that is
-    /// already on disk instead of downloading it again, so a kept package would fail the next apply too.
+    /// Deletes the full and delta packages of <paramref name="version"/>, and any package Velopack can't read
+    /// (its local list skips those). Velopack reuses a package that is already on disk instead of downloading
+    /// it again, so a kept package would fail the next apply too. Every file is tried; the first delete
+    /// failure is rethrown afterwards.
     /// </summary>
     internal static void DiscardPackages(IVelopackLocator locator, string version)
     {
@@ -36,12 +39,29 @@ public sealed class VelopackUpdateClient(UpdateManager manager) : IUpdateClient,
             return;
         }
 
-        foreach (var package in locator.GetLocalPackages())
+        var kept = locator.GetLocalPackages().Where(package => package.Version != discarded)
+            .Select(package => package.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Exception? failure = null;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.nupkg"))
         {
-            if (package.Version == discarded)
+            if (kept.Contains(Path.GetFileName(file)))
             {
-                File.Delete(Path.Combine(directory, package.FileName));
+                continue;
             }
+
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                failure ??= error;
+            }
+        }
+
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Throw(failure);
         }
     }
 
