@@ -282,9 +282,7 @@ public sealed class CapturePipeline : IDisposable
 
     private void RecoverPendingRename()
     {
-        if (!File.Exists(RenameIntentPath)) return;
-        var intent = JsonSerializer.Deserialize<RenameIntent>(File.ReadAllBytes(RenameIntentPath))
-            ?? throw new IOException("The pending session rename state is empty.");
+        if (!File.Exists(RenameIntentPath) || ReadRenameIntent() is not { } intent) return;
         var targetSnapshot = Vault.FileSnapshot(intent.Plan.Target.NotePath, false);
         if (intent.Plan.OldPath != intent.Plan.Target.NotePath && Vault.FileSnapshot(intent.Plan.OldPath) is { } original &&
             (intent.Plan.Source.Matches(original) || targetSnapshot is null || !KnownTarget(intent.Plan, targetSnapshot)))
@@ -311,6 +309,29 @@ public sealed class CapturePipeline : IDisposable
             return;
         }
         FinishRename(intent);
+    }
+
+    /// An undecodable intent is quarantined so it cannot block startup or captures.
+    private RenameIntent? ReadRenameIntent()
+    {
+        var data = File.ReadAllBytes(RenameIntentPath);
+        try
+        {
+            var intent = JsonSerializer.Deserialize<RenameIntent>(data);
+            if (intent?.Plan is { OldPath: not null, Target.NotePath: not null, Source: not null, Hashes: not null }
+                && intent.CaptureIds is not null) return intent;
+            throw new JsonException("The pending session rename state is incomplete.");
+        }
+        catch (Exception error) when (error is JsonException or NotSupportedException)
+        {
+            var corrupt = Path.Combine(Journal.DirectoryPath, "corrupt");
+            Directory.CreateDirectory(corrupt);
+            var stem = Path.GetFileNameWithoutExtension(RenameIntentPath);
+            var target = File.Exists(Path.Combine(corrupt, stem + ".json")) ? stem + "-" + Guid.NewGuid().ToString("N") : stem;
+            File.Move(RenameIntentPath, Path.Combine(corrupt, target + ".json"));
+            logger.Error($"Corrupt session rename intent quarantined: {error.Message}");
+            return null;
+        }
     }
 
     private static bool KnownTarget(SessionRenamePlan plan, VaultFileSnapshot snapshot) =>
