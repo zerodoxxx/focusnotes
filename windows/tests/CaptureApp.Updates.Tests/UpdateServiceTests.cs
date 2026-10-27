@@ -28,7 +28,7 @@ public sealed class UpdateServiceTests
         public string? OfferVersion { get; set; } = "1.1.0";
         public Exception? Failure { get; set; }
         public int Checks { get; private set; }
-        public int Discards { get; private set; }
+        public List<string> Discarded { get; } = [];
         public List<string> Applied { get; } = [];
 
         public Task<UpdateOffer?> CheckAsync(CancellationToken cancellationToken)
@@ -44,7 +44,7 @@ public sealed class UpdateServiceTests
 
         public Task DownloadAsync(UpdateOffer offer, Action<int> progress, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public void DiscardDownloads() => Discards++;
+        public void DiscardDownloads(string version) => Discarded.Add(version);
 
         public void ApplyAndRestart(UpdateOffer offer) => Applied.Add("restart " + offer.Version);
 
@@ -133,7 +133,7 @@ public sealed class UpdateServiceTests
         // Still failing: package discarded, Failed state, automatic attempts paused.
         var (third, client3, _, time3) = Create(existing: store2);
         await third.StartAsync(CancellationToken.None);
-        Assert.Equal(1, client3.Discards);
+        Assert.Equal(["1.1.0"], client3.Discarded);
         Assert.Equal(UpdateStatus.Failed, third.Snapshot.Status);
         Assert.Equal(Options.InstallerUrl, third.Snapshot.InstallerUrl);
         time3.Advance(TimeSpan.FromHours(25));

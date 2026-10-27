@@ -6,8 +6,6 @@ namespace CaptureApp.Updates;
 /// <summary>Velopack-backed client and applier over one <see cref="UpdateManager"/>.</summary>
 public sealed class VelopackUpdateClient(UpdateManager manager) : IUpdateClient, IUpdateApplier
 {
-    private string? downloadedVersion;
-
     public async Task<UpdateOffer?> CheckAsync(CancellationToken cancellationToken)
     {
         var info = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
@@ -15,24 +13,34 @@ public sealed class VelopackUpdateClient(UpdateManager manager) : IUpdateClient,
         return info is null ? null : new UpdateOffer(info.TargetFullRelease.Version.ToString(), info);
     }
 
-    public async Task DownloadAsync(UpdateOffer offer, Action<int> progress, CancellationToken cancellationToken)
+    public Task DownloadAsync(UpdateOffer offer, Action<int> progress, CancellationToken cancellationToken) =>
+        manager.DownloadUpdatesAsync((UpdateInfo)offer.Handle, progress, cancellationToken);
+
+    /// <summary>Called at startup by a new process, so packages are found on disk rather than remembered from a download.</summary>
+    public void DiscardDownloads(string version)
     {
-        await manager.DownloadUpdatesAsync((UpdateInfo)offer.Handle, progress, cancellationToken).ConfigureAwait(false);
-        downloadedVersion = offer.Version;
+        if (VelopackLocator.IsCurrentSet)
+        {
+            DiscardPackages(VelopackLocator.Current, version);
+        }
     }
 
-    public void DiscardDownloads()
+    /// <summary>
+    /// Deletes the full and delta packages of <paramref name="version"/>. Velopack reuses a package that is
+    /// already on disk instead of downloading it again, so a kept package would fail the next apply too.
+    /// </summary>
+    internal static void DiscardPackages(IVelopackLocator locator, string version)
     {
-        if (downloadedVersion is null || !VelopackLocator.IsCurrentSet || VelopackLocator.Current.PackagesDir is not { } directory || !Directory.Exists(directory))
+        if (!SemanticVersion.TryParse(version, out var discarded) || locator.PackagesDir is not { } directory || !Directory.Exists(directory))
         {
             return;
         }
 
-        foreach (var file in Directory.EnumerateFiles(directory, "*.nupkg"))
+        foreach (var package in locator.GetLocalPackages())
         {
-            if (Path.GetFileName(file).Contains(downloadedVersion, StringComparison.Ordinal))
+            if (package.Version == discarded)
             {
-                File.Delete(file);
+                File.Delete(Path.Combine(directory, package.FileName));
             }
         }
     }

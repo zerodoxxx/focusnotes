@@ -10,5 +10,6 @@
     <PackageReference Include="Velopack" />
     <PackageReference Include="BouncyCastle.Cryptography" />
     <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
+    <InternalsVisibleTo Include="CaptureApp.Updates.Tests" />
   </ItemGroup>
 </Project>

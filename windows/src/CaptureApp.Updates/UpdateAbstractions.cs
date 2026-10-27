@@ -10,8 +10,8 @@ public interface IUpdateClient
 
     Task DownloadAsync(UpdateOffer offer, Action<int> progress, CancellationToken cancellationToken);
 
-    /// <summary>Deletes the downloaded package (after repeated apply failures).</summary>
-    void DiscardDownloads();
+    /// <summary>Deletes the downloaded packages of <paramref name="version"/> (after repeated apply failures).</summary>
+    void DiscardDownloads(string version);
 }
 
 /// <summary>The App calls its shutdown drain before invoking either method.</summary>
