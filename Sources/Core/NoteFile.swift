@@ -195,7 +195,20 @@ enum NoteFile {
     /// Reads only a bounded prefix from a regular, app-owned, single-link note.
     /// O_NONBLOCK makes an attacker-created FIFO fail the type check without
     /// hanging note enumeration.
+    /// A note replaced or unlinked mid-read (an editor's atomic save) is read again from the
+    /// current path instead of reading as absent. Throws EAGAIN if it keeps changing.
     static func readManagedPrefix(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {
+        var attempt = 1
+        while true {
+            do {
+                return try readManagedPrefixOnce(count, in: root, relativePath: relativePath)
+            } catch let error as POSIXError where error.code == .EAGAIN && attempt < attempts {
+                attempt += 1
+            }
+        }
+    }
+
+    private static func readManagedPrefixOnce(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {
         let location = try openLocation(root: root, relativePath: relativePath)
         guard try isCurrent(location.directories) else { return nil }
         let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
@@ -204,12 +217,12 @@ enum NoteFile {
             throw posixError()
         }
         defer { close(descriptor) }
-        _ = try validateManagedFile(descriptor)
-        guard try isCurrent(descriptor, at: location) else { return nil }
+        _ = try validateManagedFile(descriptor, at: location)
+        guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
         let reader = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
         let data = try reader.read(upToCount: count) ?? Data()
-        guard try isCurrent(descriptor, at: location) else { return nil }
-        _ = try validateManagedFile(descriptor)
+        guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+        _ = try validateManagedFile(descriptor, at: location)
         return data
     }
 

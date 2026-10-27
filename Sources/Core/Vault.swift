@@ -263,14 +263,27 @@ public struct Vault: Sendable {
     func listNotes(externalRegistrySnapshot: ExternalNoteRegistry.Snapshot?) throws -> [NoteRef] {
         var refs: [NoteRef] = []
         for note in try markdownFilePaths() {
-            guard let prefix = try? NoteFile.readManagedPrefix(4096, in: rootAnchor, relativePath: note.id) else { continue }
+            guard let prefix = listedPrefix(in: rootAnchor, relativePath: note.id) else { continue }
             refs.append(NoteRef(url: note.url, title: title(of: note.url, prefix: prefix), kind: note.kind))
         }
         for location in try externalNoteLocations(snapshot: externalRegistrySnapshot) {
-            guard let prefix = try? NoteFile.readManagedPrefix(4096, in: homeAnchor, relativePath: location.relativePath) else { continue }
+            guard let prefix = listedPrefix(in: homeAnchor, relativePath: location.relativePath) else { continue }
             refs.append(NoteRef(url: location.url, title: title(of: location.url, prefix: prefix), kind: .note))
         }
         return refs
+    }
+
+    /// Links, FIFOs and unreadable files are not listed. A note that keeps changing while it is
+    /// read stays listed under its filename: dropping it could make routing or session matching
+    /// create a duplicate note.
+    private func listedPrefix(in anchor: VaultDirectoryAnchor, relativePath: String) -> Data? {
+        do {
+            return try NoteFile.readManagedPrefix(4096, in: anchor, relativePath: relativePath)
+        } catch let error as POSIXError where error.code == .EAGAIN {
+            return Data()
+        } catch {
+            return nil
+        }
     }
 
     /// Lists Markdown paths with no-follow metadata snapshots. Sync reuses these
