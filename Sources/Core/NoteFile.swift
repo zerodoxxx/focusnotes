@@ -385,7 +385,8 @@ enum NoteFile {
         }
         guard descriptor >= 0 else { throw posixError() }
         try withLockedDescriptor(descriptor) {
-            let attributes = try validateManagedFile(descriptor)
+            // A creator whose header write failed may have removed the file while we waited.
+            let attributes = try validateManagedFile(descriptor, at: location)
             guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
             let privateMode = attributes.st_mode & 0o700
             if attributes.st_mode & 0o7777 != privateMode {
@@ -488,7 +489,8 @@ enum NoteFile {
             descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
             guard descriptor >= 0 else { throw posixError() }
             try withLockedDescriptor(descriptor) {
-                _ = try validateManagedFile(descriptor)
+                // A creator whose header write failed may have removed the file while we waited.
+                _ = try validateManagedFile(descriptor, at: location)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
             }
             return

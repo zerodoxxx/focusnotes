@@ -28,7 +28,7 @@ func checkAppReliability() async throws {
     try await checkQueuedSubmissionSurvivesQuit()
     try await checkSessionChangeSurvivesIndexFailure()
     try await checkFailedCaptureDoesNotBlockNote()
-    try await checkBlockedTitlePickerSettlesCapture()
+    try await checkBlockedTitlePickerKeepsRetryWarning()
     try await checkQueuedPanelWaitsForSelectionRead()
 }
 
@@ -1263,17 +1263,22 @@ private func checkFailedCaptureDoesNotBlockNote() async throws {
     }
 }
 
-/// A title picker that can't open because the editor can't close (its draft can't be saved)
-/// must still settle the capture: its toast was dismissed without expiring.
+/// The capture shortcut reopens the picker for a retry-pending capture. If the editor can't close
+/// (its draft can't be saved), the picker can't open and the editor's error toast replaces the retry
+/// warning; the capture must stay kept, with the warning back so the shortcut can reopen the picker.
 @MainActor
-private func checkBlockedTitlePickerSettlesCapture() async throws {
+private func checkBlockedTitlePickerKeepsRetryWarning() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("blocked-picker-\(UUID().uuidString)", isDirectory: true)
     let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let other = FrontmostContext(appName: "Other app", bundleIdentifier: nil, processIdentifier: 1, windowTitle: nil)
+    var toasts: [Toast] = []
+    let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
+    let first = try await makeRetryPendingCapture(controller, text: "capture behind a stuck editor")
     let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
-    let controller = AppController(pipeline: pipeline, presentsUI: true)
     controller.openNoteEditor()
+    // Match the editor's own text view: a picker opened by the retry setup has a field editor too.
     func textView(in view: NSView) -> NSTextView? {
-        if let text = view as? NSTextView { return text }
+        if let text = view as? NSTextView, String(describing: type(of: text)) == "NoteTextView" { return text }
         return view.subviews.lazy.compactMap { textView(in: $0) }.first
     }
     var panel: OverlayPanel?
@@ -1300,17 +1305,19 @@ private func checkBlockedTitlePickerSettlesCapture() async throws {
     try FileManager.default.createDirectory(at: pipeline.drafts.url, withIntermediateDirectories: false)
     try Data("block replacement".utf8).write(to: pipeline.drafts.url.appendingPathComponent("blocker"))
 
-    let capture = PendingCapture(trigger: .selection, content: .text("capture behind a stuck editor"),
-                                 source: CaptureSource(appName: "Picker check"), subtitle: "check")
-    await controller.stage(capture, outsideSession: true)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    var saved = try await pipeline.index.capture(id: capture.id)
-    while saved == nil, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-        saved = try await pipeline.index.capture(id: capture.id)
+    let shown = toasts.count
+    controller.capture(.selection, context: other)
+    func restoredWarning() -> Bool {
+        toasts.dropFirst(shown).last.map {
+            $0.title == "Couldn't keep draft; editor stays open" && $0.subtitle?.contains("Capture kept") == true
+        } ?? false
     }
-    guard saved != nil, controller.pendingForChecks == nil, editorPanel.isVisible else {
-        throw SelfTestFailure("A title picker blocked by an open editor left its capture pending with no toast")
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !restoredWarning(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    guard restoredWarning(), controller.pendingForChecks?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
+        throw SelfTestFailure("A picker blocked by an editor that can't close left a retry-pending capture without its warning")
     }
 }
 

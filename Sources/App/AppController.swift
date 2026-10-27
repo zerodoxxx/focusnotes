@@ -755,9 +755,7 @@ final class AppController: NSObject, NSMenuDelegate {
         pendingToastID = nil
         toast.dismiss(expire: false)
         enqueue { controller in
-            // The toast is gone without expiring, so a picker blocked by an editor that can't
-            // close yet must still settle the capture, as Escape in the picker does.
-            guard await controller.closePanels() else { controller.settleUnchosenCapture(id, announce: true); return }
+            guard await controller.closePanels() else { controller.settleBlockedPicker(id); return }
             guard controller.pending?.id == id else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
             guard await controller.waitForAcquisition(), controller.pending?.id == id else { return }
@@ -783,18 +781,27 @@ final class AppController: NSObject, NSMenuDelegate {
 
     /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
     /// any other capture saves to its default destination.
-    private func settleUnchosenCapture(_ id: UUID, announce: Bool) {
+    private func settleUnchosenCapture(_ id: UUID, announce: Bool, retryTitle: String = "Choose where to save") {
         guard pending?.id == id else { return }
         if pendingNeedsRetryChoice, let capture = pending {
-            showRetryChoice(capture: capture, title: "Choose where to save")
+            showRetryChoice(capture: capture, title: retryTitle)
         } else {
             _ = commitPending(announce: announce)
         }
     }
 
+    /// closePanels() fails only when the editor can't save its draft. Its error toast has already
+    /// saved an ordinary capture, but it replaced a retry-pending capture's warning, so without
+    /// the warning back (naming that reason) the shortcut could not reopen the picker.
+    private func settleBlockedPicker(_ id: UUID) {
+        settleUnchosenCapture(id, announce: true, retryTitle: Self.draftKeptOpenTitle)
+    }
+
+    private static let draftKeptOpenTitle = "Couldn't keep draft; editor stays open"
+
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
-            guard await controller.closePanels() else { controller.settleUnchosenCapture(capture.id, announce: true); return }
+            guard await controller.closePanels() else { controller.settleBlockedPicker(capture.id); return }
             guard await controller.waitForAcquisition(), controller.pending?.id == capture.id else { return }
             let suggestions = candidates.map { candidate in
                 let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
@@ -819,7 +826,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 guard controller.pending?.id == capture.id,
                       let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
                 controller.enqueue { controller in
-                    guard await controller.closePanels() else { controller.settleUnchosenCapture(capture.id, announce: true); return }
+                    // An explicit choice saves even if the editor can't close; the save shows no panel.
+                    await controller.closePanels()
                     guard controller.pending?.id == capture.id else { return }
                     _ = controller.commitPending(destination: candidate, announce: true)
                 }
@@ -1197,12 +1205,12 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     onClose: { [weak controller] in controller?.editor = nil },
-                    onError: { [weak controller] error in controller?.report(error, title: "Couldn't keep draft; editor stays open") },
+                    onError: { [weak controller] error in controller?.report(error, title: AppController.draftKeptOpenTitle) },
                     titleForText: { TypedNote(markdown: $0, createdAt: Date(), calendar: calendar).title },
                     onScheduleDraft: { [weak controller, weak editor] text in
                         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         pipeline.drafts.scheduleStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder) { [weak controller] error in
-                            Task { @MainActor in controller?.report(error, title: "Couldn't keep draft; editor stays open") }
+                            Task { @MainActor in controller?.report(error, title: AppController.draftKeptOpenTitle) }
                         }
                         if blank {
                             state.pinOnSave = false
