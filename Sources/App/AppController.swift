@@ -744,7 +744,9 @@ final class AppController: NSObject, NSMenuDelegate {
         pendingToastID = nil
         toast.dismiss(expire: false)
         enqueue { controller in
-            guard await controller.closePanels() else { return }
+            // The toast is gone without expiring, so a picker blocked by an editor that can't
+            // close yet must still settle the capture, as Escape in the picker does.
+            guard await controller.closePanels() else { controller.settleUnchosenCapture(id, announce: true); return }
             guard controller.pending?.id == id else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
             guard controller.pending?.id == id, !controller.isTerminating else { return }
@@ -763,19 +765,26 @@ final class AppController: NSObject, NSMenuDelegate {
                 _ = controller.commitPending(destination: Destination(url: url, title: picked.title, kind: picked.kind),
                                              announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
-                guard controller?.pending?.id == id else { return }
-                if let controller, controller.pendingNeedsRetryChoice, let capture = controller.pending {
-                    controller.showRetryChoice(capture: capture, title: "Choose where to save")
-                } else {
-                    _ = controller?.commitPending(announce: outsideSession)
-                }
+                controller?.settleUnchosenCapture(id, announce: outsideSession)
             })
+        }
+    }
+
+    /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
+    /// any other capture saves to its default destination.
+    private func settleUnchosenCapture(_ id: UUID, announce: Bool) {
+        guard pending?.id == id else { return }
+        if pendingNeedsRetryChoice, let capture = pending {
+            showRetryChoice(capture: capture, title: "Choose where to save")
+        } else {
+            _ = commitPending(announce: announce)
         }
     }
 
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
-            guard await controller.closePanels(), controller.pending?.id == capture.id, !controller.isTerminating else { return }
+            guard await controller.closePanels() else { controller.settleUnchosenCapture(capture.id, announce: true); return }
+            guard controller.pending?.id == capture.id, !controller.isTerminating else { return }
             let suggestions = candidates.map { candidate in
                 let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
                 return Suggestion(title: candidate.title,
@@ -799,7 +808,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 guard controller.pending?.id == capture.id,
                       let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
                 controller.enqueue { controller in
-                    guard await controller.closePanels(), controller.pending?.id == capture.id else { return }
+                    guard await controller.closePanels() else { controller.settleUnchosenCapture(capture.id, announce: true); return }
+                    guard controller.pending?.id == capture.id else { return }
                     _ = controller.commitPending(destination: candidate, announce: true)
                 }
             }, onCancel: { [weak controller] in

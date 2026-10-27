@@ -28,6 +28,7 @@ func checkAppReliability() async throws {
     try await checkQueuedSubmissionSurvivesQuit()
     try await checkSessionChangeSurvivesIndexFailure()
     try await checkFailedCaptureDoesNotBlockNote()
+    try await checkBlockedTitlePickerSettlesCapture()
 }
 
 @MainActor
@@ -1258,5 +1259,56 @@ private func checkFailedCaptureDoesNotBlockNote() async throws {
     }
     guard toasts.contains(where: { $0.title == "Couldn't save capture" }) else {
         throw SelfTestFailure("The failed capture commit did not report its own failure")
+    }
+}
+
+/// A title picker that can't open because the editor can't close (its draft can't be saved)
+/// must still settle the capture: its toast was dismissed without expiring.
+@MainActor
+private func checkBlockedTitlePickerSettlesCapture() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("blocked-picker-\(UUID().uuidString)", isDirectory: true)
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let existingWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+    let controller = AppController(pipeline: pipeline, presentsUI: true)
+    controller.openNoteEditor()
+    func textView(in view: NSView) -> NSTextView? {
+        if let text = view as? NSTextView { return text }
+        return view.subviews.lazy.compactMap { textView(in: $0) }.first
+    }
+    var panel: OverlayPanel?
+    defer {
+        if (try? pipeline.drafts.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            try? FileManager.default.removeItem(at: pipeline.drafts.url)
+        }
+        panel?.dismiss(animated: false)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let opened = ContinuousClock.now.advanced(by: .seconds(3))
+    while panel == nil, ContinuousClock.now < opened {
+        panel = NSApp.windows.compactMap { $0 as? OverlayPanel }.first {
+            $0.isVisible && !existingWindows.contains(ObjectIdentifier($0)) && $0.contentView.flatMap(textView(in:)) != nil
+        }
+        if panel == nil { try await Task.sleep(for: .milliseconds(20)) }
+    }
+    guard let editorPanel = panel, let text = editorPanel.contentView.flatMap(textView(in:)) else {
+        throw SelfTestFailure("Could not open the editor for the blocked title picker regression")
+    }
+    // A directory in place of the draft file fails the editor's save, so it stays open.
+    text.string = "Draft that keeps the editor open"
+    try? FileManager.default.removeItem(at: pipeline.drafts.url)
+    try FileManager.default.createDirectory(at: pipeline.drafts.url, withIntermediateDirectories: false)
+    try Data("block replacement".utf8).write(to: pipeline.drafts.url.appendingPathComponent("blocker"))
+
+    let capture = PendingCapture(trigger: .selection, content: .text("capture behind a stuck editor"),
+                                 source: CaptureSource(appName: "Picker check"), subtitle: "check")
+    await controller.stage(capture, outsideSession: true)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    var saved = try await pipeline.index.capture(id: capture.id)
+    while saved == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+        saved = try await pipeline.index.capture(id: capture.id)
+    }
+    guard saved != nil, controller.pendingForChecks == nil, editorPanel.isVisible else {
+        throw SelfTestFailure("A title picker blocked by an open editor left its capture pending with no toast")
     }
 }
