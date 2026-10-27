@@ -510,12 +510,18 @@ public sealed class CaptureCoordinator
             generation = ++commitGeneration;
         }
 
-        var saved = await task.ConfigureAwait(false);
-        lock (gate)
+        SavedCapture saved;
+        try { saved = await task.ConfigureAwait(false); }
+        finally
         {
-            preparedJobs.Remove(noteId);
-            if (commitGeneration == generation) { commitTail = null; }
+            // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.
+            lock (gate)
+            {
+                if (commitGeneration == generation) { commitTail = null; }
+            }
         }
+
+        lock (gate) { preparedJobs.Remove(noteId); }
 
         return saved;
     }
@@ -546,12 +552,18 @@ public sealed class CaptureCoordinator
             generation = ++commitGeneration;
         }
 
-        var saved = await task.ConfigureAwait(false);
-        lock (gate)
+        SavedCapture saved;
+        try { saved = await task.ConfigureAwait(false); }
+        finally
         {
-            preparedJobs.Remove(capture.Id);
-            if (commitGeneration == generation) { commitTail = null; }
+            // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.
+            lock (gate)
+            {
+                if (commitGeneration == generation) { commitTail = null; }
+            }
         }
+
+        lock (gate) { preparedJobs.Remove(capture.Id); }
 
         ShowToast(new(AppToastStyle.Success, Strings.SubheadingAdded, text));
         return saved;
