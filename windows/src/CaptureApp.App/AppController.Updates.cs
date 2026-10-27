@@ -94,6 +94,10 @@ internal sealed partial class AppController
 
     private void ApplyUpdateOnExitIfReady()
     {
-        if (updates?.Snapshot.Status == UpdateStatus.ReadyToRestart) { updates.ApplyOnExit(); }
+        try
+        {
+            if (updates?.Snapshot.Status == UpdateStatus.ReadyToRestart) { updates.ApplyOnExit(); }
+        }
+        catch (Exception error) { log.Error($"Applying the update at sign-out failed ({error.GetType().Name}): {error.Message}"); }
     }
 }
