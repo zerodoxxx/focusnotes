@@ -198,14 +198,14 @@ enum NoteFile {
     /// A note replaced or unlinked mid-read (an editor's atomic save) is read again from the
     /// current path instead of reading as absent. Throws EAGAIN if it keeps changing.
     static func readManagedPrefix(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {
-        var attempt = 1
-        while true {
+        for attempt in 1...attempts {
             do {
                 return try readManagedPrefixOnce(count, in: root, relativePath: relativePath)
             } catch let error as POSIXError where error.code == .EAGAIN && attempt < attempts {
-                attempt += 1
+                continue
             }
         }
+        throw POSIXError(.EAGAIN)
     }
 
     private static func readManagedPrefixOnce(_ count: Int, in root: VaultDirectoryAnchor, relativePath: String) throws -> Data? {

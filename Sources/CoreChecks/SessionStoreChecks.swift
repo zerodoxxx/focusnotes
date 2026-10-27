@@ -1,4 +1,5 @@
 import Core
+import Darwin
 import Foundation
 
 func checkSessionStore() async throws {
@@ -262,7 +263,7 @@ private func checkNewNoteShortWrite(calendar: Calendar, now: Date) async throws 
     try require(failed == nil, "a failed session note write must not start the session")
     try setShortLimit(false)
     let retried = try await store.start(name: "Short Write")
-    try require(retried.notePath == "Sessions/Short Write.md" && !retried.resumed,
+    try require(retried.notePath == "Sessions/Short Write.md" && retried.resumed == false,
                 "retrying the session start must create the session note again")
     let note = try checkRead(noteURL)
     try require(note == "# Short Write\n", "the retried session note must have its full header")
