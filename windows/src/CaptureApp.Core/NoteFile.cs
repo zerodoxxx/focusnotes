@@ -120,11 +120,114 @@ public static partial class NoteFile
                     {
                         if (Directory.Exists(path)) { if (!name.StartsWith('.')) { pending.Push(path); } }
                         else if (PendingName.IsMatch(name) && File.GetLastWriteTimeUtc(path) < cutoff) { File.Delete(path); }
+                        else if (RecoveredTarget(name) is { } targetName) { RestoreRecovered(root, Path.Combine(directory, targetName)); }
                     }
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
                 }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    // Receives problems Core cannot show itself (the app wires this to its file log). Always also traced.
+    public static Action<string>? Problem { get; set; }
+
+    // Test seams: replace/move used by ReplaceFile instead of the real calls, scoped to the calling flow.
+    internal static readonly AsyncLocal<Action<string, string>?> ReplaceHook = new();
+    internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
+
+    private static void Report(string message)
+    {
+        System.Diagnostics.Trace.TraceError(message);
+        try { Problem?.Invoke(message); }
+        catch (Exception) { }
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
+        new(@"^\.recovered-(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2,200})\z");
+
+    // Decodes the target name from an on-disk ".recovered-" name; null unless it is a plain, valid file name.
+    private static string? RecoveredTarget(string name)
+    {
+        var match = RecoveredPattern.Match(name);
+        if (!match.Success) { return null; }
+        string target;
+        try { target = Utf8.GetString(Convert.FromHexString(match.Groups["target"].Value)); }
+        catch (Exception error) when (error is FormatException or ArgumentException) { return null; }
+        return ValidTargetName(target) ? target : null;
+    }
+
+    private static bool ValidTargetName(string target)
+    {
+        if (target.Length == 0 || Path.GetFileName(target) != target || target.StartsWith('.') || target is "." or ".."
+            || target.IndexOfAny(['/', '\\', ':', '\0']) >= 0 || NoteTitle.ContainsControlCharacters(target)) { return false; }
+        try { new VaultNamingRules().ValidateComponent(target); }
+        catch (NotePathNameException) { return false; }
+        return true;
+    }
+
+    // Moves the newest ".recovered-" copy of a missing target back into place; never overwrites. Older copies
+    // are renamed to the plain, non-restorable name (never deleted). Call under no lock; it takes the target's gate.
+    internal static void RestoreRecovered(string root, string target)
+    {
+        var targetName = Path.GetFileName(target);
+        var directory = Path.GetDirectoryName(target)!;
+        string safe;
+        try { safe = SafePath(root, Path.GetRelativePath(root, target).Replace(Path.DirectorySeparatorChar, '/')); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return; }
+        if (!string.Equals(safe, target, StringComparison.Ordinal) || !ValidTargetName(targetName)) { return; }
+        lock (Gate(safe))
+        {
+            if (FileMetadata.At(safe) is not null) { return; }
+            var candidates = RecoveredCandidates(directory, targetName);
+            if (candidates is null || candidates.Count == 0) { return; }
+            // Only the newest copy is ever restored; if that move fails, keep everything for a later attempt.
+            try { (MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(candidates[0], safe); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Report($"Could not restore {targetName} from {candidates[0]}: {error}");
+                return;
+            }
+
+            Report($"Restored {targetName} from {candidates[0]}");
+            Retire(directory, candidates.Skip(1));
+        }
+    }
+
+    // Restorable copies for a target, newest first; links, placeholders and non-files are skipped like the sweep does.
+    private static List<string>? RecoveredCandidates(string directory, string targetName)
+    {
+        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x400000 | 0x40000);
+        var suffix = "-" + Convert.ToHexStringLower(Utf8.GetBytes(targetName));
+        try
+        {
+            return Directory.GetFiles(directory, ".recovered-*" + suffix)
+                .Where(path => RecoveredTarget(Path.GetFileName(path)) == targetName
+                    && FileMetadata.At(path) is { IsLink: false } && (File.GetAttributes(path) & (skip | FileAttributes.Directory)) == 0)
+                .OrderByDescending(File.GetLastWriteTimeUtc).ThenByDescending(path => path, StringComparer.Ordinal).ToList();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    // Renames copies to the plain, non-restorable name; never deletes them.
+    private static void Retire(string directory, IEnumerable<string> copies)
+    {
+        foreach (var copy in copies)
+        {
+            try { File.Move(copy, Path.Combine(directory, RecoveredName(".pending-" + RecoveredPattern.Match(Path.GetFileName(copy)).Groups["id"].Value, null)), false); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    // A freshly installed target must not be shadowed by a stale restorable copy that a later sweep would resurrect.
+    private static void RetireRecovered(string target)
+    {
+        var directory = Path.GetDirectoryName(target)!;
+        var name = Path.GetFileName(target);
+        if (!ValidTargetName(name)) { return; }
+        lock (Gate(target))
+        {
+            if (RecoveredCandidates(directory, name) is { } copies) { Retire(directory, copies); }
         }
     }
 
@@ -308,6 +411,8 @@ public static partial class NoteFile
         var existing = FileMetadata.At(target);
         existing?.Validate();
         var temporary = Path.Combine(Path.GetDirectoryName(target)!, ".pending-" + Guid.NewGuid().ToString("N"));
+        FileMetadata? replaced = null;
+        var targetLost = false;
         try
         {
             using (var stream = OpenExclusive(temporary, FileMode.CreateNew, FileAccess.ReadWrite))
@@ -324,20 +429,92 @@ public static partial class NoteFile
             }
 
             current?.Validate();
-            if (overwrite && current is not null && OperatingSystem.IsWindows())
+            if (overwrite && current is not null && (OperatingSystem.IsWindows() || ReplaceHook.Value is not null))
             {
-                File.Replace(temporary, target, null);
+                replaced = current;
+                ReplaceFile(temporary, target, current, ref targetLost);
             }
             else
             {
                 File.Move(temporary, target, overwrite);
             }
+
+            if (existing is null)
+            {
+                try { RetireRecovered(target); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            }
         }
         finally
         {
-            if (File.Exists(temporary))
+            CleanupTemporary(temporary, target, replaced, targetLost);
+        }
+    }
+
+    // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
+    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
+    // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
+    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
+        Action<string, string>? keep = null)
+    {
+        if (!File.Exists(temporary)) { return; }
+        if (!targetLost && (replaced is null || TargetIntact(target, replaced))) { File.Delete(temporary); return; }
+        var name = Path.GetFileName(temporary);
+        var kept = Path.Combine(Path.GetDirectoryName(temporary)!, RecoveredName(name, targetLost ? Path.GetFileName(target) : null));
+        try { (keep ?? ((t, d) => File.Move(t, d, false)))(temporary, kept); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
+            // ".pending-" name is later deleted. Copying only needs read sharing.
+            Report($"Could not rename kept temporary: {error}");
+            try { File.Copy(temporary, kept, false); }
+            catch (Exception copy) when (copy is IOException or UnauthorizedAccessException)
             {
-                File.Delete(temporary);
+                kept = temporary;
+                Report($"Could not copy kept temporary: {copy}");
+            }
+        }
+        Report($"Kept the only remaining copy of {Path.GetFileName(target)} at {kept}");
+    }
+
+    // File.Exists reports a delete-pending name as present; only the expected file, still openable, is intact.
+    private static bool TargetIntact(string target, FileMetadata expected)
+    {
+        try { return FileMetadata.At(target) is { } current && expected.SameFile(current); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    // Only a lost target gets the restorable name (target filename hex-encoded); names over 100 UTF-8 bytes stay plain.
+    internal static string RecoveredName(string pendingName, string? restorableTarget)
+    {
+        var bytes = restorableTarget is null ? [] : Utf8.GetBytes(restorableTarget);
+        return ".recovered-" + pendingName[".pending-".Length..] + (bytes.Length is > 0 and <= 100 ? "-" + Convert.ToHexStringLower(bytes) : "");
+    }
+
+    // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
+    // targetLost is set before the fallback so a racing target creation can't make cleanup delete the lone copy.
+    // `expected` is the target's identity before the replace; a delete-pending or different file there counts as lost.
+    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost,
+        Action<string, string>? replace = null, Action<string, string>? move = null)
+    {
+        try { (replace ?? ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
+        catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !TargetIntact(target, expected) && File.Exists(temporary))
+        {
+            targetLost = true;
+            const int attempts = 3;
+            for (var attempt = 1; ; attempt++)
+            {
+                try { (move ?? MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(temporary, target); return; }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < attempts && !File.Exists(target))
+                {
+                    System.Diagnostics.Trace.TraceError($"Move fallback attempt {attempt} failed: {error}");
+                    Thread.Sleep(75);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    System.Diagnostics.Trace.TraceError($"Move fallback failed: {error}");
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(original).Throw();
+                }
             }
         }
     }

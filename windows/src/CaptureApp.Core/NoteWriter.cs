@@ -129,6 +129,8 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             };
             lock (NoteFile.Gate(target))
             {
+                // A replace that lost the note leaves a hidden copy; put it back so the append extends the old note.
+                NoteFile.RestoreRecovered(location.Root, target);
                 if (savedMarker is not null)
                 {
                     NoteFile.Create(NoteFile.Utf8.GetBytes(header + block), location.Root, location.RelativePath);

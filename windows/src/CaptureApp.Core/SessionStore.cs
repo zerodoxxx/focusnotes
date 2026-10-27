@@ -244,6 +244,12 @@ public sealed class SessionStore
             {
                 throw new VaultFileException(VaultFileError.Changed);
             }
+            if (plan.Installation is { } staged && vault.FileSnapshot(plan.Target.NotePath, false) is null)
+            {
+                // A deleted session folder took the staged copy with it; the missing target abandons the rename below.
+                try { NoteFile.InstallSessionTemporary(vault.Root, staged, plan.Target.NotePath); }
+                catch (DirectoryNotFoundException) { }
+            }
             var snapshot = vault.FileSnapshot(plan.Target.NotePath) ?? throw new FileNotFoundException(plan.Target.NotePath);
             var hash = Hash(snapshot.Contents!);
             var isSource = plan.Source.Matches(snapshot);
@@ -273,8 +279,10 @@ public sealed class SessionStore
 
     public void CleanupRename(SessionRenamePlan plan)
     {
-        if (plan.Installation is { } stage)
-            NoteFile.RemoveSessionTemporary(vault.Root, stage);
+        if (plan.Installation is not { } stage) return;
+        // With neither session name present, the staged rewrite may be the note's only copy.
+        var lost = vault.FileSnapshot(plan.Target.NotePath, false) is null && vault.FileSnapshot(plan.OldPath, false) is null;
+        NoteFile.RemoveSessionTemporary(vault.Root, stage, lost ? NoteFile.PathComponents(plan.Target.NotePath)[^1] : null);
     }
 
     private string RenameTitle(string raw)

@@ -232,4 +232,101 @@ public sealed class SessionRenameTests
         Assert.Throws<VaultFileException>(() => e.Sessions.CompleteRename(plan));
         Assert.Equal("# Unrelated\nkeep\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
     }
+
+    [Fact]
+    public void PendingIntentInstallsRecoveredSibling()
+    {
+        var (e, plan, staged, target) = Staged(true);
+        using var _ = e;
+        Assert.Equal(target, e.Sessions.CompleteRename(plan));
+        Assert.Equal("# Daily sync\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, ".*-*"));
+        e.Sessions.CleanupRename(plan);
+    }
+
+    [Fact]
+    public void PendingIntentNeverInstallsABarePendingFile()
+    {
+        var (e, plan, staged, target) = Staged(false);
+        using var _ = e;
+        Assert.Throws<FileNotFoundException>(() => e.Sessions.CompleteRename(plan));
+        Assert.False(File.Exists(e.Vault.UrlForRelativePath(target.NotePath)));
+        Assert.True(File.Exists(staged));
+    }
+
+    [Fact]
+    public void RecoveredFileWithOtherIdentityIsNotInstalled()
+    {
+        var (e, plan, staged, target) = Staged(true);
+        using var _ = e;
+        var wrong = plan.Installation! with { Identity = new(plan.Installation.Identity.Device, plan.Installation.Identity.Inode + 1) };
+        NoteFile.InstallSessionTemporary(e.Vault.Root, wrong, target.NotePath);
+        Assert.False(File.Exists(e.Vault.UrlForRelativePath(target.NotePath)));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)))));
+    }
+
+    [Fact]
+    public void ExistingTargetIsNeverOverwrittenByRecovery()
+    {
+        var (e, plan, staged, target) = Staged(true);
+        using var _ = e;
+        var path = e.Write(target.NotePath, "# user\n");
+        NoteFile.InstallSessionTemporary(e.Vault.Root, plan.Installation!, target.NotePath);
+        Assert.Equal("# user\n", CheckVault.Read(path));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)))));
+    }
+
+    [Fact]
+    public void PendingIntentWhoseSessionFolderIsGoneIsAbandonedNotFatal()
+    {
+        var (e, plan, staged, _) = Staged(true);
+        using var _ = e;
+        Directory.Delete(Path.GetDirectoryName(staged)!, true);
+        Assert.Throws<FileNotFoundException>(() => e.Sessions.CompleteRename(plan));
+    }
+
+    [Fact]
+    public void CleanupKeepsTheStagedCopyRestorableWhenBothSessionNamesAreGone()
+    {
+        var (e, plan, staged, target) = Staged(false);
+        using var _ = e;
+        e.Sessions.CleanupRename(plan);
+        Assert.False(File.Exists(staged));
+        NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.Zero);
+        Assert.Equal("# Daily sync\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
+    }
+
+    [Fact]
+    public void CleanupDeletesTheStagedCopyOnceASessionNameExists()
+    {
+        var (e, plan, staged, target) = Staged(false);
+        using var _ = e;
+        e.Write(target.NotePath, "# Daily sync\nbody\n");
+        e.Sessions.CleanupRename(plan);
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, ".*-*"));
+    }
+
+    // Old note removed and a staged rewrite at ".pending-" (or already renamed to ".recovered-").
+    private static (CheckVault E, SessionRenamePlan Plan, string Staged, Session Target) Staged(bool recovered)
+    {
+        var e = new CheckVault();
+        e.Vault.Prepare();
+        var old = e.Write(Candidate().NotePath, "# Standup\nbody\n");
+        var original = e.Vault.FileSnapshot(Candidate().NotePath)!;
+        var target = new Session("Daily sync", "Sessions/archive/Daily sync.md", CheckVault.Now, true);
+        var rewritten = NoteFile.RewriteHeading(original.Contents!, target.Name);
+        var stagedPath = "Sessions/archive/.pending-" + Guid.NewGuid().ToString("N");
+        var staged = e.Write(stagedPath, System.Text.Encoding.UTF8.GetString(rewritten));
+        var identity = e.Vault.FileSnapshot(stagedPath)!;
+        var plan = new SessionRenamePlan(Candidate().NotePath, target, new(original.Device, original.Inode),
+            new() { Original = Convert.ToHexString(SHA256.HashData(original.Contents!)), Rewritten = Convert.ToHexString(SHA256.HashData(rewritten)) },
+            new(new(identity.Device, identity.Inode), stagedPath));
+        File.Delete(old);
+        if (recovered)
+        {
+            var kept = Path.Combine(Path.GetDirectoryName(staged)!, NoteFile.RecoveredName(Path.GetFileName(staged), Path.GetFileName(target.NotePath)));
+            File.Move(staged, kept);
+        }
+        return (e, plan, staged, target);
+    }
 }
