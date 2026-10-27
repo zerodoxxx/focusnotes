@@ -113,7 +113,7 @@ public sealed class SessionRenameTests
     [InlineData("..")]
     [InlineData("~$draft")]
     [InlineData("CON")]
-    [InlineData("stream:name")]
+    [InlineData("nul.txt")]
     [InlineData("trailing.")]
     public void InvalidNamesNeverMoveOrRewriteTheSession(string name)
     {

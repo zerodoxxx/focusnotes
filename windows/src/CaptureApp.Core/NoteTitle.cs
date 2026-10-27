@@ -40,6 +40,9 @@ public sealed record VaultNamingRules
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
     }
+
+    // Windows can't store <>"|?* in a file name, so its stems replace them with '-' the way both editions replace ':'.
+    public string FileStem(string title) => NoteTitle.FileStem(WindowsRules ? Regex.Replace(title, "[<>\"|?*]", "-") : title);
 }
 
 public sealed record NotePathName
@@ -126,13 +129,11 @@ public static class NoteTitle
             throw new NotePathNameException(NotePathNameError.TooDeep);
         }
 
-        // Check Windows-invalid input before whitespace collapsing or filename sanitization can hide it.
-        if (rules.WindowsRules)
+        // Windows rules check the sanitized stems, so "Re: budget" becomes "Re- budget" as on the Mac. A drive path
+        // such as C:\Notes\a is the exception: sanitizing its ':' would quietly turn it into a vault folder.
+        if (rules.WindowsRules && raw.Length > 1 && Regex.IsMatch(CleanTitle(raw[0]), @"^[A-Za-z]:\z"))
         {
-            foreach (var part in (original.TrimStart('/')).Split('/'))
-            {
-                rules.ValidateComponent(part);
-            }
+            throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
 
         var components = raw.Select(part =>
@@ -143,7 +144,7 @@ public static class NoteTitle
                 throw new NotePathNameException(NotePathNameError.InvalidComponent);
             }
 
-            return FileStem(value);
+            return rules.FileStem(value);
         });
         return NotePathName.Validated(scope, components, rules);
     }

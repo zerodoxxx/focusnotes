@@ -99,9 +99,8 @@ public sealed class SessionStore
             if (name.Contains('/') || name.Contains('\\') || NoteTitle.ContainsControlCharacters(name) ||
                 cleaned.StartsWith('.') || cleaned.StartsWith('~'))
                 throw new NotePathNameException(NotePathNameError.InvalidComponent);
-            vault.NamingRules.ValidateComponent(cleaned);
             var path = NotePathName.Validated(NotePathScope.Vault,
-                new[] { Vault.SessionsDirectoryName }.Concat(folder.Components).Append(NoteTitle.FileStem(cleaned)), vault.NamingRules);
+                new[] { Vault.SessionsDirectoryName }.Concat(folder.Components).Append(vault.NamingRules.FileStem(cleaned)), vault.NamingRules);
             vault.Prepare();
             var location = vault.ResolveNoteName(path);
             var directory = string.Join('/', location.RelativePath.Split('/').SkipLast(1));
@@ -152,11 +151,6 @@ public sealed class SessionStore
                 return StartAt(parsed.LeafName, location.RelativePath, Existing().FirstOrDefault(n => vault.NoteId(n.Url) == location.RelativePath));
             }
 
-            if (vault.NamingRules.WindowsRules && name.Length > 0)
-            {
-                vault.NamingRules.ValidateComponent(name);
-            }
-
             return StartFlat(cleaned);
         }
     }
@@ -165,8 +159,8 @@ public sealed class SessionStore
     private Session StartFlat(string title, IReadOnlyList<NoteRef>? existingSessions = null, string directory = Vault.SessionsDirectoryName)
     {
         if (title.Length == 0) throw new NotePathNameException(NotePathNameError.EmptyPath);
-        vault.NamingRules.ValidateComponent(title);
-        var stem = NoteTitle.FileStem(title);
+        var stem = vault.NamingRules.FileStem(title);
+        vault.NamingRules.ValidateComponent(stem);
         var matches = (existingSessions ?? Existing()).Where(n =>
         {
             var existing = System.IO.Path.GetFileNameWithoutExtension(n.Url);
@@ -210,7 +204,7 @@ public sealed class SessionStore
             {
                 throw new NotePathNameException(NotePathNameError.InvalidComponent);
             }
-            var components = parts.SkipLast(1).Append(NoteTitle.FileStem(title)).ToArray();
+            var components = parts.SkipLast(1).Append(vault.NamingRules.FileStem(title)).ToArray();
             var name = NotePathName.Validated(NotePathScope.Vault, components, vault.NamingRules);
             var newPath = name.RelativePath + ".md";
             var target = new Session(title, newPath, clock.GetUtcNow(), true);
@@ -235,11 +229,11 @@ public sealed class SessionStore
             var old = NoteFile.PathComponents(plan.OldPath);
             if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName ||
                 !parts.SkipLast(1).SequenceEqual(old.SkipLast(1)) || RenameTitle(plan.Target.Name) != plan.Target.Name ||
-                parts[^1] != NoteTitle.FileStem(plan.Target.Name) + ".md")
+                parts[^1] != vault.NamingRules.FileStem(plan.Target.Name) + ".md")
             {
                 throw new VaultFileException(VaultFileError.InvalidFileName);
             }
-            _ = NotePathName.Validated(NotePathScope.Vault, parts.SkipLast(1).Append(NoteTitle.FileStem(plan.Target.Name)), vault.NamingRules);
+            _ = NotePathName.Validated(NotePathScope.Vault, parts.SkipLast(1).Append(vault.NamingRules.FileStem(plan.Target.Name)), vault.NamingRules);
             if (plan.OldPath != plan.Target.NotePath && vault.FileSnapshot(plan.OldPath, false) is { } source && plan.Source.Matches(source))
             {
                 throw new VaultFileException(VaultFileError.Changed);
@@ -291,13 +285,13 @@ public sealed class SessionStore
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
-        if (vault.NamingRules.WindowsRules) { vault.NamingRules.ValidateComponent(raw); }
         var title = NoteTitle.CleanTitle(raw);
-        if (title is "" or "." or ".." || NoteTitle.FileStem(title).StartsWith("~$", StringComparison.Ordinal))
+        var stem = vault.NamingRules.FileStem(title);
+        if (title is "" or "." or ".." || stem.StartsWith("~$", StringComparison.Ordinal))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
-        vault.NamingRules.ValidateComponent(title);
+        vault.NamingRules.ValidateComponent(stem);
         return title;
     }
 

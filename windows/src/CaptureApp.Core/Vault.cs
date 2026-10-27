@@ -229,7 +229,7 @@ public sealed class Vault
 
     public string UniqueNoteUrl(string title, ISet<string>? excluding = null)
     {
-        var stem = NoteTitle.FileStem(title);
+        var stem = NamingRules.FileStem(title);
         NamingRules.ValidateComponent(stem);
         var candidate = Path.Combine(Root, stem + ".md");
         var suffix = 2;
