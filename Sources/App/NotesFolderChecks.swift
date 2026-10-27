@@ -60,7 +60,10 @@ func checkNotesFolder() async throws {
     try NotesFolder.save(original, defaults: defaults)
     let restoredState = try NotesFolder.stateDirectory(for: original, base: base)
     let restored = try await CapturePipeline.open(vaultRoot: original, stateDirectory: restoredState, calendar: .current)
-    guard restoredState == base, await restored.sessions.current() == session,
+    // startedAt is persisted with reduced precision, so compare it with a tolerance.
+    let restoredSession = await restored.sessions.current()
+    guard restoredState == base, restoredSession?.name == session.name, restoredSession?.notePath == session.notePath,
+          abs(restoredSession?.startedAt.timeIntervalSince(session.startedAt) ?? .infinity) < 1,
           try restored.drafts.load() == "Original draft", restored.pins.isPinned(session.notePath),
           try await restored.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Returning to a notes folder did not preserve its state")

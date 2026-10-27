@@ -26,6 +26,20 @@ func checkNoteTitle() throws {
     try require(relativeName.scope == .vault && relativeName.components == ["science", "math", "trigonometry"],
                 "relative note names should preserve their path components")
     try require(relativeName.displayTitle == "trigonometry", "path note display title should use its final component")
+    for (raw, expected) in [("pros / cons", "pros - cons"), ("TODO/", "TODO-"), ("a//b", "a--b")] {
+        let resolved = try NoteTitle.resolvedPathName(for: raw)
+        try require(resolved.scope == .vault && resolved.components == [expected],
+                    "legacy flat slash name should resolve consistently: \(raw)")
+    }
+    let spaced = try NoteTitle.resolvedPathName(for: "pros  /  cons", normalizingWhitespace: false)
+    try require(spaced.components == ["pros  -  cons"], "typed-note flat fallback should keep the raw spacing")
+    let qualifiedResolved = try NoteTitle.resolvedPathName(for: "science/math")
+    try require(qualifiedResolved.components == ["science", "math"],
+                "well-formed slash names should remain qualified paths")
+    for unsafe in ["science/../escape", "/outside/"] {
+        try require((try? NoteTitle.resolvedPathName(for: unsafe)) == nil,
+                    "unsafe and HOME-qualified names should not fall back to flat names: \(unsafe)")
+    }
     let homeName = try NoteTitle.pathName(for: "/Desktop/science/math/trigonometry")
     try require(homeName.scope == .home && homeName.relativePath == "Desktop/science/math/trigonometry",
                 "leading slash should select a home-relative path")

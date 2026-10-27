@@ -132,6 +132,10 @@ final class AppController: NSObject, NSMenuDelegate {
     private var pending: PendingCapture?
     private var pendingOutsideSession = false
     private var pendingToastID: UUID?
+    private var pendingNeedsRetryChoice = false
+    private var retryWarningShown = false
+    private var commitMonitor: Task<Void, Never>?
+    private var isChoosingDestination = false
     private var stagedJob: (id: UUID, preparation: Task<CaptureJob, Error>, persistence: Task<Void, Error>)?
     private(set) var commitTail: Task<SavedCapture, Error>?
     private var commitGeneration = 0
@@ -384,11 +388,15 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func capture(_ trigger: CaptureTrigger, outsideSession: Bool = false, fromHotkey: Bool = true, context suppliedContext: FrontmostContext? = nil) {
+    func capture(_ trigger: CaptureTrigger, outsideSession: Bool = false, fromHotkey: Bool = true, context suppliedContext: FrontmostContext? = nil) {
         guard !isTerminating, !acquisitionInProgress else { return }
         let context = suppliedContext ?? FrontmostContext.capture()
         guard context.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         if !outsideSession, fromHotkey, let pending, pending.trigger == trigger, pendingToastID == pending.id, toast.isVisible {
+            showTitlePicker(for: pending.id)
+            return
+        }
+        if !outsideSession, fromHotkey, pendingNeedsRetryChoice, retryWarningShown, toast.isVisible, let pending, pending.trigger == trigger {
             showTitlePicker(for: pending.id)
             return
         }
@@ -398,6 +406,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !Task.isCancelled else { return nil }
             switch trigger {
             case .selection:
+                if let supplied = acquiredSelectionForChecks { return supplied }
                 switch await SelectionReader.read(context: context) {
                 case .success(let capture):
                     return CapturePipeline.selection(text: capture.text, context: capture.context)
@@ -494,6 +503,20 @@ final class AppController: NSObject, NSMenuDelegate {
     func stage(_ capture: PendingCapture, outsideSession: Bool = false) async {
         guard !shutdownFinished else { return }
         _ = commitPending()
+        // A newer capture saves a retry-pending one to its staged default, then says so.
+        var previousNotice: String?
+        if pendingNeedsRetryChoice, let held = pending {
+            let staged = stagedJob.flatMap { $0.id == held.id ? $0 : nil }
+            let destination = try? await staged?.preparation.value.prepared.destination
+            if pendingNeedsRetryChoice, pending?.id == held.id, let commit = commitPending(force: true) {
+                // Finish A, including its failure handling, before B is staged.
+                let succeeded = (try? await commit.value) != nil
+                await commitMonitor?.value
+                previousNotice = succeeded
+                    ? destination.map { "Previous capture saved to \($0.title)" } ?? "Previous capture saved"
+                    : "Couldn't save the previous capture · recovery will retry"
+            }
+        }
         let pipeline = pipeline
         let recovery = recoveryJobs[capture.id]
         let recoveryPersistence = recoveryPersistences[capture.id]
@@ -517,21 +540,31 @@ final class AppController: NSObject, NSMenuDelegate {
         guard presentsUI, pending?.id == capture.id, !isTerminating else { return }
         if outsideSession {
             showTitlePicker(for: capture.id)
+            if let previousNotice { showPreviousCaptureNotice(previousNotice) }
             return
         }
         pendingToastID = capture.id
-        toast.show(Toast(style: .success,
-                         title: session.map { "Added to \($0.name)" } ?? "Saved to \(Vault.inboxTitle)",
-                         subtitle: capture.subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note")))
+        // Fold the notice into this toast so it cannot hide it.
+        let subtitle = [capture.subtitle, previousNotice].compactMap { $0 }.joined(separator: " · ")
+        let saved = Toast(style: .success,
+                          title: session.map { "Added to \($0.name)" } ?? "Saved to \(Vault.inboxTitle)",
+                          subtitle: subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
+        if previousNotice != nil { onToast?(saved) }
+        toast.show(saved)
     }
 
+    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an
+    /// explicit destination, shutdown, or a newer capture staged in `stage()` may save it.
     @discardableResult
-    func commitPending(noteTitle: String? = nil, announce: Bool = false) -> Task<SavedCapture, Error>? {
+    func commitPending(noteTitle: String? = nil, destination: Destination? = nil, announce: Bool = false, force: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
+        if pendingNeedsRetryChoice, !force, noteTitle == nil, destination == nil, !isTerminating { return nil }
         let outsideSession = pendingOutsideSession
         pending = nil
         pendingOutsideSession = false
         pendingToastID = nil
+        pendingNeedsRetryChoice = false
+        retryWarningShown = false
         if presentsUI { toast.dismiss(expire: false) }
         let previous = commitTail
         let pipeline = pipeline
@@ -541,11 +574,20 @@ final class AppController: NSObject, NSMenuDelegate {
         let recovery = isTerminating ? recoveryJobs[capture.id] : nil
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
-            let destination: Destination?
-            if let recovery { destination = try? await recovery.value.prepared.destination }
-            else if noteTitle == nil { destination = try? await staged?.preparation.value.prepared.destination }
-            else { destination = nil }
-            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: destination, outsideSession: outsideSession)
+            let resolvedDestination: Destination?
+            if let recovery { resolvedDestination = try? await recovery.value.prepared.destination }
+            else if let destination { resolvedDestination = destination }
+            else if noteTitle == nil { resolvedDestination = try? await staged?.preparation.value.prepared.destination }
+            else { resolvedDestination = nil }
+            if destination != nil {
+                // noteLocation covers HOME notes too; it fails when the note no longer exists.
+                guard let resolvedDestination,
+                      let noteID = try? pipeline.vault.noteID(for: resolvedDestination.url),
+                      (try? pipeline.vault.noteLocation(forID: noteID)) != nil else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+            }
+            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: resolvedDestination, outsideSession: outsideSession)
         }
         preparedJobs[capture.id] = preparation
         // Journal before waiting for earlier writes, so even queued work is recoverable.
@@ -560,7 +602,7 @@ final class AppController: NSObject, NSMenuDelegate {
         commitTail = task
         commitGeneration += 1
         let generation = commitGeneration
-        Task { [weak self] in
+        commitMonitor = Task { [weak self] in
             do {
                 let saved = try await task.value
                 self?.preparedJobs.removeValue(forKey: capture.id)
@@ -573,14 +615,28 @@ final class AppController: NSObject, NSMenuDelegate {
                     if self?.pending == nil { self?.showToast(Toast(style: .success, title: title, duration: 1.6)) }
                 }
             } catch {
-                if noteTitle != nil, case .failure = await preparation.result, let staged {
+                if (noteTitle != nil || destination != nil), case .failure = await preparation.result, let staged {
                     self?.preparedJobs.removeValue(forKey: capture.id)
-                    self?.stagedJob = staged
-                    self?.pending = capture
-                    self?.pendingOutsideSession = outsideSession
-                    self?.pendingToastID = capture.id
+                    if self?.pending == nil {
+                        self?.stagedJob = staged
+                        self?.pending = capture
+                        self?.pendingOutsideSession = outsideSession
+                        self?.pendingToastID = nil
+                        self?.pendingNeedsRetryChoice = true
+                        if let routerError = error as? RouterError,
+                           case .ambiguous(let candidates) = routerError {
+                            self?.showAmbiguousDestinationPicker(candidates, capture: capture)
+                        } else {
+                            self?.showRetrySaveFailure(error, capture: capture)
+                        }
+                    } else {
+                        let fallback = try? await staged.preparation.value.prepared.destination
+                        self?.preparedJobs[capture.id] = staged.preparation
+                        self?.showPreviousCaptureRecoveryNotice(destination: fallback)
+                    }
+                } else {
+                    self?.reportUserSaveFailure(error, title: "Couldn't save capture")
                 }
-                self?.reportUserSaveFailure(error, title: "Couldn't save capture")
             }
             if self?.commitGeneration == generation { self?.commitTail = nil }
         }
@@ -591,7 +647,11 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func waitForCommits() async { _ = try? await commitTail?.value }
 
-    private func drainCaptures() async {
+    func drainCaptures() async {
+        // Acquisition assigns the destination during staging. Drain it before
+        // ending or starting a session so the active session cannot change first.
+        let acquisition = acquisitionTask
+        await acquisition?.value
         _ = commitPending()
         await processingTail?.value
         _ = commitPending()
@@ -678,12 +738,65 @@ final class AppController: NSObject, NSMenuDelegate {
             guard controller.pending?.id == id else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
             guard controller.pending?.id == id, !controller.isTerminating else { return }
-            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, onAccept: { [weak controller] noteTitle in
-                guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending(noteTitle: noteTitle, announce: true)
+            // A picked suggestion names one exact note. Title routing only matches root notes, so a nested
+            // or HOME note must be saved by destination, not by its title.
+            controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, suggestionValue: { $0.path },
+                                    onAccept: { [weak controller] text in
+                guard let controller, controller.pending?.id == id else { return }
+                guard let picked = suggestions.first(where: { $0.path == text }) else {
+                    _ = controller.commitPending(noteTitle: text, announce: true)
+                    return
+                }
+                // A note removed since the picker opened fails commitPending's existence check and keeps the capture.
+                let url = (try? controller.pipeline.vault.noteLocation(forID: picked.path).url)
+                    ?? controller.pipeline.vault.url(forRelativePath: picked.path)
+                _ = controller.commitPending(destination: Destination(url: url, title: picked.title, kind: picked.kind),
+                                             announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 guard controller?.pending?.id == id else { return }
-                _ = controller?.commitPending(announce: outsideSession)
+                if let controller, controller.pendingNeedsRetryChoice, let capture = controller.pending {
+                    controller.showRetryChoice(capture: capture, title: "Choose where to save")
+                } else {
+                    _ = controller?.commitPending(announce: outsideSession)
+                }
+            })
+        }
+    }
+
+    private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
+        enqueue { controller in
+            guard await controller.closePanels(), controller.pending?.id == capture.id, !controller.isTerminating else { return }
+            let suggestions = candidates.map { candidate in
+                let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
+                return Suggestion(title: candidate.title,
+                                  secondary: "\(candidate.kind == .session ? "Session" : "Note") · \(path)",
+                                  symbolName: candidate.kind == .session ? "record.circle" : "doc.text",
+                                  value: candidate.url.absoluteString)
+            }
+            let panel = InputPanelController()
+            controller.input = panel
+            controller.isChoosingDestination = true
+            panel.present(placeholder: "Choose an exact note…", title: "Several notes have that name",
+                          secondary: "Select the path to choose the destination", selectionOnly: true,
+                          suggestions: { prefix in
+                let key = NoteTitle.matchKey(prefix)
+                return suggestions.filter {
+                    key.isEmpty || NoteTitle.matchKey($0.title + " " + ($0.secondary ?? "")).contains(key)
+                }
+            }, onSubmit: { [weak controller] urlString in
+                guard let controller else { return }
+                controller.inputClosed()
+                guard controller.pending?.id == capture.id,
+                      let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
+                controller.enqueue { controller in
+                    guard await controller.closePanels(), controller.pending?.id == capture.id else { return }
+                    _ = controller.commitPending(destination: candidate, announce: true)
+                }
+            }, onCancel: { [weak controller] in
+                guard let controller else { return }
+                controller.inputClosed()
+                guard controller.pending?.id == capture.id else { return }
+                controller.showRetryChoice(capture: capture, title: "Choose where to save")
             })
         }
     }
@@ -732,6 +845,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func inputClosed() {
         input = nil
+        isChoosingDestination = false
         let waiters = inputCloseWaiters
         inputCloseWaiters = []
         waiters.forEach { $0.resume() }
@@ -825,6 +939,12 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     var inputForChecks: InputPanelController? { input }
+    var pendingForChecks: PendingCapture? { pending }
+    var isChoosingDestinationForChecks: Bool { isChoosingDestination }
+    func showToastForChecks(_ value: Toast) { showToast(value) }
+    func hasPreparedJobForChecks(_ id: UUID) -> Bool { preparedJobs[id] != nil }
+    func hideToastForChecks() { toast.dismiss(expire: false) }
+    var acquiredSelectionForChecks: PendingCapture?
 
     func presentSessionCandidates(_ candidates: [SessionCandidate], selectedPath: String? = nil) {
         let calendar = pipeline.calendar
@@ -1338,6 +1458,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func showToast(_ value: Toast) {
         _ = commitPending()
+        retryWarningShown = false
         pendingToastID = nil
         onToast?(value)
         if presentsUI, !isTerminating { toast.show(value) }
@@ -1354,6 +1475,32 @@ final class AppController: NSObject, NSMenuDelegate {
         } else {
             report(error, title: title)
         }
+    }
+
+    private func showRetrySaveFailure(_ error: Error, capture: PendingCapture) {
+        logger.error("Couldn't save capture (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+        showRetryChoice(capture: capture, title: "Couldn't save to that note")
+    }
+
+    private func showRetryChoice(capture: PendingCapture, title: String) {
+        let warning = Toast(style: .warning, title: title, subtitle: "Capture kept · press \(capture.trigger.hotkey.displayString) to choose again",
+                            hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
+        onToast?(warning)
+        retryWarningShown = true
+        if presentsUI, !isTerminating { toast.show(warning) }
+    }
+
+    private func showPreviousCaptureNotice(_ text: String) {
+        let notice = Toast(style: .success, title: text)
+        onToast?(notice)
+        if presentsUI, !isTerminating { toast.show(notice) }
+    }
+
+    private func showPreviousCaptureRecoveryNotice(destination: Destination?) {
+        let location = destination.map { "Recovery will retry: \($0.title)." } ?? "Recovery will retry the staged capture."
+        let warning = Toast(style: .warning, title: "Couldn't save the previous capture", subtitle: location)
+        onToast?(warning)
+        if presentsUI, !isTerminating { toast.show(warning) }
     }
 
     private func reportExternalRegistryProblem(_ error: Error, forSave: Bool) {

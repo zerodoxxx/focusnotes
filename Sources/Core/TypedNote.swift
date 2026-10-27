@@ -4,7 +4,7 @@ import Foundation
 public struct TypedNote: Sendable {
     /// The complete extracted name before display-title truncation.
     public let rawName: String
-    /// Parsed path, when the extracted name is safe to use as a destination.
+    /// Resolved path, including supported legacy flat-name fallback.
     public let pathName: NotePathName?
     /// The validation failure when an explicit path cannot be used as a destination.
     public let pathNameError: NotePathNameError?
@@ -23,24 +23,20 @@ public struct TypedNote: Sendable {
         let extractedName = stripped.isEmpty
             ? "Note " + CaptureFormat.localStamp(createdAt, pattern: "yyyy-MM-dd HH.mm", calendar: calendar)
             : stripped
-        let parsedName: NotePathName?
+        let resolvedName: NotePathName?
         let parseError: NotePathNameError?
         do {
-            parsedName = try NoteTitle.pathName(for: extractedName)
+            resolvedName = try NoteTitle.resolvedPathName(for: extractedName, normalizingWhitespace: false)
             parseError = nil
         } catch let error as NotePathNameError {
-            parsedName = nil
+            resolvedName = nil
             parseError = error
         } catch {
-            parsedName = nil
+            resolvedName = nil
             parseError = .invalidComponent
         }
-        let flatFallback = NoteTitle.canFallBackToFlatName(extractedName, error: parseError)
-        let resolvedName = flatFallback
-            ? try? NotePathName.validated(scope: .vault, components: [NoteTitle.fileStem(for: extractedName)])
-            : parsedName
-        let isFolderQualified = parsedName.map {
-            !flatFallback && ($0.scope == .home || $0.components.count > 1)
+        let isFolderQualified = resolvedName.map {
+            $0.scope == .home || $0.components.count > 1
         } ?? false
         let rawLeaf = isFolderQualified
             ? String(extractedName.split(separator: "/", omittingEmptySubsequences: false).last ?? "")

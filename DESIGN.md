@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-26 (previous commit: `aec2a00`)
+Last Updated: 2026-10-27 (previous commit: `444087a`)
 
 ## Product surfaces
 
@@ -11,6 +11,8 @@ The default global shortcuts are ⌥⇧C for selection capture, ⌥⇧S for area
 Selection and area captures from Safari, Chrome, or Edge can include a separate `[Source](<...>)` Markdown link before the captured content. CaptureKit reads the browser's native address field and accepts complete HTTP(S) addresses only; it does not inspect page contents or selected text. It ignores a focused address field, which may hold an unsubmitted edit. Safari uses its Accessibility field identifier. Chrome and Edge require the English **Address and search bar** accessibility name. Firefox is not supported, and an unavailable or incomplete field leaves the capture intact without a link. ([Sources/CaptureKit/BrowserAddressURL.swift](Sources/CaptureKit/BrowserAddressURL.swift), [Sources/Core/CaptureFormat.swift](Sources/Core/CaptureFormat.swift))
 
 The interactive surfaces are borderless, nonactivating panels: they borrow keyboard focus while leaving the app inactive, and they cannot become the main window. Passive toast panels ignore mouse events. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L39-L64), [Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L66-L76)) Interactive panels without a saved movable position are centered on the pointer's screen, with their top edge 22% of the visible screen height below the top; toasts are placed 72 points above the visible bottom. ([Sources/OverlayKit/OverlayPanel.swift](Sources/OverlayKit/OverlayPanel.swift#L210-L223), [Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L137-L149))
+
+On macOS, a capture title searches headings of vault-root notes before session headings. Duplicate matches open a selection-only chooser showing each title and exact path; Return saves to the selected file. Escape leaves the capture pending for another choice. If preparing the chosen destination fails, a warning offers the capture shortcut to choose again; letting it expire leaves the capture pending, and other toasts, session changes, search and subheading never save it to the default destination. Re-pressing the capture shortcut reopens the chooser only while that warning is visible. If a newer capture is already pending when the choice fails, the earlier capture stays queued for recovery and the warning names its recovery destination. A retry-pending capture survives until it is retried or a newer capture arrives; the newer capture first saves it to its default destination and the toast says so. After a crash or kill, its journal record is replayed into the default destination on next launch. Session start/end waits for any capture still being acquired. Typed-note names continue to select filename paths, and session names continue to match session filenames; capture heading matching also ignores accents, while filename matching only ignores case. Relative slash-name compatibility is shared across these entry points. ([Sources/Core/Router.swift](Sources/Core/Router.swift), [Sources/Core/NoteTitle.swift](Sources/Core/NoteTitle.swift), [Sources/App/AppController.swift](Sources/App/AppController.swift))
 
 ### Sessions
 

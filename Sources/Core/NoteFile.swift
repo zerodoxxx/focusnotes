@@ -1,9 +1,11 @@
 import Darwin
 import Foundation
+import os
 
 /// O_APPEND protects capture writes. Session renames replace a complete snapshot atomically.
 enum NoteFile {
     private static let attempts = 4
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "dev", category: "NoteFile")
 
     struct ManagedDirectoryEntry: Sendable {
         let name: String
@@ -638,7 +640,8 @@ enum NoteFile {
                     }
                     // An independently created note keeps its identity even when
                     // the user has subsequently edited its body in another app.
-                    // A marker alone can be left by a short write. Only a whole block is saved.
+                    // A marker alone can be left by a failed write; that path truncates its bytes back.
+                    // A crash, kill or power loss mid-write can still leave a marker without its body.
                     if alreadySaved {
                         let current = try isCurrent(descriptor, at: location)
                         guard current, try fingerprint(descriptor) == initial else { return false }
@@ -664,7 +667,21 @@ enum NoteFile {
                 beforeWrite?(url)
                 guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial else { return false }
                 _ = try validateManagedFile(descriptor)
-                try writeAll(appended, to: descriptor)
+                do {
+                    try writeAll(appended, to: descriptor)
+                } catch {
+                    // A failed append can leave a valid note marker followed by
+                    // only part of its body. Retries intentionally accept that
+                    // marker after a successful save, including after the body
+                    // is edited elsewhere, so remove this attempt's bytes before
+                    // allowing the error to trigger a journal replay.
+                    // If rollback fails, still surface the original write error.
+                    if ftruncate(descriptor, off_t(end)) != 0 {
+                        let code = errno
+                        logger.error("Append rollback failed (errno \(code, privacy: .public)); partial bytes may remain")
+                    }
+                    throw error
+                }
                 let written = try fingerprint(descriptor)
                 afterWrite?(url)
                 let current = try isCurrent(descriptor, at: location)
