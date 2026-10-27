@@ -37,8 +37,7 @@ public sealed class TypedNote
         {
             try
             {
-                namingRules.ValidateComponent(extracted);
-                resolved = NotePathName.Validated(NotePathScope.Vault, [NoteTitle.FileStem(extracted)], namingRules);
+                resolved = NotePathName.Validated(NotePathScope.Vault, [namingRules.FileStem(extracted)], namingRules);
             }
             catch (NotePathNameException)
             {

@@ -53,10 +53,16 @@ public sealed class CoreHardeningTests
     [InlineData("nul.txt")]
     [InlineData("CONIN$")]
     [InlineData("conout$.md")]
-    [InlineData("note:stream")]
-    [InlineData("note.md:stream")]
-    public void ReservedAndStreamNamesAreRejected(string name) =>
+    public void ReservedNamesAreRejected(string name) =>
         Assert.Equal(NotePathNameError.InvalidComponent, Assert.Throws<NotePathNameException>(() => NoteTitle.PathName(name, Windows)).Kind);
+
+    // ':' is sanitized before validation, so alternate-data-stream syntax never reaches a file name.
+    [Theory]
+    [InlineData("note:stream", "note-stream")]
+    [InlineData("note.md:stream", "note.md-stream")]
+    [InlineData("folder:stream/note", "folder-stream/note")]
+    public void StreamSyntaxNeverReachesAFileName(string name, string relativePath) =>
+        Assert.Equal(relativePath, NoteTitle.PathName(name, Windows).RelativePath);
 
     [Fact]
     public void StalePendingTemporariesAreSweptOnlyWhenOldAndExactlyNamed()

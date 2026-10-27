@@ -204,8 +204,8 @@ public sealed class CaptureJournal
         lock (gate)
         {
             var stem = id.ToString("D").ToLowerInvariant();
-            File.Delete(Path.Combine(DirectoryPath, stem + ".json"));
-            File.Delete(Path.Combine(DirectoryPath, stem + ".png"));
+            AtomicJsonFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".json")));
+            AtomicJsonFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".png")));
             // Keep redirects for this instance: an older commit can still retry its prepared object
             // after a newer commit removed the journal record. Fresh startup prunes completed IDs.
         }

@@ -2,6 +2,9 @@ namespace CaptureApp.AppCore;
 
 internal static class AtomicJsonFile
 {
+    // Test seam: replaces the final move, scoped to the calling flow.
+    internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
+
     internal static void Write(string path, byte[] contents)
     {
         var fullPath = Path.GetFullPath(path);
@@ -17,7 +20,7 @@ internal static class AtomicJsonFile
                 stream.Flush(true);
             }
 
-            File.Move(temporary, fullPath, true);
+            RetryWhileLocked(() => (MoveHook.Value ?? ((source, target) => File.Move(source, target, true)))(temporary, fullPath));
         }
         finally
         {
@@ -25,4 +28,28 @@ internal static class AtomicJsonFile
             catch (FileNotFoundException) { }
         }
     }
+
+    // Antivirus scanners and indexers briefly open a file that was just written. Retry for up to 10 s like
+    // NoteFile.OpenExclusive, so a journal record staged a moment earlier can still be replaced or removed.
+    internal static void RetryWhileLocked(Action change)
+    {
+        var until = Environment.TickCount64 + 10000;
+        while (true)
+        {
+            try
+            {
+                change();
+                return;
+            }
+            catch (Exception error) when (Environment.TickCount64 < until && IsTransient(error, OperatingSystem.IsWindows()))
+            {
+                Thread.Sleep(2);
+            }
+        }
+    }
+
+    // Sharing and lock violations (EAGAIN off Windows). On Windows, replacing or deleting a file that another
+    // process holds open can report access denied instead, so that is retried too.
+    internal static bool IsTransient(Exception error, bool windows) =>
+        error is IOException && (error.HResult & 0xFFFF) is 11 or 32 or 33 || windows && error is UnauthorizedAccessException;
 }
