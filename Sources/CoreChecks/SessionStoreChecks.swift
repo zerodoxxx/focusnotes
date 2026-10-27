@@ -30,6 +30,13 @@ func checkSessionStore() async throws {
     let reopened = SessionStore(stateDirectory: stateDirectory, vault: vault, calendar: calendar, now: clock)
     let restored = await reopened.current()
     try require(restored == started, "a new store on the same folder should restore the session")
+    let fractionalState = base.appendingPathComponent("FractionalState", isDirectory: true)
+    let fractional = SessionStore(stateDirectory: fractionalState, vault: vault, calendar: calendar,
+                                  now: { now.addingTimeInterval(0.75) })
+    let precise = try await fractional.start(name: "Design Review")
+    let reloaded = await SessionStore(stateDirectory: fractionalState, vault: vault, calendar: calendar, now: clock).current()
+    try require(precise.startedAt == now && reloaded == precise,
+                "a session started at a fractional second should equal the restored session")
 
     // Same name on the different days reuses the existing note instead of rewriting it.
     try checkWrite(noteText + "extra line\n", to: noteURL)

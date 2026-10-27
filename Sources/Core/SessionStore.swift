@@ -101,7 +101,8 @@ public actor SessionStore {
         self.stateDirectory = stateDirectory
         self.vault = vault
         self.calendar = calendar
-        self.now = now
+        // session.json stores whole seconds, so keep the in-memory session equal to what a restart restores.
+        self.now = { Date(timeIntervalSince1970: now().timeIntervalSince1970.rounded(.down)) }
         self.beforeNoteWrite = beforeNoteWrite
         self.session = Self.load(from: stateDirectory.appendingPathComponent(Self.stateFileName))
     }

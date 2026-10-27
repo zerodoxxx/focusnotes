@@ -33,7 +33,7 @@ public static class SelfTest
                 homeDirectory: homeDirectory);
             await WritePass(output, "pipeline opened").ConfigureAwait(false);
 
-            var session = pipeline.Sessions.Start("Self-Test Session");
+            var session = pipeline.StartSession("Self-Test Session");
             var restoredSession = new SessionStore(stateDirectory, pipeline.Vault, zone).Current();
             var externalPath = Path.Combine(pipeline.Vault.HomeRoot, "External.md");
             Directory.CreateDirectory(pipeline.Vault.HomeRoot);
@@ -51,7 +51,7 @@ public static class SelfTest
                 throw new InvalidOperationException("The external-note registry did not persist its HOME-relative path.");
             }
 
-            pipeline.Sessions.End();
+            pipeline.EndSession();
             await WritePass(output, "session and external-note state round-tripped").ConfigureAwait(false);
 
             var source = new CaptureSource("Self-Test", "Headless pipeline");

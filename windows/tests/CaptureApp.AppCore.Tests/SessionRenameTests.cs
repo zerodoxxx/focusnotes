@@ -328,6 +328,112 @@ public sealed class SessionRenameTests
         Assert.Empty(pipeline.Journal.RecordPaths());
     }
 
+    [Theory]
+    [InlineData("start")]
+    [InlineData("folder")]
+    [InlineData("resume")]
+    [InlineData("end")]
+    public async Task SessionTransitionRecoversPendingRenameBeforeChangingCaptureDestination(string transition)
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        var other = pipeline.Sessions.Start("Other");
+        var original = await coordinator.StartSessionAsync("Standup");
+        var preparedBeforeRename = pipeline.PrepareText("prepared before rename", new CaptureSource());
+        pipeline.Pins.Set(original.NotePath, true);
+        var pinBackup = BlockPins(pipeline);
+        Assert.True((await coordinator.RenameSessionAsync(Candidate(original), "Daily sync")).IdentityUpdatePending);
+        RepairPins(pipeline, pinBackup);
+
+        var expected = await Transition(coordinator, transition, Candidate(other));
+
+        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(pipeline.Pins.IsPinned(original.NotePath));
+        Assert.True(pipeline.Pins.IsPinned("Sessions/Daily sync.md"));
+        Assert.Equal(expected, pipeline.Sessions.Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        Assert.Equal(expected, coordinator.ActiveSession);
+        Assert.Equal(pipeline.Vault.ManagedUrl("Sessions/Daily sync.md"), pipeline.Commit(preparedBeforeRename).Destination.Url);
+        var job = pipeline.PrepareText("after transition", new CaptureSource());
+        var saved = pipeline.Commit(job);
+        Assert.Equal(expected is null ? pipeline.Vault.InboxUrl : pipeline.Vault.ManagedUrl(expected.NotePath), saved.Destination.Url);
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+    }
+
+    [Theory]
+    [InlineData("start")]
+    [InlineData("folder")]
+    [InlineData("resume")]
+    [InlineData("end")]
+    public async Task SessionTransitionDoesNotApplyWhenPendingRenameRecoveryFails(string transition)
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        var other = pipeline.Sessions.Start("Other");
+        var original = await coordinator.StartSessionAsync("Standup");
+        pipeline.Pins.Set(original.NotePath, true);
+        var pinBackup = BlockPins(pipeline);
+        Assert.True((await coordinator.RenameSessionAsync(Candidate(original), "Daily sync")).IdentityUpdatePending);
+        var before = pipeline.Sessions.Current();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => Transition(coordinator, transition, Candidate(other)));
+
+        Assert.Equal(before, pipeline.Sessions.Current());
+        AssertSessionPath(before, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        Assert.Equal(before, coordinator.ActiveSession);
+        Assert.True(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Requested.md")));
+        Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Work/Requested.md")));
+
+        RepairPins(pipeline, pinBackup);
+        var expected = await Transition(coordinator, transition, Candidate(other));
+        Assert.Equal(expected, pipeline.Sessions.Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        Assert.Equal(expected, coordinator.ActiveSession);
+        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+    }
+
+    private static async Task<Session?> Transition(CaptureCoordinator coordinator, string transition, SessionCandidate other)
+    {
+        return transition switch
+        {
+            "start" => await coordinator.StartSessionAsync("Requested"),
+            "folder" => await coordinator.StartFolderSessionAsync("Work", "Requested"),
+            "resume" => await coordinator.ResumeSessionAsync(other),
+            "end" => await EndAndReturnNull(coordinator),
+            _ => throw new ArgumentOutOfRangeException(nameof(transition), transition, null)
+        };
+    }
+
+    private static async Task<Session?> EndAndReturnNull(CaptureCoordinator coordinator)
+    {
+        var current = coordinator.ActiveSession ?? throw new InvalidOperationException("Expected active session.");
+        await coordinator.EndSessionAsync(current);
+        return null;
+    }
+
+    private static string BlockPins(CapturePipeline pipeline)
+    {
+        var pinBackup = Path.Combine(pipeline.StateDirectory, "pinned-backup.json");
+        File.Move(pipeline.Pins.Url, pinBackup);
+        Directory.CreateDirectory(pipeline.Pins.Url);
+        return pinBackup;
+    }
+
+    private static void AssertSessionPath(Session? expected, Session? actual)
+    {
+        Assert.Equal(expected?.Name, actual?.Name);
+        Assert.Equal(expected?.NotePath, actual?.NotePath);
+    }
+
+    private static void RepairPins(CapturePipeline pipeline, string pinBackup)
+    {
+        Directory.Delete(pipeline.Pins.Url);
+        File.Move(pinBackup, pipeline.Pins.Url);
+    }
+
     [Fact]
     public void UnrelatedCorruptJournalDoesNotBlockRenameAndCompletedRedirectsArePrunedOnStartup()
     {

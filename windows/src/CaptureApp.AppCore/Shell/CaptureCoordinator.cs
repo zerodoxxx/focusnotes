@@ -572,9 +572,9 @@ public sealed class CaptureCoordinator
     });
 
     // Sessions.
-    public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.Start(name)));
+    public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.StartSession(name)));
 
-    public Task<Session> StartFolderSessionAsync(string folder, string name) => Task.Run(() => ActivateSession(Pipeline.Sessions.StartInFolder(new NoteFolder(folder), name)));
+    public Task<Session> StartFolderSessionAsync(string folder, string name) => Task.Run(() => ActivateSession(Pipeline.StartFolderSession(new NoteFolder(folder), name)));
 
     public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
     {
@@ -583,7 +583,7 @@ public sealed class CaptureCoordinator
             string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
-    public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.Sessions.Resume(candidate)));
+    public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.ResumeSession(candidate)));
 
     public Task<SessionRenameOutcome> RenameSessionAsync(SessionCandidate candidate, string newName) => Task.Run(() =>
     {
@@ -617,7 +617,7 @@ public sealed class CaptureCoordinator
 
     public Task<int> EndSessionAsync(Session session) => Task.Run(() =>
     {
-        Pipeline.Sessions.End();
+        Pipeline.EndSession();
         ActiveSession = null;
         host.StatusChanged();
         var count = Pipeline.Index.CaptureCount(session.NotePath);
