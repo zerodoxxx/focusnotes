@@ -147,6 +147,29 @@ public sealed class SessionRenameTests
         Assert.Contains("rollback failed", string.Join('\n', Directory.EnumerateFiles(Path.Combine(pipeline.StateDirectory, "logs"))
             .Select(File.ReadAllText)), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData("{\"Plan\":{\"OldP")]
+    [InlineData("{\"Plan\":null,\"CaptureIds\":[]}")]
+    [InlineData("{\"Unknown\":true}")]
+    [InlineData("{\"Plan\":{\"OldPath\":\"a.md\",\"Target\":{\"Name\":\"A\",\"NotePath\":\"b.md\",\"StartedAt\":\"2026-01-01T00:00:00Z\"},\"Source\":{\"Device\":1,\"Inode\":2},\"Hashes\":{\"Original\":\"x\",\"Rewritten\":\"y\"},\"Installation\":{}},\"CaptureIds\":[]}")]
+    public void CorruptRenameIntentIsQuarantinedAndDoesNotBlockStartupOrCaptures(string content)
+    {
+        using var temp = new TempDirectory();
+        var state = Path.Combine(temp.Path, "state");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(Path.Combine(state, "session-rename.json"), content);
+
+        using var pipeline = Open(temp);
+        Assert.False(File.Exists(Path.Combine(state, "session-rename.json")));
+        Assert.Equal(content, File.ReadAllText(Path.Combine(pipeline.Journal.DirectoryPath, "corrupt", "session-rename.json")));
+
+        File.WriteAllText(Path.Combine(state, "session-rename.json"), content);
+        var saved = pipeline.Commit(pipeline.PrepareText("after corruption", new CaptureSource()));
+        Assert.Contains("after corruption", File.ReadAllText(saved.Destination.Url), StringComparison.Ordinal);
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(pipeline.Journal.DirectoryPath, "corrupt"), "session-rename*.json").Length);
+    }
+
     private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
         Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 

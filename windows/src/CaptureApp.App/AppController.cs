@@ -241,15 +241,20 @@ internal sealed partial class AppController : IDisposable
     private void FinishQuit(bool restartForUpdate)
     {
         var update = updates;
-        if (update?.Snapshot.Status == UpdateStatus.ReadyToRestart)
+        try
         {
-            // Both run after the drain; ApplyAndRestart ends this process itself.
-            if (restartForUpdate) { update.ApplyAndRestart(); }
-            else { update.ApplyOnExit(); }
+            if (update?.Snapshot.Status == UpdateStatus.ReadyToRestart)
+            {
+                // Both run after the drain; ApplyAndRestart ends this process itself.
+                if (restartForUpdate) { update.ApplyAndRestart(); }
+                else { update.ApplyOnExit(); }
+            }
         }
+        // The ledger normally still holds the pending apply, so the next launch counts it as a failed attempt.
+        catch (Exception error) { log.Error($"Applying the update failed ({error.GetType().Name}): {error.Message}"); }
 
-        Dispose();
-        app.Shutdown();
+        try { Dispose(); }
+        finally { app.Shutdown(); }
     }
 
     private void OnSessionEnding(object sender, SessionEndingCancelEventArgs e)
