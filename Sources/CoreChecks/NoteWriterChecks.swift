@@ -94,6 +94,7 @@ func checkNoteWriter() async throws {
     try await checkCachedSourceParsing(vault: vault, calendar: calendar, capture: capture)
     try await checkInPlaceEditBeforeAppend(vault: vault, calendar: calendar, capture: capture)
     try await checkReplacementWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
+    try await checkRenameAwayWhileWaitingForLock(vault: vault, calendar: calendar, capture: capture)
     try await checkUnsafeNoteTargets(calendar: calendar, capture: capture)
     print("NoteWriter checks passed.")
 }
@@ -342,6 +343,36 @@ private func checkReplacementWhileWaitingForLock(vault: Vault, calendar: Calenda
     try require(text.hasPrefix("# Replacement\n\neditor kept this\n"), "a replacement must keep the editor's bytes")
     try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
                 "an append interrupted by a replacement must land once on the current note")
+}
+
+/// A note moved away (for example by a session rename) while an append waited must not be recreated at its old path.
+private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
+    let url = vault.root.appendingPathComponent("Moved away.md")
+    let movedURL = vault.root.appendingPathComponent("Moved away elsewhere.md")
+    let original = "# Moved away\n\nold body\n"
+    try checkWrite(original, to: url)
+    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+    try require(lockDescriptor >= 0, "could not open the lock fixture")
+    var held = flock(lockDescriptor, LOCK_EX) == 0
+    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
+    try require(held, "could not lock the fixture note")
+
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let append = Task.detached { () -> Error? in
+        do { try await writer.append(capture, to: url, title: "Moved away"); return nil }
+        catch { return error }
+    }
+    // As above, a slow start can only weaken this check.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    try FileManager.default.moveItem(at: url, to: movedURL)
+    _ = flock(lockDescriptor, LOCK_UN)
+    held = false
+    let failure = await append.value
+
+    try require((failure as? POSIXError)?.code == .ENOENT, "an append to a moved-away note must fail with ENOENT, got \(String(describing: failure))")
+    try require(!FileManager.default.fileExists(atPath: url.path), "an append must not recreate the moved-away path")
+    let movedText = try checkRead(movedURL)
+    try require(movedText == original, "the moved note must stay untouched")
 }
 
 private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture) async throws {
