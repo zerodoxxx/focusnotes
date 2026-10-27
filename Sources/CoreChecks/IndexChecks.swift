@@ -214,6 +214,7 @@ func checkSearchIndex() async throws {
     try await checkOCRFingerprintRace()
     try await checkIndexRejectsLinkedManagedReads()
     try await checkIndexSkipsUnreadableNote()
+    try await checkIndexSyncSurvivesChangingNote()
     print("SearchIndex checks passed.")
 }
 
@@ -251,6 +252,84 @@ private func checkIndexSkipsUnreadableNote() async throws {
                 "a readable note should be indexed again after permissions are restored")
     let restoredHits = try await index.search("unreadablecandidate")
     try require(restoredHits.count == 1, "restored note should become searchable again")
+}
+
+/// Grows and shrinks a note's tail in place on its own thread, so its metadata and bytes
+/// change while a sync reads it. The leading bytes never change, so the note stays indexable.
+private final class NoteChurn: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    private let group = DispatchGroup()
+
+    init(url: URL, stableLength: Int) {
+        group.enter()
+        Thread.detachNewThread { [self] in
+            defer { group.leave() }
+            let descriptor = open(url.path, O_RDWR | O_CLOEXEC)
+            guard descriptor >= 0 else { return }
+            defer { ftruncate(descriptor, off_t(stableLength)); close(descriptor) }
+            let tail = [UInt8](repeating: 0x78, count: 64)
+            while !isStopped {
+                _ = pwrite(descriptor, tail, tail.count, off_t(stableLength))
+                _ = ftruncate(descriptor, off_t(stableLength))
+            }
+        }
+    }
+
+    private var isStopped: Bool { lock.withLock { stopped } }
+
+    func stop() async {
+        lock.withLock { stopped = true }
+        await withCheckedContinuation { continuation in group.notify(queue: .global()) { continuation.resume() } }
+    }
+}
+
+/// A note changing mid-read must neither abort the sync nor lose its own row. The race may
+/// not land on a given run, so a regression is caught probabilistically but a pass never flakes.
+private func checkIndexSyncSurvivesChangingNote() async throws {
+    let base = try checkMakeDirectory("index-changing-note")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    try vault.prepare()
+    let churnURL = vault.root.appendingPathComponent("Aaa Churn.md")
+    let churnBody = "# Churn\n\nchurntoken\n" + String(repeating: "churntoken filler line\n", count: 400)
+    try checkWrite(churnBody, to: churnURL)
+    try checkWrite("# Beta\n\nbetatoken\n", to: vault.root.appendingPathComponent("Beta.md"))
+    let omegaURL = vault.root.appendingPathComponent("Omega.md")
+    try checkWrite("# Omega\n\nomegatoken\n", to: omegaURL)
+    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("index.sqlite"), calendar: checkCalendar())
+    let initial = try await index.sync()
+    try require(initial.added == 4 && initial.skipped == 0, "changing-note fixture should index Inbox and three notes")
+
+    try FileManager.default.removeItem(at: omegaURL)
+    let churn = NoteChurn(url: churnURL, stableLength: churnBody.utf8.count)
+    var removed = 0
+    do {
+        for _ in 0..<200 {
+            let stats: SyncStats
+            do { stats = try await index.sync() }
+            catch {
+                await churn.stop()
+                throw CheckFailure.failed("a changing note must not abort the index sync: \(error)")
+            }
+            removed += stats.removed
+        }
+    }
+    await churn.stop()
+    try require(removed == 1, "the delete pass must still run, and only for the deleted note (removed \(removed))")
+    let omegaHits = try await index.search("omegatoken")
+    try require(omegaHits.isEmpty, "a deleted note must leave the index even while another note changes")
+
+    let churnHits = try await index.search("churntoken")
+    try require(churnHits.contains { $0.notePath == "Aaa Churn.md" }, "a changing note must keep its indexed row")
+    try checkWrite("# Churn\n\nchurnsettled\n", to: churnURL)
+    let settled = try await index.sync()
+    try require(settled.skipped == 0 && settled.removed == 0 && settled.updated == 1,
+                "a settled note must be re-indexed by the next sync")
+    let settledHits = try await index.search("churnsettled")
+    try require(settledHits.contains { $0.notePath == "Aaa Churn.md" }, "the settled note must be searchable")
+    let betaHits = try await index.search("betatoken")
+    try require(betaHits.contains { $0.notePath == "Beta.md" }, "notes after a changing one must stay indexed")
 }
 
 private func checkIndexOperation<T>(_ label: String, operation: () async throws -> T) async throws -> T {

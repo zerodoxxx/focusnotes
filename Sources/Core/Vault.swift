@@ -158,6 +158,8 @@ struct VaultNoteFile: Sendable {
     let url: URL
     let kind: NoteKind
     let snapshot: VaultFileSnapshot?
+    /// Metadata reads hit EAGAIN because the note was being rewritten.
+    var isChanging = false
 }
 
 public struct VaultNoteLocation: Sendable, Equatable {
@@ -273,13 +275,16 @@ public struct Vault: Sendable {
 
     /// Lists Markdown paths with no-follow metadata snapshots. Sync reuses these
     /// snapshots for unchanged files, opening a note only when its fingerprint changed.
+    /// Notes caught mid-change stay listed with `isChanging` so callers don't treat them as deleted.
     func listNoteFiles() throws -> [VaultNoteFile] {
-        let vaultFiles = try markdownFilePaths(includeNoteMetadata: true).filter { $0.snapshot != nil }
+        let vaultFiles = try markdownFilePaths(includeNoteMetadata: true).filter { $0.snapshot != nil || $0.isChanging }
         var externalFiles: [VaultNoteFile] = []
         for location in try externalNoteLocations() {
             do {
                 guard let snapshot = try fileSnapshot(noteID: location.id, includingContents: false) else { continue }
                 externalFiles.append(VaultNoteFile(id: location.id, url: location.url, kind: .note, snapshot: snapshot))
+            } catch let error as POSIXError where error.code == .EAGAIN {
+                externalFiles.append(VaultNoteFile(id: location.id, url: location.url, kind: .note, snapshot: nil, isChanging: true))
             } catch let error as POSIXError where
                 error.code == .EACCES || error.code == .ELOOP || error.code == .ENOENT ||
                 error.code == .ENOTDIR || error.code == .EPERM {
@@ -775,7 +780,8 @@ public struct Vault: Sendable {
                 // metadata; full contents still require a descriptor read.
                 let snapshot = includeNoteMetadata ? entry.noteSnapshot : nil
                 notes.append(VaultNoteFile(id: path, url: root.appendingPathComponent(path),
-                                           kind: noteKind(for: path), snapshot: snapshot))
+                                           kind: noteKind(for: path), snapshot: snapshot,
+                                           isChanging: includeNoteMetadata && entry.noteIsChanging))
             }
         }
         return notes.sorted { $0.id < $1.id }

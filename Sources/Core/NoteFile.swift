@@ -11,6 +11,8 @@ enum NoteFile {
         let name: String
         let isDirectory: Bool
         let noteSnapshot: VaultFileSnapshot?
+        /// The note changed while its metadata was read; callers keep any prior state.
+        let noteIsChanging: Bool
     }
 
     private struct FileIdentity: Equatable {
@@ -135,11 +137,17 @@ enum NoteFile {
             }
 
             var noteSnapshot: VaultFileSnapshot? = nil
+            var noteIsChanging = false
             if includeNoteMetadata, !isDirectory, !name.hasPrefix("."),
                !name.hasPrefix("~$"), URL(fileURLWithPath: name).pathExtension.lowercased() == "md" {
-                noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
+                do {
+                    noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
+                } catch let error as POSIXError where error.code == .EAGAIN {
+                    noteIsChanging = true
+                }
             }
-            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory, noteSnapshot: noteSnapshot))
+            entries.append(ManagedDirectoryEntry(name: name, isDirectory: isDirectory,
+                                                 noteSnapshot: noteSnapshot, noteIsChanging: noteIsChanging))
         }
         guard try isCurrent(directories) else { throw POSIXError(.EAGAIN) }
         return entries
@@ -213,11 +221,11 @@ enum NoteFile {
             throw posixError()
         }
         defer { close(descriptor) }
-        let initialAttributes = try validateManagedFile(descriptor)
+        let initialAttributes = try validateManagedFile(descriptor, at: location)
         guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
         let initial = try fingerprint(descriptor)
         let contents = includingContents ? try readAll(descriptor) : nil
-        let finalAttributes = try validateManagedFile(descriptor)
+        let finalAttributes = try validateManagedFile(descriptor, at: location)
         guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial,
               FileIdentity(initialAttributes) == FileIdentity(finalAttributes) else { throw POSIXError(.EAGAIN) }
         return VaultFileSnapshot(contents: contents, attributes: finalAttributes)
@@ -327,6 +335,16 @@ enum NoteFile {
         guard attributes.st_mode & S_IFMT == S_IFREG,
               attributes.st_uid == getuid(), attributes.st_nlink == 1 else { throw POSIXError(.EPERM) }
         return attributes
+    }
+
+    /// A note replaced or unlinked mid-read fails validation (nlink 0); report that as EAGAIN, not EPERM.
+    private static func validateManagedFile(_ descriptor: Int32, at location: FileLocation) throws -> stat {
+        do {
+            return try validateManagedFile(descriptor)
+        } catch let error as POSIXError where error.code == .EPERM {
+            guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+            throw error
+        }
     }
 
     /// Inbox is app-managed: migrate legacy broad modes without following a
