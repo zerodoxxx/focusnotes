@@ -933,7 +933,9 @@ final class AppController: NSObject, NSMenuDelegate {
     private func activateSession(_ session: Session) async throws -> Session {
         activeSession = session
         refreshStatus()
-        try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath))
+        // The session is already active; an index failure must not report the start/resume as failed.
+        do { try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath)) }
+        catch { logger.error("Session started; index update failed (\(AppErrorLog.summary(error), privacy: .public))") }
         showToast(Toast(style: .session, title: "Session \(session.resumed == true ? "resumed" : "started") · \(session.name)", subtitle: "Captures go here until ⌥⇧A"))
         return session
     }
@@ -1006,13 +1008,20 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     @discardableResult
-    func endSession(_ session: Session) async throws -> Int {
+    func endSession(_ session: Session) async throws -> Int? {
         try await pipeline.recoverSessionIdentity()
         try await pipeline.sessions.end()
         activeSession = nil
         refreshStatus()
-        let count = try await pipeline.index.captureCount(notePath: session.notePath)
-        showToast(Toast(style: .session, title: "Session ended · \(session.name)", subtitle: count == 1 ? "1 capture" : "\(count) captures"))
+        // The session has ended; an unreadable count only drops the toast subtitle.
+        let count: Int?
+        do { count = try await pipeline.index.captureCount(notePath: session.notePath) }
+        catch {
+            logger.error("Session ended; capture count unavailable (\(AppErrorLog.summary(error), privacy: .public))")
+            count = nil
+        }
+        showToast(Toast(style: .session, title: "Session ended · \(session.name)",
+                        subtitle: count.map { $0 == 1 ? "1 capture" : "\($0) captures" }))
         return count
     }
 
