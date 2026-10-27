@@ -375,8 +375,8 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
-    /// `runsDuringQuit` keeps an already-queued user submission alive into the shutdown drain;
-    /// new submissions are still refused once termination begins.
+    /// `runsDuringQuit` keeps an already-queued user submission alive into the shutdown drain
+    /// (until its deadline); new submissions are still refused once termination begins.
     private func enqueue(runsDuringQuit: Bool = false, _ action: @escaping @MainActor (AppController) async -> Void) {
         guard !isTerminating else { return }
         let previous = actionTail
@@ -384,7 +384,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let generation = actionGeneration
         actionTail = Task { [weak self] in
             await previous?.value
-            guard let self, runsDuringQuit || !self.isTerminating else { return }
+            guard let self, !self.isTerminating || (runsDuringQuit && !self.shutdownFinished) else { return }
             await action(self)
             if self.actionGeneration == generation { self.actionTail = nil }
         }
@@ -938,7 +938,7 @@ final class AppController: NSObject, NSMenuDelegate {
         refreshStatus()
         // The session is already active; an index failure must not report the start/resume as failed.
         do { try await pipeline.index.reindex(note: pipeline.vault.root.appendingPathComponent(session.notePath)) }
-        catch { logger.error("Session started; index update failed (\(AppErrorLog.summary(error), privacy: .public))") }
+        catch { logger.error("Session activated; index update failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)") }
         showToast(Toast(style: .session, title: "Session \(session.resumed == true ? "resumed" : "started") · \(session.name)", subtitle: "Captures go here until ⌥⇧A"))
         return session
     }
@@ -1020,7 +1020,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let count: Int?
         do { count = try await pipeline.index.captureCount(notePath: session.notePath) }
         catch {
-            logger.error("Session ended; capture count unavailable (\(AppErrorLog.summary(error), privacy: .public))")
+            logger.error("Session ended; capture count unavailable (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
             count = nil
         }
         showToast(Toast(style: .session, title: "Session ended · \(session.name)",
