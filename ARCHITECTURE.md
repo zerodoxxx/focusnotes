@@ -1,6 +1,6 @@
 # FocusNotes Architecture
 
-Last Updated: 2026-10-26 (previous commit: `aec2a00`)
+Last Updated: 2026-10-27 (previous commit: `444087a`)
 
 ## Runtime and package boundaries
 

@@ -1,16 +1,12 @@
 # Changelog
 
-Last Updated: 2026-10-26 (previous commit: `aec2a00`)
+Last Updated: 2026-10-27 (previous commit: `444087a`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-### Fixed
-
-- macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A newer capture first saves a retry-pending one to its default destination with a notice, and the capture shortcut reopens the chooser only while the retry warning is visible. A failed append now reports the original write error even when rollback fails.
 
 ### Added
 
@@ -21,6 +17,7 @@ All notable changes to focusnotes are recorded here. The format follows
 ### Fixed
 
 - macOS and Windows: after a quick note or subheading failed to save, the quick-note editor would not open again and showed "Couldn't save pending capture" each time. It now opens with the kept draft.
+- macOS: a capture kept after a failed chosen-note save is no longer saved to the default destination by a later toast, search or session change; it stays pending until retried. A newer capture first saves a retry-pending one to its default destination with a notice, and the capture shortcut reopens the chooser only while the retry warning is visible. A failed append now reports the original write error even when rollback fails.
 
 ## [0.1.0] - Unreleased
 

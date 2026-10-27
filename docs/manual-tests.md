@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-27 (previous commit: `d5f24d6`)
+Last Updated: 2026-10-27 (previous commit: `444087a`)
 
 The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
 from a signed development build. The handlers capture
