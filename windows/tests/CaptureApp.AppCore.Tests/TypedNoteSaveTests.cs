@@ -17,6 +17,8 @@ public sealed class TypedNoteSaveTests
         var blocked = Path.Combine(pipeline.Vault.Root, "Blocked.md");
         Directory.CreateDirectory(blocked);
         await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddNoteAsync(draft));
+        // A failed save must not leave a faulted tail that every later note open rethrows.
+        Assert.Null(coordinator.CommitTail);
         var oldRecord = Assert.Single(pipeline.Journal.RecordPaths());
         var old = pipeline.Journal.Load(oldRecord);
         Assert.Null(old.Prepared.CreatesNote);
@@ -44,6 +46,7 @@ public sealed class TypedNoteSaveTests
         File.WriteAllText(Path.Combine(pipeline.Vault.Root, "Existing.md"), "# Existing\n");
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddNoteAsync(draft, newNote: true));
+        Assert.Null(coordinator.CommitTail);
         var reserved = Assert.Single(pipeline.Service.ReservedNoteUrls);
         Assert.Equal("Existing 2.md", Path.GetFileName(reserved));
         File.Delete(pipeline.Journal.DirectoryPath);
@@ -54,6 +57,21 @@ public sealed class TypedNoteSaveTests
         Assert.Equal(1, File.ReadAllText(reserved).Split("<!-- note:").Length - 1);
         Assert.Empty(pipeline.Journal.RecordPaths());
         Assert.Empty(pipeline.Service.ReservedNoteUrls);
+    }
+
+    [Fact]
+    public async Task FailedSubheadingSaveClearsTheCommitTail()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
+        await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Tradeoffs"));
+        Assert.Null(coordinator.CommitTail);
+        File.Delete(pipeline.Journal.DirectoryPath);
+
+        Assert.NotNull(await coordinator.AddSubheadingAsync("Tradeoffs"));
+        Assert.Null(coordinator.CommitTail);
     }
 
     [Fact]
