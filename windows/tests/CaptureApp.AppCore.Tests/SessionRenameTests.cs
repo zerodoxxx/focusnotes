@@ -147,10 +147,12 @@ public sealed class SessionRenameTests
         Assert.Contains("rollback failed", string.Join('\n', Directory.EnumerateFiles(Path.Combine(pipeline.StateDirectory, "logs"))
             .Select(File.ReadAllText)), StringComparison.OrdinalIgnoreCase);
     }
+
     [Theory]
     [InlineData("{\"Plan\":{\"OldP")]
     [InlineData("{\"Plan\":null,\"CaptureIds\":[]}")]
     [InlineData("{\"Unknown\":true}")]
+    [InlineData("{\"Plan\":{\"OldPath\":\"a.md\",\"Target\":{\"Name\":\"A\",\"NotePath\":\"b.md\",\"StartedAt\":\"2026-01-01T00:00:00Z\"},\"Source\":{\"Device\":1,\"Inode\":2},\"Hashes\":{\"Original\":\"x\",\"Rewritten\":\"y\"},\"Installation\":{}},\"CaptureIds\":[]}")]
     public void CorruptRenameIntentIsQuarantinedAndDoesNotBlockStartupOrCaptures(string content)
     {
         using var temp = new TempDirectory();

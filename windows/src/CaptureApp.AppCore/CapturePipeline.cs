@@ -318,7 +318,8 @@ public sealed class CapturePipeline : IDisposable
         try
         {
             var intent = JsonSerializer.Deserialize<RenameIntent>(data);
-            if (intent?.Plan is { OldPath: not null, Target.NotePath: not null, Source: not null, Hashes: not null }
+            if (intent?.Plan is { OldPath: not null, Target: { Name: not null, NotePath: not null }, Source: not null, Hashes: not null,
+                    Installation: null or { Identity: not null, TemporaryPath: not null } }
                 && intent.CaptureIds is not null) return intent;
             throw new JsonException("The pending session rename state is incomplete.");
         }

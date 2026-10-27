@@ -250,7 +250,7 @@ internal sealed partial class AppController : IDisposable
                 else { update.ApplyOnExit(); }
             }
         }
-        // The ledger still holds the pending apply, so the next launch counts it as a failed attempt.
+        // The ledger normally still holds the pending apply, so the next launch counts it as a failed attempt.
         catch (Exception error) { log.Error($"Applying the update failed ({error.GetType().Name}): {error.Message}"); }
 
         try { Dispose(); }
