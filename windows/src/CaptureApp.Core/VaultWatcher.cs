@@ -679,7 +679,7 @@ public sealed class VaultWatcher : IDisposable
 
                 // An observer failure must not crash the timer thread or stall later deliveries.
                 try { onChange(next); }
-                catch (Exception) { }
+                catch (Exception error) { NoteFile.Report($"Vault change observer failed: {error}"); }
             }
         }, null, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
     }
