@@ -378,10 +378,11 @@ enum NoteFile {
             if attributes.st_mode & 0o7777 != privateMode {
                 guard fchmod(descriptor, privateMode) == 0 else { throw posixError() }
             }
-            if created {
+            // A capture that took the lock first has already written the header.
+            if created, attributes.st_size == 0 {
                 _ = try validateManagedFile(descriptor)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
-                try writeAll(data, to: descriptor)
+                try writeNewFile(data, to: descriptor, at: location)
             }
             // The directory descriptor anchors both open operations. A rename or
             // replacement during preparation must not be reported as success.
@@ -486,7 +487,7 @@ enum NoteFile {
             if attributes.st_size == 0 {
                 _ = try validateManagedFile(descriptor)
                 guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
-                try writeAll(data, to: descriptor)
+                try writeNewFile(data, to: descriptor, at: location)
             }
             _ = try validateManagedFile(descriptor)
             guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
@@ -964,6 +965,25 @@ enum NoteFile {
     }
 
     private static func posixError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+
+    /// Writes the header of an empty note this call created and holds locked. A failed write
+    /// removes the note again so a retry writes the full header; otherwise a cut-off header
+    /// such as `# Fo` would stay and become the note's title.
+    private static func writeNewFile(_ data: Data, to descriptor: Int32, at location: FileLocation) throws {
+        do {
+            try writeAll(data, to: descriptor)
+        } catch {
+            // If rollback fails, still surface the original write error.
+            if ftruncate(descriptor, 0) != 0 {
+                let code = errno
+                logger.error("New note rollback failed (errno \(code, privacy: .public)); a partial header may remain")
+            }
+            if (try? isCurrent(descriptor, at: location)) == true {
+                _ = unlinkat(location.parentDescriptor, location.name, 0)
+            }
+            throw error
+        }
+    }
 
     private static func writeAll(_ data: Data, to descriptor: Int32) throws {
         try data.withUnsafeBytes { bytes in
