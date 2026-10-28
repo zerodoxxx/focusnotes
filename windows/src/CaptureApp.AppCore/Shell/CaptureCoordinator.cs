@@ -4,8 +4,6 @@ using CaptureApp.Core.Index;
 
 namespace CaptureApp.AppCore.Shell;
 
-/// The UI-free half of AppController.swift: staging, ordered commits, journaling, notes, sessions and the
-/// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
 /// Title picker values by suggestion, and the exact note each value stands for.
 public sealed class TitlePicks
 {
@@ -25,6 +23,8 @@ public sealed class TitlePicks
     public Destination? DestinationOf(string value) => destinations.GetValueOrDefault(value);
 }
 
+/// The UI-free half of AppController.swift: staging, ordered commits, journaling, notes, sessions and the
+/// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
 public sealed class CaptureCoordinator
 {
     private sealed record Staged(Guid Id, Task<CaptureJob> Preparation, Task Persistence);
@@ -277,6 +277,9 @@ public sealed class CaptureCoordinator
         {
             staged = new(capture.Id, preparation, persistence);
             pending = capture;
+            // The new capture starts unheld: a failed titled commit may have restored an earlier one since the check above.
+            pendingNeedsRetryChoice = false;
+            retryWarningShown = false;
         }
 
         // Persist the default job before showing the toast or accepting a note title.
@@ -734,8 +737,8 @@ public sealed class CaptureCoordinator
                 var url = home ? Vault.DecodeFilePath(suggestion.Path) : vault.UrlForRelativePath(suggestion.Path);
                 var relative = home ? Vault.RelativeUnder(url, vault.HomeRoot) : suggestion.Path;
                 if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
-                // The file name with .md never matches a heading, so it is unique and cannot be a bare title. Nested, HOME and
-                // session notes use their extensionless path instead when the Router resolves it to the same name.
+                // The file name with .md is unique among the offered values. Nested, HOME and session notes use their
+                // extensionless path instead when the Router resolves it to the same name.
                 var value = home ? "/" + relative : relative;
                 if (!IsRoot(suggestion))
                 {
