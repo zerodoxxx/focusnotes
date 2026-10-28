@@ -127,7 +127,21 @@ func checkFolderShortcutActions() async throws {
     state.destination = Destination(url: pipeline.vault.inboxURL, title: "Inbox", kind: .inbox)
     try state.restoreSessionDestination(ordinary?.destination, drafts: pipeline.drafts)
     guard state.destination == nil, state.folder == folder, state.outsideSession,
-          state.destinationLabel == "Folder: Science/Research" else {
+          state.folderLabel == "Folder: Science/Research" else {
         throw SelfTestFailure("New note reset lost the shortcut folder")
+    }
+
+    // The folder only titles the blank editor; it is not a chosen note, so the typed name resolves inside it.
+    // That drives the footer (Add to note) and Save as New Note, which numbers a copy in the same folder.
+    let existing = TypedNote(markdown: "Experiment\nFollow-up observations", createdAt: Date(), calendar: .current)
+    guard state.destinationLabel == nil,
+          try CaptureService.appendTarget(for: existing, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault, folder: folder)?.title == "Experiment",
+          try CaptureService.appendTarget(for: existing, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault) == nil else {
+        throw SelfTestFailure("Folder quick note did not resolve its typed name inside the folder")
+    }
+    guard let copy = try await controller.addNote("Experiment\nFollow-up observations", newNote: true, outsideSession: true, folder: folder),
+          copy.destination.url.path.hasSuffix("/Science/Research/Experiment 2.md"),
+          await pipeline.sessions.current()?.notePath == second.notePath else {
+        throw SelfTestFailure("Save as New Note in a folder quick note did not create a numbered note in the folder")
     }
 }

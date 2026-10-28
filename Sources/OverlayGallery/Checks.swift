@@ -318,6 +318,7 @@ func runBehaviorChecks() async throws {
     try await checkNoteEditorBehavior()
     try await checkNoteOverlays()
     try await checkSaveAsNewShortcut()
+    try await checkFolderQuickNote()
     try await checkOutsideSessionShortcut()
     try checkCardButtonClicks()
     try checkQuickNoteDesign()
@@ -890,6 +891,48 @@ private func checkSaveAsNewShortcut() async throws {
     try key(36, modifiers: [.command, .option])
     try await settle()
     try require(saved == [text] && !panel.isVisible, "Option-Command-Return must save as a new note and close the editor")
+}
+
+/// A folder quick note titles its blank editor with the folder, which is not a chosen destination: the typed
+/// name still decides the title, the footer caption and Save as New Note within that folder.
+@MainActor
+private func checkFolderQuickNote() async throws {
+    let folder = "Folder: Science/Research"
+    func title(_ view: NSView) -> String? {
+        view.layoutSubtreeIfNeeded()
+        return descendants(view).compactMap { $0 as? NSTextField }.first { $0.font == OverlayTheme.quickTitleFont }?.stringValue
+    }
+    func labels(_ view: NSView) -> [String] { descendants(view).compactMap { $0 as? NSTextField }.map(\.stringValue) }
+    func saveAsNewEnabled(_ view: NSView) -> Bool? {
+        let row = descendants(view).first { String(describing: type(of: $0)) == "ActionRowView" && $0.accessibilityLabel() == "Save as New Note" }
+        return row?.isAccessibilityEnabled()
+    }
+    let blank = OverlayPreview.noteEditor(fallbackTitle: folder, overlay: .actions())
+    try require(title(blank) == folder && labels(blank).contains("Create note") && !labels(blank).contains("Add to note"),
+                "A blank folder quick note must show its folder and the Create note caption")
+    try require(saveAsNewEnabled(blank) == false, "Save as New Note must be disabled in a blank folder quick note")
+    let fresh = OverlayPreview.noteEditor(fallbackTitle: folder, text: "Fresh idea\nbody", overlay: .actions())
+    try require(title(fresh) == "Fresh idea" && labels(fresh).contains("Create note") && saveAsNewEnabled(fresh) == false,
+                "A folder quick note naming no note must show the typed title, Create note and a disabled Save as New Note")
+    let existing = OverlayPreview.noteEditor(fallbackTitle: folder, text: "experiment\nmore", overlay: .actions(), appendsTo: "Experiment")
+    try require(title(existing) == "Experiment" && labels(existing).contains("Add to note") && saveAsNewEnabled(existing) == true,
+                "A folder quick note naming a note in its folder must show that note, Add to note and Save as New Note")
+    let chosen = OverlayPreview.noteEditor(destination: "Chosen", fallbackTitle: folder, text: "experiment\nmore", overlay: .actions(), appendsTo: "Experiment")
+    try require(title(chosen) == "Chosen" && labels(chosen).contains("Add to note") && saveAsNewEnabled(chosen) == false,
+                "A Browse destination must still win over the folder's typed name")
+
+    let editor = NoteEditorPanel()
+    let text = "experiment\nmore"
+    var saved: [String] = [], submitted: [String] = []
+    editor.present(destination: nil, fallbackTitle: folder, isPinned: false, draft: text, handlers: NoteEditorHandlers(
+        onDraft: { _ in }, onSubmit: { submitted.append($0) }, onNew: { _ in }, onOpenAsNote: { _ in },
+        browseItems: { [] }, onBrowse: { _, _ in }, onTogglePin: { false }, onClose: {}, onError: { _ in },
+        existingTitleForText: { $0.hasPrefix("experiment") ? "Experiment" : nil }, onSaveAsNew: { saved.append($0) }))
+    let panel = try currentPanel()
+    try key(36, modifiers: [.command, .option])
+    try await settle()
+    try require(saved == [text] && submitted.isEmpty && !panel.isVisible,
+                "Option-Command-Return in a folder quick note naming an existing note must save as a new note")
 }
 
 /// The outside-session action is available only for a session, and keeps the current editor and draft.
