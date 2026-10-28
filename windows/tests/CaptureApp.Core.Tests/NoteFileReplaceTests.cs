@@ -287,6 +287,49 @@ public sealed class NoteFileReplaceTests
         Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
     }
 
+    [Fact]
+    public void RestoreCountsATargetRecreatedDuringTheMoveAsRestoredAndTheAppendExtendsIt()
+    {
+        using var e = new CheckVault();
+        // No Vault.Prepare(): it queues a background sweep with no MoveHook that could restore the copy mid-test.
+        string Lose(string name)
+        {
+            e.Write(name, "# Note\n\nbefore\n");
+            using (new Hooks())
+            {
+                Assert.Throws<IOException>(() => NoteFile.AtomicWrite("# Note\n\nkept\n"u8.ToArray(), e.Vault.Root, name));
+            }
+            return e.Vault.UrlForRelativePath(name);
+        }
+        string Kept(string name) => Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*-" + Hex(name)));
+
+        var restored = Lose("restore.md");
+        var appended = Lose("append.md");
+        var moves = 0;
+        // An editor recreates the target between the missing-target check and the move; the move then fails.
+        NoteFile.MoveHook.Value = (_, destination) =>
+        {
+            moves++;
+            File.WriteAllText(destination, "# Note\n\nrecreated\n");
+            throw new IOException("exists");
+        };
+        try
+        {
+            Assert.True(NoteFile.RestoreRecovered(e.Vault.Root, restored));
+            var capture = CheckVault.Capture("appended");
+            e.Writer.Append(capture, appended, "Note");
+            Assert.Equal(2, moves);
+            Assert.Equal("# Note\n\nrecreated\n", File.ReadAllText(restored));
+            var text = CheckVault.Read(appended);
+            Assert.StartsWith("# Note\n\nrecreated\n", text, StringComparison.Ordinal);
+            Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
+        }
+        finally { NoteFile.MoveHook.Value = null; }
+        // The recovered copies stay where they were.
+        Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("restore.md")));
+        Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("append.md")));
+    }
+
     private static string Hex(string value) => Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(value));
 
     [Theory]
