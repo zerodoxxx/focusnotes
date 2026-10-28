@@ -27,7 +27,7 @@ public static class Router
             }
 
             var key = NoteTitle.MatchKey(cleaned);
-            if (Unique(notes.Where(n => n.Kind == NoteKind.Note && IsRootNote(n, vault) && NoteTitle.MatchKey(n.Title) == key), NoteKind.Note) is { } rootNote)
+            if (Unique(notes.Where(n => n.Kind == NoteKind.Note && NoteTitle.MatchKey(n.Title) == key && IsRootNote(n, vault)), NoteKind.Note) is { } rootNote)
             {
                 return rootNote;
             }

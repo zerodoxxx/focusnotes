@@ -476,7 +476,9 @@ public sealed class CaptureCoordinator
                 if (held)
                 {
                     log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
-                    if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
+                    // A commit that failed during quit restored the hold after the drain's last implicit commit: save it to its default now.
+                    if (IsTerminating) { _ = CommitPending(); }
+                    else if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
                     else { ShowRetryChoice(capture, Strings.CouldNotSaveToNote); }
                 }
                 else
@@ -840,7 +842,9 @@ public sealed class CaptureCoordinator
 
         if (!current || (IsTerminating && host.PresentsUi)) { return; }
         var binding = host.BindingFor(capture.Trigger);
-        host.ShowStagedToast(new(AppToastStyle.Warning, title, ambiguous ? Strings.CaptureKeptPickByPath(binding) : Strings.CaptureKept(binding), binding, Strings.ChooseNoteHint));
+        // Longer than the 3 s warning default, since the shortcut reopens the picker only while this toast is visible.
+        host.ShowStagedToast(new(AppToastStyle.Warning, title, ambiguous ? Strings.CaptureKeptPickByPath(binding) : Strings.CaptureKept(binding), binding,
+            Strings.ChooseNoteHint, Duration: 6));
     }
 
     /// The picker closed without a choice: a retry-pending capture shows its warning again, any other saves to its default destination.
