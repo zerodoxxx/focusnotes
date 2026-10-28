@@ -320,15 +320,21 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     try require(rStamp == nil, "resolver: generated titles never match")
     // Save as New on a leaf already at the 120-character / 220-byte cap keeps the whole numbered
     // suffix by shortening the base leaf, and never loops on an unchanged path. Mirrors the
-    // Windows LongNoteCollisionTests cases.
+    // Windows LongNoteCollisionTests cases; a hang fails the check after a deadline.
+    func prepareBounded(_ markdown: String, newNote: Bool) async throws -> PreparedCapture {
+        let capture = typed(markdown)
+        return try await checkWithDeadline("Save as New Note never finished choosing a numbered name") {
+            try await service.prepareNote(capture, newNote: newNote, calendar: calendar)
+        }
+    }
     for (leaf, numberedBase) in [
         (String(repeating: "a", count: 120), String(repeating: "a", count: 118)),
         (String(repeating: "計", count: 72) + "abcd", String(repeating: "計", count: 72) + "ab"),
         (String(repeating: "😀", count: 55), String(repeating: "😀", count: 54)),
     ] {
-        let longFirst = try await service.prepareNote(typed("# \(leaf)\nbody"), calendar: calendar)
-        let longSecond = try await service.prepareNote(typed("# \(leaf)\nbody"), newNote: true, calendar: calendar)
-        let longThird = try await service.prepareNote(typed("# \(leaf)\nbody"), newNote: true, calendar: calendar)
+        let longFirst = try await prepareBounded("# \(leaf)\nbody", newNote: false)
+        let longSecond = try await prepareBounded("# \(leaf)\nbody", newNote: true)
+        let longThird = try await prepareBounded("# \(leaf)\nbody", newNote: true)
         try require(longFirst.destination.url.lastPathComponent == leaf + ".md"
                     && longSecond.destination.url.lastPathComponent == numberedBase + " 2.md"
                     && longThird.destination.url.lastPathComponent == numberedBase + " 3.md"
@@ -339,6 +345,18 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
             try require(stem.count <= 120 && stem.utf8.count <= 220, "numbered long names must stay within the name limits")
         }
     }
+    // A path at the 900-byte relative limit also shortens the leaf (the tooLong branch): seven
+    // 120-character folders plus a 53-character leaf leave room for " 2" only after two characters go.
+    let deepFolders = Array(repeating: String(repeating: "d", count: 120), count: 7)
+    let deepName = (deepFolders + [String(repeating: "n", count: 53)]).joined(separator: "/")
+    try require(deepName.utf8.count == 900, "deep-path check must sit exactly at the relative path limit")
+    let deepFirst = try await prepareBounded("# \(deepName)\nbody", newNote: false)
+    let deepSecond = try await prepareBounded("# \(deepName)\nbody", newNote: true)
+    let deepRelative = (deepFolders + [deepSecond.destination.url.deletingPathExtension().lastPathComponent]).joined(separator: "/")
+    try require(deepFirst.destination.url.deletingLastPathComponent() == deepSecond.destination.url.deletingLastPathComponent()
+                && deepSecond.destination.url.lastPathComponent == String(repeating: "n", count: 51) + " 2.md"
+                && deepRelative.utf8.count == 900,
+                "Save as New Note near the path limit must shorten the leaf to keep its suffix within the limit")
     let rNone = try resolver("Pathbox/Nothingthere")
     try require(rNone == nil, "resolver: unmatched path")
     let rInbox = try resolver("Inbox")
@@ -348,4 +366,41 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     try require(inSession.destination.kind == .session && inSession.capture.content == original.content && inSession.createsNote != true,
                 "session typed notes must retain their full body and append destination")
     print("Independent-note checks passed (title table/Unicode, first-line rules, creation/collisions, fixed-path replay, marker identity, title-only search, session routing).")
+}
+
+/// Runs `operation` unstructured and fails with `message` after `seconds`, so a regression that spins
+/// fails the check instead of hanging CoreChecks. A task group would wait for the spinning child.
+private func checkWithDeadline<T: Sendable>(_ message: String, seconds: Double = 5,
+                                            _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    let gate = CheckDeadlineGate<T>()
+    return try await withCheckedThrowingContinuation { continuation in
+        gate.install(continuation)
+        Task {
+            do { gate.finish(.success(try await operation())) }
+            catch { gate.finish(.failure(error)) }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            gate.finish(.failure(CheckFailure.failed(message)))
+        }
+    }
+}
+
+/// Resumes its continuation once, with whichever of the operation or the deadline finishes first.
+private final class CheckDeadlineGate<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+
+    func install(_ continuation: CheckedContinuation<T, Error>) {
+        lock.lock(); defer { lock.unlock() }
+        self.continuation = continuation
+    }
+
+    func finish(_ result: Result<T, Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
+    }
 }
