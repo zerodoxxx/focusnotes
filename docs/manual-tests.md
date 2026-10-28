@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-28 (previous commit: `e2672b2`)
+Last Updated: 2026-10-29 (previous commit: `f041974`)
 
 The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
 from a signed development build. The handlers capture
@@ -48,7 +48,7 @@ Use the same signing identity across rebuilds.
    link is added while capture still succeeds.
 8. **Focus and lifecycle:** For both captures, leave a text cursor active in the
    original app. After capture or Escape, type: input must still reach that app.
-   The capture host must never become active or show a Dock icon. Verify all five
+   The capture host must never become active or show a Dock icon. Verify all ten
    default shortcuts dispatch once to the correct handler. Unregister them and
    confirm dispatch stops. Leave the host idle and inspect Activity Monitor:
    CaptureKit has no polling, timers, event taps, or global NSEvent monitors.
@@ -91,7 +91,8 @@ Run these checks on macOS and Windows, using the menu-bar icon or tray icon resp
 # Folder shortcuts on macOS and Windows
 
 Use a disposable notes folder. On macOS choose **Folder Shortcuts…** from the menu-bar icon. On Windows use
-**Settings… → Folder Shortcuts** or the **Shortcuts** step in Setup. Repeat the cases on both platforms.
+**Settings… → Folder Shortcuts**, the **Shortcuts** step in Setup, or the tray's **Folder Shortcuts → Configure
+Folder Shortcuts…**. Repeat the cases on both platforms.
 
 1. **Recorder and cancellation:** Add a Quick Note shortcut for `Projects/Research`, record an unused combination
    with Command, Option, or Control on macOS, or Ctrl or Alt on Windows, and save. Confirm its displayed combination and action. Start editing the
@@ -350,7 +351,7 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    Open a card, then drag by the band: the card closes and the panel moves. Grow the text
    near the bottom of the screen: the panel shifts up to stay fully visible.
 4. **Actions (⌘K):** A card appears at the top right, under the buttons, with the
-   note text still visible behind it. It lists New Note, Save as New Note,
+   note text still visible behind it. It lists New Note, Write outside session (only during a session), Save as New Note,
    Add to Pinned/Remove from Pinned | Open as Note, Copy as Markdown and Discard Draft (two groups), with one
    keycap box per shortcut key. Inapplicable rows are dimmed and skipped by the
    arrow keys. ⌘K or esc closes the card only; clicking outside it closes it too. Browse is only in the
@@ -409,7 +410,7 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    The isolated quick SelfTest exercises these filesystem failures, both recovery paths and the final toast
    dispatched by the production toast path, using temporary state.
 7. **Open as note (⌘O):** With text, saves like ⌘↩ (session note when a session is
-   active, otherwise a new note) and opens it in the default app. With no text it
+   active, otherwise the note the title names, new or existing) and opens it in the default app. With no text it
    opens the session or chosen note; with neither, a "Nothing to open yet" toast.
 8. **New (⌘N):** With text, saves then opens a blank note. With no text, the panel
    stays open and the chosen destination resets.

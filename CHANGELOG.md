@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `98108ab`)
+Last Updated: 2026-10-29 (previous commit: `f041974`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -13,6 +13,16 @@ All notable changes to focusnotes are recorded here. The format follows
 - Implemented Windows edition: a tray app for Windows 10 22H2 and Windows 11 (x64 and arm64) with the same capture, quick note, session and search features, Windows default shortcuts with rebinding, a first-launch Setup, bundled offline OCR, optional semantic search, and Velopack installs with signed-index updates. Windows x64 and arm64 installers and portable ZIPs first shipped in v0.1.5; the Mac app is unchanged.
 - Selection and area captures can include a separate Markdown `Source` link to the current HTTP(S) address from supported browsers: Safari, Chrome, and Edge on macOS; Chrome and Edge on Windows when their address bar exposes a complete URL.
 - Shared conformance fixtures (`conformance/`) that both the Swift reference and the Windows port must pass; regenerate with `swift run CoreChecks --write-conformance`.
+- Folder paths in note names: a quick-note title such as `science/math/trigonometry` saves in that folder inside the notes folder, and a leading `/` (`/Desktop/ideas`) saves relative to your home folder. Missing folders are created. Notes saved in your home folder this way are tracked for search and file changes; the home folder itself is never scanned.
+- Writing outside a session: **Write outside session** in the quick note (⇧⌘N; Ctrl+Shift+N on Windows) and **Quick-note Outside Session** (⌃⇧N; Ctrl+Shift+W) save a one-off note elsewhere, and **Capture Selection/Area Outside Session…** (⌃⇧C and ⌃⇧S; Ctrl+Shift+Q and Ctrl+Shift+G) open **Add to note…** immediately, where Escape saves to Inbox. The active session keeps running, and the menu-bar and tray commands work even when these shortcuts are unavailable.
+- Folder shortcuts: up to 20 global shortcuts that open a quick note in a chosen folder or start or resume a session in `Sessions/<folder>/`. Set them up in **Folder Shortcuts…** on macOS, or in **Settings… → Folder Shortcuts**, Setup or the tray's **Folder Shortcuts** submenu on Windows.
+- **Choose Notes Folder…** in the menu-bar and tray menus, at first launch on macOS, and in Setup and **Settings… → General** on Windows. The folder must be writable, and a change applies after a restart (a folder chosen at first launch on macOS is used immediately). Each notes folder keeps its own sessions, drafts, pending saves, pins, folder shortcuts and search index; settings and downloaded models are shared. Existing notes are not moved.
+- Renaming a session from the duplicate-session picker: ⌘↩ (Ctrl+Enter on Windows) renames the highlighted session's file and title heading in place and resumes it. Pins, pending captures and search follow the new path.
+
+### Changed
+
+- A quick note whose title names an existing note at that exact path (or `Inbox`) now appends to it instead of creating `Title 2.md`, and the toast says "Note added". **Save as New Note** (⌥⌘↩; Ctrl+Alt+Enter on Windows) still creates a numbered note, and the editor footer says **Add to note** when a save will append.
+- The **Write a Note…** menu and tray command is now called **Quick-note**.
 
 ### Fixed
 
@@ -36,6 +46,7 @@ All notable changes to focusnotes are recorded here. The format follows
 - Windows: an antivirus scanner or indexer briefly holding a just-staged capture's journal record no longer fails the save with "Couldn't save capture"; state-file replaces and journal-record deletes retry for up to 10 seconds.
 - Windows: when a note replace removes the note and cannot put the new copy back, the kept `.recovered-` copy is restored (never over an existing file) by the startup sweep (vault roots only), the next note append, or session rename recovery, and the event is written to the app log. Copies of state files (`session.json`, the external-note registry) are kept for manual recovery only. Very long note names and case-only mismatches are not auto-restored.
 - Windows: a capture whose chosen note title could not be prepared (for example `..` or `CON`) was saved to Inbox or the session anyway while the toast said “Couldn't save capture”, and retrying duplicated it. It now stays pending and the toast says “Couldn't save to that note” with “Capture kept”. No toast, search or session change saves it to the default destination. The capture shortcut or Escape on the picker brings the choice back, a newer capture first saves it to its default with a notice, and quitting saves it there.
+- macOS: a capture title now matches notes directly under the vault root, then sessions, instead of the first matching note in any folder or in your home folder. **Behaviour change:** a bare title that matches only a nested or home note now creates a root note; use the note's path (`archive/ideas`, `/Desktop/ideas`) or pick it in the title picker, which now saves to exactly the note picked. When several notes in a tier share the title, a chooser lists their paths instead of the first one being used.
 - Windows: a capture title now matches notes directly under the vault root, then sessions, as on the Mac, instead of the first match at any depth. **Behaviour change:** a bare title that matches only a nested or HOME note no longer reaches it and creates a root note; use the note's path (`archive/ideas`, `/Desktop/ideas`) or pick it from the title picker. Several matches in a tier no longer silently take the first: the capture is kept and a toast asks for a path. `pros / cons`, `TODO/` and URLs keep a flat file name instead of failing or nesting.
 - Windows: the title picker saves a picked suggestion to that exact note and shows the path for nested, HOME and same-titled notes, so notes sharing a heading (such as `Biology.md` and `Biology 2.md`) can each be chosen.
 - Windows: starting, ending, resuming or renaming a session, a folder session shortcut and a subheading now wait for a capture still being acquired, so it can't be saved to Inbox or the next session after the session changes.

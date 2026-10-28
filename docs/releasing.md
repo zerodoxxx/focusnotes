@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-23 (previous commit: `3af31ff`)
+Last Updated: 2026-10-23 (previous commit: `1aaa52c`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or

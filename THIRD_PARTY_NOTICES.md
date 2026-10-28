@@ -1,6 +1,6 @@
 # Third-party notices
 
-Last Updated: 2026-10-20 (previous commit: `80fd7b0`)
+Last Updated: 2026-10-20 (previous commit: `a18015f`)
 
 This file records third-party components included in the source tree or
 shipped with the app, and models obtained by the optional semantic-search

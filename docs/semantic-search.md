@@ -117,9 +117,10 @@ and exits 60 seconds after its last response; opening search sends a background
 At launch and each status-menu refresh, cheap file-existence checks look for the
 two text graph files, two vision graph files, tokenizer, processor config and
 runtime dylib in `~/Library/Application Support/<bundle identifier>/models/`.
-The disabled info item under Permissions shows **Semantic search: On** or
-**Semantic search: Off (models not installed)**. Users install models from the
-**Enable Semantic Search…** menu item, after a consent dialog
+When every file is present the menu shows a checked **Semantic Search** item;
+otherwise it shows **Enable Semantic Search…** (**Resume Semantic Search…** after
+a partial download, **Downloading Models… n%** while downloading). Users install
+models from that item, after a consent dialog
 that names the download hosts and licenses. Downloads are staged beside the
 models folder and move into place only after every file verifies. The same menu
 offers **Semantic Search → Remove Models…**. Developers can instead run
@@ -137,7 +138,7 @@ commits, launch sync, watcher-driven sync and OCR backfill request a run, deboun
 two seconds after the last request. One job runs at a time; a request arriving
 during a job schedules another reconciliation. Captures and the main actor never
 wait for embeddings. `vectors.sqlite` is separate from the keyword cache, in the
-app's state directory. Its keys are `<vault-relative note path>#<capture UUID>`
+current notes folder's state directory (models are shared across folders). Its keys are `<vault-relative note path>#<capture UUID>`
 (lowercase UUID), or `<path>#loose-<zero-based parser ordinal>` for loose blocks.
 Each run compares the current blocks with compatible vector keys, embeds missing
 keys and prunes deleted ones. Existing keys are reused; edits to an existing
