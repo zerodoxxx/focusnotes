@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `86ffe3f`)
+Last Updated: 2026-10-28 (previous commit: `265176e`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -35,6 +35,11 @@ All notable changes to focusnotes are recorded here. The format follows
 - Windows: note titles, chosen-note names and session names containing `:` (for example `TODO: call Bob`, `Re: budget` or `Standup: Q3`) no longer fail with a reserved-name error. They are saved with `-`, as on the Mac, and match an existing note's heading. `?`, `*`, `"`, `<`, `>` and `|`, which Windows can't store in a file name, are also saved as `-`; the title keeps the typed characters. Device names, trailing periods and drive paths such as `C:\Notes\a` are still rejected.
 - Windows: an antivirus scanner or indexer briefly holding a just-staged capture's journal record no longer fails the save with "Couldn't save capture"; state-file replaces and journal-record deletes retry for up to 10 seconds.
 - Windows: when a note replace removes the note and cannot put the new copy back, the kept `.recovered-` copy is restored (never over an existing file) by the startup sweep (vault roots only), the next note append, or session rename recovery, and the event is written to the app log. Copies of state files (`session.json`, the external-note registry) are kept for manual recovery only. Very long note names and case-only mismatches are not auto-restored.
+- Windows: a capture whose chosen note title could not be prepared (for example `TODO/`, `a//b`, a URL, `..` or `CON`) was saved to Inbox or the session anyway while the toast said “Couldn't save capture” and “this note was not saved”, and retrying duplicated it. It now stays pending and the toast says “Couldn't save to that note” with “Capture kept”. No toast, search or session change saves it to the default destination. The capture shortcut or Escape on the picker brings the choice back, a newer capture first saves it to its default with a notice, and quitting saves it there.
+- Windows: a capture title now matches notes directly under the vault root, then sessions, as on the Mac, instead of the first match at any depth. **Behaviour change:** a bare title that matches only a nested or HOME note no longer reaches it and creates a root note; use the note's path (`archive/ideas`, `/Desktop/ideas`) or pick it from the title picker. Several matches in a tier no longer silently take the first: the capture is kept and a toast asks for a path. `pros / cons`, `TODO/` and URLs keep a flat file name instead of failing or nesting.
+- Windows: the title picker saves a picked suggestion to that exact note and shows the path for nested, HOME and same-titled notes, so notes sharing a heading (such as `Biology.md` and `Biology 2.md`) can each be chosen.
+- Windows: starting, ending, resuming or renaming a session, a folder session shortcut and a subheading now wait for a capture still being acquired, so it can't be saved to Inbox or the next session after the session changes.
+- Windows: retyping a subheading that failed to save no longer writes it twice when the app quits.
 
 ## [0.1.0] - Unreleased
 

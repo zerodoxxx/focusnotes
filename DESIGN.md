@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-10-28 (previous commit: `69e5fba`)
+Last Updated: 2026-10-28 (previous commit: `c8a4ec0`)
 
 ## Product surfaces
 
@@ -148,3 +148,4 @@ Each difference below is intentional, has a cited platform cause, and is checked
 | DV9 | Ctrl for ⌘, File Explorer for Finder, tray for menu bar. | Wording and keys only. |
 | DV10 | ONNX Runtime ships in the installer, so the semantic opt-in downloads only models. | Larger installer, smaller opt-in. |
 | DV11 | Additions with no Mac counterpart: Setup, Settings, start at login, single instance, log files, update-key rotation. | New windows and settings. |
+| DV12 | No several-notes chooser panel. A title matching several notes keeps the capture pending, with a toast naming the title and asking for a path; the capture shortcut reopens the title picker. | The picker shows nested, HOME and same-titled notes with their path or file name, and a picked suggestion saves to that exact note. |
