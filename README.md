@@ -75,8 +75,10 @@ current session unchanged.
 
 A folder quick note saves in its configured folder even while another session is active. An explicit
 Browse destination takes precedence over the folder, and the folder takes precedence over the active
-session. Closing the editor keeps its folder with the draft, including across relaunches. Missing folders
-are recreated when saving. Shortcuts bind to paths: renaming a folder outside the app does not update
+session. The blank editor is titled with its folder; the typed name then picks a note inside that folder,
+so the footer shows **Add to note** for an existing note there and **Save as New Note** makes a numbered
+copy in the folder. Closing the editor keeps its folder with the draft, including across relaunches.
+Missing folders are recreated when saving. Shortcuts bind to paths: renaming a folder outside the app does not update
 its shortcut. Folder shortcut settings belong to each selected notes folder.
 
 ## Install

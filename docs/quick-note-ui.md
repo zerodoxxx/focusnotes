@@ -46,7 +46,9 @@ whose value is the title. When pinned, a 10pt medium `pin.fill` appears before i
 reveal alpha, and together respect the button clusters and title truncation.
 
 Text rule: the destination title when a destination is set (session or chosen note); otherwise, once the
-text is non-blank, the title the note will be saved under; otherwise "New note". The saved-under title
+text is non-blank, the title the note will be saved under (an existing note's title when the typed name
+resolves to one); otherwise "Folder: <folder>" for a folder quick note, else "New note". A folder is not a
+destination: it only titles the blank editor, and the typed name resolves inside it. The saved-under title
 comes from the host through `NoteEditorHandlers.titleForText` (the app passes `TypedNote(...).title`;
 OverlayKit's default is the first non-blank line with leading Markdown markers stripped, cut at 60 characters).
 It is recomputed on every text change (head of the note only) and on `setDestination`.
@@ -67,8 +69,9 @@ It is recomputed on every text change (head of the note only) and on `setDestina
 
 ### Footer
 Keycap hints only (existing `KeycapView`): `⌘↩ <save caption>`, `⌘K Actions`, `esc Close`.
-Save caption: **"Add to note"** when a destination is set, **"Create note"** otherwise (the title line
-already names the note, so the footer no longer repeats it).
+Save caption: **"Add to note"** when a destination is set or the typed name resolves to an existing note
+(inside the folder for a folder quick note), **"Create note"** otherwise (the title line already names the
+note, so the footer no longer repeats it).
 Trailing, quiet: "Draft kept" when a draft was restored. Opening Browse keeps these normal note hints.
 The Browse controls appear inside the floating card so they remain visible when it covers the note footer.
 
@@ -147,7 +150,7 @@ medium glyph, 3pt apart, 12pt from the card's right edge). Two groups divided by
 | --- | --- | --- | --- |
 | 1 | New Note | ⌘N | Saves the current text, then opens a blank note. With empty text it clears the chosen destination and restores session routing. |
 | 1 | Write outside session | ⇧⌘N | Shown only with an active session. Toggles standalone routing for this note; choosing it again restores the session destination. |
-| 1 | Save as New Note | ⌥⌘↩ | Creates a numbered note when a standalone title names an existing note, including while writing outside a session. Disabled for an explicit Browse or session destination. |
+| 1 | Save as New Note | ⌥⌘↩ | Creates a numbered note when a standalone title names an existing note, including while writing outside a session and in a folder quick note (numbered in that folder). Disabled for an explicit Browse or session destination. |
 | 1 | Add to Pinned / Remove from Pinned | ⇧⌘P | Adds/removes a note in Browse’s Pinned section. This does not control the window. For an unsaved draft, the intent persists with the draft and pins its created note on save. |
 | 2 | Open as Note | ⌘O | The maximise action (see §6). |
 | 2 | Copy as Markdown | ⇧⌘C | Copies the text. |

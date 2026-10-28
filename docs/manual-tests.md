@@ -107,8 +107,10 @@ Use a disposable notes folder. On macOS choose **Folder Shortcuts…** from the 
    unavailable shortcut is reported; remove the conflict and retry registration.
 4. **Folder quick note and active session:** Start an ordinary session, invoke the folder Quick Note shortcut,
    type a fresh title and body, and save. Confirm the note lands in `Projects/Research/`, the active session note
-   is untouched, and the session remains active. Repeat with Browse selecting a note elsewhere; that explicit
-   destination must win. A subsequent normal capture should still use the active session.
+   is untouched, and the session remains active. The blank editor's title reads `Folder: Projects/Research`;
+   typing the existing note's name must switch the title to that note and the footer to Add to note, and
+   Save as New Note must create a numbered note in `Projects/Research/`. Repeat with Browse selecting a note
+   elsewhere; that explicit destination must win. A subsequent normal capture should still use the active session.
 5. **Durable draft:** Invoke the folder shortcut, type text, toggle pin-on-save, and close with Escape. Relaunch
    and restore the draft; its folder and pin intent must survive and save to the configured folder. Repeat after
    rapid typing and immediate dismissal. Save or discard the draft, open an ordinary quick note, and confirm it
