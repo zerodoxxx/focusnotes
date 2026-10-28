@@ -1,6 +1,6 @@
 # CaptureKit manual checks
 
-Last Updated: 2026-10-27 (previous commit: `444087a`)
+Last Updated: 2026-10-28 (previous commit: `ed1551e`)
 
 The macOS app wires CaptureKit into its Carbon hotkey handlers. Run these checks
 from a signed development build. The handlers capture
@@ -478,6 +478,12 @@ target, build and result for each item.
     capture should still save without the link. In an unsupported app (including
     Firefox), with a localized control name, while the address field is focused,
     or on a `file:`/`about:` page, capture should also save without the Source link.
+12. **Duplicate heading (capture title):** Create root notes `Biology.md` and `Biology 2.md` and `Archive/Biology.md`,
+    all headed `# Biology`. Capture a selection, press its capture shortcut on the toast, and submit `Biology`: the
+    toast says `Several notes are titled "Biology"` with "Capture kept", and no note or Inbox changes. Press the
+    capture shortcut while that toast shows: the picker lists all three with their file names or paths. Pick
+    `Biology 2.md`: only that file changes, once. Repeat with `Biology.md` and `Archive/Biology`. Esc in the picker
+    keeps the capture and shows the warning again; quitting with the capture kept saves it to its staged default (Inbox without a session).
 
 ## 11b Native x64 (Windows 11 and Windows 10 22H2)
 
@@ -532,5 +538,5 @@ captures.
 
 ## 11g Sign-offs
 
-The maintainer reviews and signs off deviations DV1-DV11 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
+The maintainer reviews and signs off deviations DV1-DV12 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
