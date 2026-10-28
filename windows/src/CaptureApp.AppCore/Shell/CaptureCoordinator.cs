@@ -6,6 +6,25 @@ namespace CaptureApp.AppCore.Shell;
 
 /// The UI-free half of AppController.swift: staging, ordered commits, journaling, notes, sessions and the
 /// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
+/// Title picker values by suggestion, and the exact note each value stands for.
+public sealed class TitlePicks
+{
+    private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Destination> destinations = new(StringComparer.Ordinal);
+
+    internal void Add(NoteSuggestion suggestion, string value, Destination destination)
+    {
+        values[suggestion.Path] = value;
+        destinations[value] = destination;
+    }
+
+    /// The value to submit for a suggestion, or null when its bare title already routes to it.
+    public string? ValueOf(NoteSuggestion suggestion) => values.GetValueOrDefault(suggestion.Path);
+
+    /// The note a submitted value was offered for; null for typed text, which is routed by title.
+    public Destination? DestinationOf(string value) => destinations.GetValueOrDefault(value);
+}
+
 public sealed class CaptureCoordinator
 {
     private sealed record Staged(Guid Id, Task<CaptureJob> Preparation, Task Persistence);
@@ -339,9 +358,10 @@ public sealed class CaptureCoordinator
         host.DismissStagedToast();
     }
 
-    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an explicit title,
-    /// shutdown, or a newer capture staged in <see cref="StageAsync"/> (force) may save it.
-    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false)
+    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an explicit title or
+    /// destination, shutdown, or a newer capture staged in <see cref="StageAsync"/> (force) may save it. A picked
+    /// destination is saved without routing, if its note still exists.
+    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false, Destination? destination = null)
     {
         PendingCapture capture;
         Staged? stagedJob;
@@ -352,7 +372,7 @@ public sealed class CaptureCoordinator
         lock (gate)
         {
             if (pending is null) { return null; }
-            if (pendingNeedsRetryChoice && !force && noteTitle is null && !isTerminating) { return null; }
+            if (pendingNeedsRetryChoice && !force && noteTitle is null && destination is null && !isTerminating) { return null; }
             capture = pending;
             pending = null;
             pendingToastId = null;
@@ -371,11 +391,16 @@ public sealed class CaptureCoordinator
         // Only shutdown's acquired-pixel fallback forces its original destination.
         var preparation = Task.Run(async () =>
         {
-            Destination? destination;
-            if (recovery is not null) { destination = (await TryResult(recovery).ConfigureAwait(false))?.Prepared.Destination; }
-            else if (noteTitle is null) { destination = (await TryResult(stagedJob?.Preparation).ConfigureAwait(false))?.Prepared.Destination; }
-            else { destination = null; }
-            return Prepare(capture, noteTitle, destination);
+            Destination? resolved;
+            if (recovery is not null) { resolved = (await TryResult(recovery).ConfigureAwait(false))?.Prepared.Destination; }
+            else if (destination is not null)
+            {
+                // A note removed since the picker opened fails here and keeps the capture.
+                resolved = destination with { Url = Pipeline.Vault.NoteLocation(Pipeline.Vault.NoteId(destination.Url)).Url };
+            }
+            else if (noteTitle is null) { resolved = (await TryResult(stagedJob?.Preparation).ConfigureAwait(false))?.Prepared.Destination; }
+            else { resolved = null; }
+            return Prepare(capture, noteTitle, resolved);
         });
         int generation;
         Task<SavedCapture> task;
@@ -396,13 +421,13 @@ public sealed class CaptureCoordinator
             generation = ++commitGeneration;
         }
 
-        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle, announce, generation);
+        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle is not null || destination is not null, announce, generation);
         lock (gate) { commitMonitor = monitor; }
         return task;
     }
 
     private async Task ObserveCommitAsync(Task<SavedCapture> task, Task<CaptureJob> preparation, PendingCapture capture,
-        Staged? stagedJob, string? noteTitle, bool announce, int generation)
+        Staged? stagedJob, bool explicitTarget, bool announce, int generation)
     {
         try
         {
@@ -425,7 +450,7 @@ public sealed class CaptureCoordinator
         }
         catch (Exception error)
         {
-            if (noteTitle is not null && preparation.IsFaulted && stagedJob is not null)
+            if (explicitTarget && preparation.IsFaulted && stagedJob is not null)
             {
                 // The capture is not lost: keep it pending for another note, or leave it to recovery if a newer one took its place.
                 bool held;
@@ -650,9 +675,9 @@ public sealed class CaptureCoordinator
         }
     });
 
-    /// Picker values for suggestions a bare title would not route to exactly, keyed by suggestion path. Bare titles
-    /// match root notes first, then sessions, so nested, HOME and same-titled notes are picked by their explicit path.
-    public IReadOnlyDictionary<string, string> ExplicitTitlePaths(IReadOnlyList<NoteSuggestion> suggestions)
+    /// What the title picker offers. Bare titles match root notes first, then sessions, so nested, HOME, shadowed and
+    /// same-titled notes get a value of their own, tied to their exact destination (which commits without routing).
+    public TitlePicks PickerChoices(IReadOnlyList<NoteSuggestion> suggestions)
     {
         var vault = Pipeline.Vault;
         var rules = vault.NamingRules;
@@ -660,8 +685,7 @@ public sealed class CaptureCoordinator
         static bool IsRoot(NoteSuggestion s) => s.Kind == NoteKind.Note && !IsHome(s) && !s.Path.Contains('/');
         var roots = suggestions.Where(IsRoot).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
         var sessions = suggestions.Where(s => s.Kind == NoteKind.Session).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
-        var inboxKey = NoteTitle.MatchKey(Vault.InboxTitle);
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var picks = new TitlePicks();
         foreach (var suggestion in suggestions)
         {
             var key = NoteTitle.MatchKey(suggestion.Title);
@@ -675,22 +699,31 @@ public sealed class CaptureCoordinator
             try
             {
                 var home = IsHome(suggestion);
-                var relative = home ? Vault.RelativeUnder(Vault.DecodeFilePath(suggestion.Path), vault.HomeRoot) : suggestion.Path;
+                var url = home ? Vault.DecodeFilePath(suggestion.Path) : vault.UrlForRelativePath(suggestion.Path);
+                var relative = home ? Vault.RelativeUnder(url, vault.HomeRoot) : suggestion.Path;
                 if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
-                var stem = relative[..^3];
-                var candidate = home ? "/" + stem : stem;
-                var name = NoteTitle.PathName(candidate, rules);
-                if (!string.Equals(name.RelativePath, stem, StringComparison.OrdinalIgnoreCase)) { continue; }
-                // A root note's own name is a bare title again: it must not match another note's heading.
-                var stemKey = NoteTitle.MatchKey(stem);
-                if (name.Components.Count == 1 && name.Scope == NotePathScope.Vault
-                    && (roots.ContainsKey(stemKey) || sessions.ContainsKey(stemKey) || stemKey == inboxKey)) { continue; }
-                result[suggestion.Path] = candidate;
+                // The file name with .md never matches a heading, so it is unique and cannot be a bare title. Nested, HOME and
+                // session notes use their extensionless path instead when the Router resolves it to the same name.
+                var value = home ? "/" + relative : relative;
+                if (!IsRoot(suggestion))
+                {
+                    var stem = relative[..^3];
+                    var path = home ? "/" + stem : stem;
+                    if (RoundTrips(path, stem, rules)) { value = path; }
+                }
+
+                picks.Add(suggestion, value, new Destination(url, suggestion.Title, suggestion.Kind));
             }
             catch (Exception error) when (error is ArgumentException or VaultFileException) { }
         }
 
-        return result;
+        return picks;
+    }
+
+    private static bool RoundTrips(string path, string stem, VaultNamingRules rules)
+    {
+        try { return string.Equals(NoteTitle.PathName(path, rules).RelativePath, stem, StringComparison.OrdinalIgnoreCase); }
+        catch (NotePathNameException) { return false; }
     }
 
     // Sessions.

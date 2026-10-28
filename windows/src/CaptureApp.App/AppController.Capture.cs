@@ -123,11 +123,16 @@ internal sealed partial class AppController
             if (c.Pending?.Id != id) { return; }
             var suggestions = await c.SuggestionSnapshotAsync(false);
             if (c.Pending?.Id != id || c.IsTerminating) { return; }
-            // Bare titles match root notes only, so nested, HOME and same-titled notes are picked by their explicit path.
-            var paths = c.ExplicitTitlePaths(suggestions);
+            // Bare titles match root notes only, so other and same-titled notes are picked by value and saved to that exact note.
+            var picks = c.PickerChoices(suggestions);
             PresentInput(Strings.AddToNotePlaceholder, suggestions: suggestions,
-                suggestionValue: s => paths.GetValueOrDefault(s.Path), suggestionPath: s => paths.GetValueOrDefault(s.Path),
-                onAccept: title => { if (c.Pending?.Id == id) { _ = c.CommitPending(title, true); } },
+                suggestionValue: picks.ValueOf, suggestionPath: picks.ValueOf,
+                onAccept: text =>
+                {
+                    if (c.Pending?.Id != id) { return; }
+                    if (picks.DestinationOf(text) is { } destination) { _ = c.CommitPending(destination: destination, announce: true); }
+                    else { _ = c.CommitPending(text, true); }
+                },
                 onSubmit: _ => { },
                 onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { c.SettleUnchosenCapture(id, pending.OutsideSession); } });
         });
