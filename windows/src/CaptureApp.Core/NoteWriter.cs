@@ -130,7 +130,12 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             lock (NoteFile.Gate(target))
             {
                 // A replace that lost the note leaves a hidden copy; put it back so the append extends the old note.
-                NoteFile.RestoreRecovered(location.Root, target);
+                // If it cannot be put back yet, fail so the capture is retried instead of starting a fresh note.
+                if (!NoteFile.RestoreRecovered(location.Root, target))
+                {
+                    throw new VaultFileException(VaultFileError.Unavailable, $"The recovered copy of {Path.GetFileName(target)} could not be restored yet.");
+                }
+
                 if (savedMarker is not null)
                 {
                     NoteFile.Create(NoteFile.Utf8.GetBytes(header + block), location.Root, location.RelativePath);

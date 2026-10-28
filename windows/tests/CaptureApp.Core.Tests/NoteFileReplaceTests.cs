@@ -257,6 +257,36 @@ public sealed class NoteFileReplaceTests
         Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
     }
 
+    [Fact]
+    public void AppendFailsWhileTheRecoveredNoteCannotBeRestoredAndExtendsItOnRetry()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        e.Write("Note.md", "# Note\n\nbefore\n");
+        using (new Hooks())
+        {
+            Assert.Throws<IOException>(() => NoteFile.AtomicWrite("# Note\n\nkept\n"u8.ToArray(), e.Vault.Root, "Note.md"));
+        }
+        var path = e.Vault.UrlForRelativePath("Note.md");
+        var recovered = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+        var capture = CheckVault.Capture("appended");
+        NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+        try
+        {
+            var error = Assert.Throws<VaultFileException>(() => e.Writer.Append(capture, path, "Note"));
+            Assert.Contains("Note.md", error.Message, StringComparison.Ordinal);
+        }
+        finally { NoteFile.MoveHook.Value = null; }
+        // No fresh note was created and the hidden history is untouched.
+        Assert.False(File.Exists(path));
+        Assert.Equal("# Note\n\nkept\n", File.ReadAllText(recovered));
+        e.Writer.Append(capture, path, "Note");
+        var text = CheckVault.Read(path);
+        Assert.StartsWith("# Note\n\nkept\n", text, StringComparison.Ordinal);
+        Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
+        Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+    }
+
     private static string Hex(string value) => Convert.ToHexStringLower(System.Text.Encoding.UTF8.GetBytes(value));
 
     [Theory]

@@ -170,29 +170,32 @@ public static partial class NoteFile
 
     // Moves the newest ".recovered-" copy of a missing target back into place; never overwrites. Older copies
     // are renamed to the plain, non-restorable name (never deleted). Call under no lock; it takes the target's gate.
-    internal static void RestoreRecovered(string root, string target)
+    // Returns false only when a restorable copy exists but could not be moved back, so a caller that writes must
+    // not start a fresh note; every other outcome, including "nothing to restore", returns true.
+    internal static bool RestoreRecovered(string root, string target)
     {
         var targetName = Path.GetFileName(target);
         var directory = Path.GetDirectoryName(target)!;
         string safe;
         try { safe = SafePath(root, Path.GetRelativePath(root, target).Replace(Path.DirectorySeparatorChar, '/')); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return; }
-        if (!string.Equals(safe, target, StringComparison.Ordinal) || !ValidTargetName(targetName)) { return; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
+        if (!string.Equals(safe, target, StringComparison.Ordinal) || !ValidTargetName(targetName)) { return true; }
         lock (Gate(safe))
         {
-            if (FileMetadata.At(safe) is not null) { return; }
+            if (FileMetadata.At(safe) is not null) { return true; }
             var candidates = RecoveredCandidates(directory, targetName);
-            if (candidates is null || candidates.Count == 0) { return; }
+            if (candidates is null || candidates.Count == 0) { return true; }
             // Only the newest copy is ever restored; if that move fails, keep everything for a later attempt.
             try { (MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(candidates[0], safe); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 Report($"Could not restore {targetName} from {candidates[0]}: {error}");
-                return;
+                return false;
             }
 
             Report($"Restored {targetName} from {candidates[0]}");
             Retire(directory, candidates.Skip(1));
+            return true;
         }
     }
 
