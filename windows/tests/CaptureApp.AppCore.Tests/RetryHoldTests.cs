@@ -47,6 +47,32 @@ public sealed class RetryHoldTests
     }
 
     [Fact]
+    public async Task AmbiguousTitleKeepsTheCaptureAndAnExplicitNameSavesIt()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var host = new HeadlessCaptureHost();
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        File.WriteAllText(Path.Combine(pipeline.Vault.Root, "Ideas.md"), "# Ideas\n");
+        File.WriteAllText(Path.Combine(pipeline.Vault.Root, "Ideas 2.md"), "# Ideas\n");
+        var inboxBefore = File.ReadAllText(pipeline.Vault.InboxUrl);
+        var capture = PendingCaptures.Selection(Needle, new());
+        await coordinator.StageAsync(capture);
+        await HoldAsync(coordinator, host, capture, " ideas ", Strings.SeveralNotesTitled("Ideas"));
+
+        var warning = Assert.Single(Toasts(host), toast => toast.Title == Strings.SeveralNotesTitled("Ideas"));
+        Assert.Contains("pick one by its path", warning.Subtitle, StringComparison.Ordinal);
+        Assert.Equal(inboxBefore, File.ReadAllText(pipeline.Vault.InboxUrl));
+        Assert.Equal(capture.Id, coordinator.Pending?.Id);
+
+        var saved = await coordinator.CommitPending("Ideas 2", true)!;
+        Assert.Equal(Path.Combine(pipeline.Vault.Root, "Ideas 2.md"), saved.Destination.Url);
+        Assert.Single(Regex.Matches(File.ReadAllText(saved.Destination.Url), Regex.Escape(Needle)));
+        Assert.DoesNotContain(Needle, File.ReadAllText(Path.Combine(pipeline.Vault.Root, "Ideas.md")), StringComparison.Ordinal);
+        Assert.Equal(inboxBefore, File.ReadAllText(pipeline.Vault.InboxUrl));
+    }
+
+    [Fact]
     public async Task EscapeKeepsAHeldCaptureAndShowsItsWarningAgain()
     {
         using var temp = new TempDirectory();
@@ -108,11 +134,12 @@ public sealed class RetryHoldTests
         Assert.DoesNotContain("newer capture", File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
     }
 
-    private static async Task HoldAsync(CaptureCoordinator coordinator, HeadlessCaptureHost host, PendingCapture capture, string title)
+    private static async Task HoldAsync(CaptureCoordinator coordinator, HeadlessCaptureHost host, PendingCapture capture, string title,
+        string warning = Strings.CouldNotSaveToNote)
     {
         var commit = coordinator.CommitPending(title, true) ?? throw new InvalidOperationException("Capture was not pending.");
         await Assert.ThrowsAnyAsync<Exception>(() => commit);
-        await WaitUntil(() => coordinator.PendingWithRetryWarning?.Id == capture.Id && Toasts(host).Any(toast => toast.Title == Strings.CouldNotSaveToNote));
+        await WaitUntil(() => coordinator.PendingWithRetryWarning?.Id == capture.Id && Toasts(host).Any(toast => toast.Title == warning));
     }
 
     private static AppToast[] Toasts(HeadlessCaptureHost host)

@@ -1,0 +1,55 @@
+{
+  "area" : "router",
+  "description" : "Malformed or whitespace-qualified slash forms keep the flat file name instead of failing or nesting.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "pros - cons.md",
+        "title" : "pros / cons"
+      },
+      {
+        "kind" : "note",
+        "path" : "TODO-.md",
+        "title" : "TODO/"
+      },
+      {
+        "kind" : "note",
+        "path" : "a--b.md",
+        "title" : "a//b"
+      },
+      {
+        "error" : "invalidComponent"
+      }
+    ]
+  },
+  "id" : "flat-name-fallback",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "pros / cons"
+      },
+      {
+        "op" : "route",
+        "title" : "TODO/"
+      },
+      {
+        "op" : "route",
+        "title" : "a//b"
+      },
+      {
+        "op" : "route",
+        "title" : "science/../escape"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -123,7 +123,10 @@ internal sealed partial class AppController
             if (c.Pending?.Id != id) { return; }
             var suggestions = await c.SuggestionSnapshotAsync(false);
             if (c.Pending?.Id != id || c.IsTerminating) { return; }
+            // Bare titles match root notes only, so nested, HOME and same-titled notes are picked by their explicit path.
+            var paths = c.ExplicitTitlePaths(suggestions);
             PresentInput(Strings.AddToNotePlaceholder, suggestions: suggestions,
+                suggestionValue: s => paths.GetValueOrDefault(s.Path), suggestionPath: s => paths.GetValueOrDefault(s.Path),
                 onAccept: title => { if (c.Pending?.Id == id) { _ = c.CommitPending(title, true); } },
                 onSubmit: _ => { },
                 onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { c.SettleUnchosenCapture(id, pending.OutsideSession); } });
@@ -132,7 +135,7 @@ internal sealed partial class AppController
 
     private void PresentInput(string placeholder, string? title = null, string? secondary = null,
         IReadOnlyList<NoteSuggestion>? suggestions = null, Action<string>? onAccept = null, Action<string>? onSubmit = null, Action? onCancel = null,
-        Func<NoteSuggestion, string?>? suggestionValue = null)
+        Func<NoteSuggestion, string?>? suggestionValue = null, Func<NoteSuggestion, string?>? suggestionPath = null)
     {
         if (Coordinator.IsTerminating) { return; }
         var list = suggestions ?? [];
@@ -146,7 +149,7 @@ internal sealed partial class AppController
                 .Select(s =>
                 {
                     var session = s.Kind == NoteKind.Session;
-                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
+                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone, suggestionPath?.Invoke(s)), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
                 }).ToArray();
         }, text => { InputClosed(); onSubmit?.Invoke(text); }, () => { InputClosed(); onCancel?.Invoke(); },
             Title: title, Secondary: secondary, OnAccept: onAccept));

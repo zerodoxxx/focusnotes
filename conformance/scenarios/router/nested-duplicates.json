@@ -1,0 +1,50 @@
+{
+  "area" : "router",
+  "description" : "A bare title never matches nested notes, even duplicates, so it creates a root note; explicit paths still reach each one.",
+  "expected" : {
+    "files" : {
+      "Archive/Ideas.md" : "# Ideas\n",
+      "Archive/More/Ideas.md" : "# Ideas\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Ideas.md",
+        "title" : "Ideas"
+      },
+      {
+        "kind" : "note",
+        "path" : "Archive/Ideas.md",
+        "title" : "Ideas"
+      },
+      {
+        "kind" : "note",
+        "path" : "Archive/More/Ideas.md",
+        "title" : "Ideas"
+      }
+    ]
+  },
+  "id" : "nested-duplicates",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Archive/Ideas.md" : "# Ideas\n",
+      "Archive/More/Ideas.md" : "# Ideas\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "Ideas"
+      },
+      {
+        "op" : "route",
+        "title" : "Archive/Ideas"
+      },
+      {
+        "op" : "route",
+        "title" : "Archive/More/Ideas"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

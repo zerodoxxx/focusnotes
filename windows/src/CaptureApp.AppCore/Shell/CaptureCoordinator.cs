@@ -446,7 +446,8 @@ public sealed class CaptureCoordinator
                 if (held)
                 {
                     log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
-                    ShowRetryChoice(capture, Strings.CouldNotSaveToNote);
+                    if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
+                    else { ShowRetryChoice(capture, Strings.CouldNotSaveToNote); }
                 }
                 else
                 {
@@ -649,6 +650,49 @@ public sealed class CaptureCoordinator
         }
     });
 
+    /// Picker values for suggestions a bare title would not route to exactly, keyed by suggestion path. Bare titles
+    /// match root notes first, then sessions, so nested, HOME and same-titled notes are picked by their explicit path.
+    public IReadOnlyDictionary<string, string> ExplicitTitlePaths(IReadOnlyList<NoteSuggestion> suggestions)
+    {
+        var vault = Pipeline.Vault;
+        var rules = vault.NamingRules;
+        static bool IsHome(NoteSuggestion s) => s.Path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+        static bool IsRoot(NoteSuggestion s) => s.Kind == NoteKind.Note && !IsHome(s) && !s.Path.Contains('/');
+        var roots = suggestions.Where(IsRoot).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
+        var sessions = suggestions.Where(s => s.Kind == NoteKind.Session).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
+        var inboxKey = NoteTitle.MatchKey(Vault.InboxTitle);
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var suggestion in suggestions)
+        {
+            var key = NoteTitle.MatchKey(suggestion.Title);
+            var exact = suggestion.Kind switch
+            {
+                NoteKind.Note => IsRoot(suggestion) && roots[key] == 1,
+                NoteKind.Session => !roots.ContainsKey(key) && sessions[key] == 1,
+                _ => true
+            };
+            if (exact && Router.IsHeadingTitle(suggestion.Title, rules)) { continue; }
+            try
+            {
+                var home = IsHome(suggestion);
+                var relative = home ? Vault.RelativeUnder(Vault.DecodeFilePath(suggestion.Path), vault.HomeRoot) : suggestion.Path;
+                if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
+                var stem = relative[..^3];
+                var candidate = home ? "/" + stem : stem;
+                var name = NoteTitle.PathName(candidate, rules);
+                if (!string.Equals(name.RelativePath, stem, StringComparison.OrdinalIgnoreCase)) { continue; }
+                // A root note's own name is a bare title again: it must not match another note's heading.
+                var stemKey = NoteTitle.MatchKey(stem);
+                if (name.Components.Count == 1 && name.Scope == NotePathScope.Vault
+                    && (roots.ContainsKey(stemKey) || sessions.ContainsKey(stemKey) || stemKey == inboxKey)) { continue; }
+                result[suggestion.Path] = candidate;
+            }
+            catch (Exception error) when (error is ArgumentException or VaultFileException) { }
+        }
+
+        return result;
+    }
+
     // Sessions.
     public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.StartSession(name)));
 
@@ -717,7 +761,7 @@ public sealed class CaptureCoordinator
     }
 
     /// Warns that a retry-pending capture was kept; its hotkey reopens the picker while the warning is visible.
-    private void ShowRetryChoice(PendingCapture capture, string title)
+    private void ShowRetryChoice(PendingCapture capture, string title, bool ambiguous = false)
     {
         bool current;
         lock (gate)
@@ -728,7 +772,7 @@ public sealed class CaptureCoordinator
 
         if (!current || (IsTerminating && host.PresentsUi)) { return; }
         var binding = host.BindingFor(capture.Trigger);
-        host.ShowStagedToast(new(AppToastStyle.Warning, title, Strings.CaptureKept(binding), binding, Strings.ChooseNoteHint));
+        host.ShowStagedToast(new(AppToastStyle.Warning, title, ambiguous ? Strings.CaptureKeptPickByPath(binding) : Strings.CaptureKept(binding), binding, Strings.ChooseNoteHint));
     }
 
     /// The picker closed without a choice: a retry-pending capture shows its warning again, any other saves to its default destination.
