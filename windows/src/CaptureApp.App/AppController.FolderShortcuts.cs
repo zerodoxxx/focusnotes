@@ -83,6 +83,7 @@ internal sealed partial class AppController
         if (binding.Action == FolderShortcutAction.QuickNote) { OpenNoteEditor(binding.Folder); return; }
         Coordinator.Enqueue(async c =>
         {
+            await c.WaitForAcquisitionAsync();
             _ = c.CommitPending();
             await c.WaitForProcessingAsync();
             _ = c.CommitPending();
@@ -106,6 +107,9 @@ internal sealed partial class AppController
             onSubmit: name => Coordinator.Enqueue(async c =>
             {
                 if (string.IsNullOrWhiteSpace(name) || c.IsTerminating) return;
+                await c.WaitForAcquisitionAsync();
+                _ = c.CommitPending();
+                await c.WaitForProcessingAsync();
                 _ = c.CommitPending();
                 await c.WaitForCommitsAsync();
                 if (c.IsTerminating) return;

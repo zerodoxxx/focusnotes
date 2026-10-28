@@ -532,6 +532,10 @@ public sealed class CaptureCoordinator
         }
     }
 
+    /// Waits for an in-flight acquisition to hand its capture to the processing queue, so a session change cannot
+    /// overtake it (drainCaptures). Never call it from inside an acquisition: that would wait on itself.
+    public Task WaitForAcquisitionAsync() { Task? task; lock (gate) { task = acquisitionTask; } return TryWait(task); }
+
     public Task WaitForProcessingAsync() { Task? tail; lock (gate) { tail = processingTail; } return TryWait(tail); }
 
     public Task WaitForCommitsAsync() { Task? tail; lock (gate) { tail = commitTail; } return TryWait(tail); }
