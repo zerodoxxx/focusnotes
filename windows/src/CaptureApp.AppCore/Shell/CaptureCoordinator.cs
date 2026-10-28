@@ -20,8 +20,12 @@ public sealed class CaptureCoordinator
     private readonly HashSet<string> reportedRegistryWarnings = new(StringComparer.Ordinal);
     private PendingCapture? pending;
     private Guid? pendingToastId;
+    // A titled commit that failed in preparation keeps the capture pending but off implicit commits (AppController.swift pendingNeedsRetryChoice).
+    private bool pendingNeedsRetryChoice;
+    private bool retryWarningShown;
     private Staged? staged;
     private Task<SavedCapture>? commitTail;
+    private Task? commitMonitor;
     private int commitGeneration;
     private Task? acquisitionTask;
     private int acquisitionGeneration;
@@ -55,6 +59,7 @@ public sealed class CaptureCoordinator
     public PendingCapture? Pending { get { lock (gate) { return pending; } } }
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
+    public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
     public Task? CommitTail { get { lock (gate) { return commitTail; } } }
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
@@ -228,6 +233,7 @@ public sealed class CaptureCoordinator
     {
         lock (gate) { if (shutdownFinished) { return; } }
         _ = CommitPending();
+        var previousNotice = await SaveRetryPendingAsync().ConfigureAwait(true);
         Task<CaptureJob>? recovery;
         Task? recoveryPersistence;
         lock (gate)
@@ -268,6 +274,8 @@ public sealed class CaptureCoordinator
         if (capture.OutsideSession)
         {
             ChooseNoteRequested?.Invoke(capture.Id);
+            // The picker dismisses toasts as it opens, so the notice only reaches the log here.
+            if (previousNotice is not null) { log.Notice(previousNotice); }
             return;
         }
         Session? session = null;
@@ -278,16 +286,50 @@ public sealed class CaptureCoordinator
             pendingToastId = capture.Id;
         }
 
+        // Fold the notice into this toast so it cannot hide it.
+        var subtitle = string.Join(" · ", new[] { capture.Subtitle, previousNotice }.Where(part => !string.IsNullOrEmpty(part)));
         host.ShowStagedToast(new(AppToastStyle.Success, session is null ? Strings.SavedTo(Vault.InboxTitle) : Strings.AddedTo(session.Name),
-            capture.Subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint));
+            subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint));
     }
 
-    /// The staged toast expired: the default destination is the answer.
+    /// A newer capture saves a retry-pending one to its staged default, then says so.
+    private async Task<string?> SaveRetryPendingAsync()
+    {
+        PendingCapture? held;
+        Staged? heldStage;
+        lock (gate)
+        {
+            held = pendingNeedsRetryChoice ? pending : null;
+            heldStage = held is not null && staged?.Id == held.Id ? staged : null;
+        }
+
+        if (held is null) { return null; }
+        var destination = (await TryResult(heldStage?.Preparation).ConfigureAwait(true))?.Prepared.Destination;
+        bool stillHeld;
+        lock (gate) { stillHeld = pendingNeedsRetryChoice && pending?.Id == held.Id; }
+        if (!stillHeld || CommitPending(force: true) is not { } commit) { return null; }
+        // Finish the held capture, including its failure handling, before the newer one is staged.
+        var succeeded = await TryResult(commit).ConfigureAwait(true) is not null;
+        Task? monitor;
+        lock (gate) { monitor = commitMonitor; }
+        await TryWait(monitor).ConfigureAwait(true);
+        return succeeded ? Strings.PreviousCaptureSaved(destination?.Title) : Strings.PreviousCaptureNotSaved;
+    }
+
+    /// The staged toast expired: the default destination is the answer. A retry-pending capture only loses its warning.
     public void ToastExpired()
     {
         bool commit;
-        lock (gate) { commit = pending is not null && pendingToastId == pending.Id; }
+        bool warningGone;
+        lock (gate)
+        {
+            commit = pending is not null && pendingToastId == pending.Id;
+            warningGone = retryWarningShown;
+            retryWarningShown = false;
+        }
+
         if (commit) { _ = CommitPending(); }
+        else if (warningGone) { host.DismissStagedToast(); }
     }
 
     /// Hotkey re-press on the staged toast: stop the toast and choose a destination.
@@ -297,7 +339,9 @@ public sealed class CaptureCoordinator
         host.DismissStagedToast();
     }
 
-    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false)
+    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an explicit title,
+    /// shutdown, or a newer capture staged in <see cref="StageAsync"/> (force) may save it.
+    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false)
     {
         PendingCapture capture;
         Staged? stagedJob;
@@ -308,9 +352,12 @@ public sealed class CaptureCoordinator
         lock (gate)
         {
             if (pending is null) { return null; }
+            if (pendingNeedsRetryChoice && !force && noteTitle is null && !isTerminating) { return null; }
             capture = pending;
             pending = null;
             pendingToastId = null;
+            pendingNeedsRetryChoice = false;
+            retryWarningShown = false;
             previous = commitTail;
             stagedJob = staged is { } current && current.Id == capture.Id ? current : null;
             staged = null;
@@ -349,7 +396,8 @@ public sealed class CaptureCoordinator
             generation = ++commitGeneration;
         }
 
-        _ = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle, announce, generation);
+        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle, announce, generation);
+        lock (gate) { commitMonitor = monitor; }
         return task;
     }
 
@@ -379,16 +427,34 @@ public sealed class CaptureCoordinator
         {
             if (noteTitle is not null && preparation.IsFaulted && stagedJob is not null)
             {
+                // The capture is not lost: keep it pending for another note, or leave it to recovery if a newer one took its place.
+                bool held;
                 lock (gate)
                 {
                     preparedJobs.Remove(capture.Id);
-                    staged = stagedJob;
-                    pending = capture;
-                    pendingToastId = capture.Id;
+                    held = pending is null;
+                    if (held)
+                    {
+                        staged = stagedJob;
+                        pending = capture;
+                        pendingToastId = null;
+                        pendingNeedsRetryChoice = true;
+                    }
+                    else { preparedJobs[capture.Id] = stagedJob.Preparation; }
+                }
+
+                if (held)
+                {
+                    log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
+                    ShowRetryChoice(capture, Strings.CouldNotSaveToNote);
+                }
+                else
+                {
+                    var fallback = (await TryResult(stagedJob.Preparation).ConfigureAwait(false))?.Prepared.Destination;
+                    host.ShowToast(new(AppToastStyle.Warning, Strings.CouldNotSavePreviousCapture, Strings.RecoveryWillRetry(fallback?.Title)));
                 }
             }
-
-            ReportUserSaveFailure(error, Strings.CouldNotSaveCapture);
+            else { ReportUserSaveFailure(error, Strings.CouldNotSaveCapture); }
         }
 
         lock (gate) { if (commitGeneration == generation) { commitTail = null; } }
@@ -641,8 +707,45 @@ public sealed class CaptureCoordinator
     public void ShowToast(AppToast toast)
     {
         _ = CommitPending();
-        lock (gate) { pendingToastId = null; }
+        lock (gate)
+        {
+            pendingToastId = null;
+            retryWarningShown = false;
+        }
+
         if (!IsTerminating || !host.PresentsUi) { host.ShowToast(toast); }
+    }
+
+    /// Warns that a retry-pending capture was kept; its hotkey reopens the picker while the warning is visible.
+    private void ShowRetryChoice(PendingCapture capture, string title)
+    {
+        bool current;
+        lock (gate)
+        {
+            current = pending?.Id == capture.Id;
+            retryWarningShown = current;
+        }
+
+        if (!current || (IsTerminating && host.PresentsUi)) { return; }
+        var binding = host.BindingFor(capture.Trigger);
+        host.ShowStagedToast(new(AppToastStyle.Warning, title, Strings.CaptureKept(binding), binding, Strings.ChooseNoteHint));
+    }
+
+    /// The picker closed without a choice: a retry-pending capture shows its warning again, any other saves to its default destination.
+    public void SettleUnchosenCapture(Guid id, bool announce)
+    {
+        if (RestoreRetryWarning(id, Strings.ChooseWhereToSave)) { return; }
+        if (Pending?.Id == id) { _ = CommitPending(announce: announce); }
+    }
+
+    /// Shows the warning of a retry-pending capture again (its hotkey reopens the picker); false when it is not held.
+    public bool RestoreRetryWarning(Guid id, string title)
+    {
+        PendingCapture? capture;
+        lock (gate) { capture = pendingNeedsRetryChoice ? pending : null; }
+        if (capture is null || capture.Id != id) { return false; }
+        ShowRetryChoice(capture, title);
+        return true;
     }
 
     public void Report(Exception error, string title)

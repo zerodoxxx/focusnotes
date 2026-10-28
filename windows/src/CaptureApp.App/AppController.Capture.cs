@@ -34,7 +34,8 @@ internal sealed partial class AppController
             return;
         }
 
-        if (!outsideSession && fromHotkey && Coordinator.PendingWithToast is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
+        // The staged toast, or a retry-pending capture's warning, reopens the picker.
+        if (!outsideSession && fromHotkey && (Coordinator.PendingWithToast ?? Coordinator.PendingWithRetryWarning) is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
         {
             ShowTitlePicker(pending.Id);
             return;
@@ -118,14 +119,14 @@ internal sealed partial class AppController
         Coordinator.ClearToastMarker();
         Coordinator.Enqueue(async c =>
         {
-            if (!await ClosePanelsAsync()) { return; }
+            if (!await ClosePanelsAsync()) { c.RestoreRetryWarning(id, Strings.CouldNotKeepDraft); return; }
             if (c.Pending?.Id != id) { return; }
             var suggestions = await c.SuggestionSnapshotAsync(false);
             if (c.Pending?.Id != id || c.IsTerminating) { return; }
             PresentInput(Strings.AddToNotePlaceholder, suggestions: suggestions,
                 onAccept: title => { if (c.Pending?.Id == id) { _ = c.CommitPending(title, true); } },
                 onSubmit: _ => { },
-                onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { _ = c.CommitPending(announce: pending.OutsideSession); } });
+                onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { c.SettleUnchosenCapture(id, pending.OutsideSession); } });
         });
     }
 
