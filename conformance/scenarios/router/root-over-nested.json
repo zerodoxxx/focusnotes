@@ -1,0 +1,41 @@
+{
+  "area" : "router",
+  "description" : "A bare title matches the root note before a nested note with the same heading; the explicit path reaches the nested one.",
+  "expected" : {
+    "files" : {
+      "Archive/Ideas.md" : "# Ideas\n",
+      "Ideas.md" : "# Ideas\n"
+    },
+    "results" : [
+      {
+        "kind" : "note",
+        "path" : "Ideas.md",
+        "title" : "Ideas"
+      },
+      {
+        "kind" : "note",
+        "path" : "Archive/Ideas.md",
+        "title" : "ideas"
+      }
+    ]
+  },
+  "id" : "root-over-nested",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Archive/Ideas.md" : "# Ideas\n",
+      "Ideas.md" : "# Ideas\n"
+    },
+    "ops" : [
+      {
+        "op" : "route",
+        "title" : "ideas"
+      },
+      {
+        "op" : "route",
+        "title" : "archive/ideas"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

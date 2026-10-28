@@ -4,6 +4,25 @@ using CaptureApp.Core.Index;
 
 namespace CaptureApp.AppCore.Shell;
 
+/// Title picker values by suggestion, and the exact note each value stands for.
+public sealed class TitlePicks
+{
+    private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Destination> destinations = new(StringComparer.Ordinal);
+
+    internal void Add(NoteSuggestion suggestion, string value, Destination destination)
+    {
+        values[suggestion.Path] = value;
+        destinations[value] = destination;
+    }
+
+    /// The value to submit for a suggestion, or null when its bare title already routes to it.
+    public string? ValueOf(NoteSuggestion suggestion) => values.GetValueOrDefault(suggestion.Path);
+
+    /// The note a submitted value was offered for; null for typed text, which is routed by title.
+    public Destination? DestinationOf(string value) => destinations.GetValueOrDefault(value);
+}
+
 /// The UI-free half of AppController.swift: staging, ordered commits, journaling, notes, sessions and the
 /// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
 public sealed class CaptureCoordinator
@@ -14,14 +33,20 @@ public sealed class CaptureCoordinator
     private readonly ICaptureHost host;
     private readonly AppLog log;
     private readonly Dictionary<Guid, Task<CaptureJob>> preparedJobs = [];
+    // Subheading jobs in preparedJobs whose commit already threw; only these can be reused by a retyped subheading.
+    private readonly HashSet<Guid> failedSubheadingIds = [];
     private readonly Dictionary<Guid, Task<CaptureJob>> recoveryJobs = [];
     private readonly Dictionary<Guid, Task> recoveryPersistences = [];
     private readonly Dictionary<Guid, Task<string?>> deferredOcr = [];
     private readonly HashSet<string> reportedRegistryWarnings = new(StringComparer.Ordinal);
     private PendingCapture? pending;
     private Guid? pendingToastId;
+    // A titled commit that failed in preparation keeps the capture pending but off implicit commits (AppController.swift pendingNeedsRetryChoice).
+    private bool pendingNeedsRetryChoice;
+    private bool retryWarningShown;
     private Staged? staged;
     private Task<SavedCapture>? commitTail;
+    private Task? commitMonitor;
     private int commitGeneration;
     private Task? acquisitionTask;
     private int acquisitionGeneration;
@@ -55,6 +80,7 @@ public sealed class CaptureCoordinator
     public PendingCapture? Pending { get { lock (gate) { return pending; } } }
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
+    public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
     public Task? CommitTail { get { lock (gate) { return commitTail; } } }
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
@@ -228,6 +254,7 @@ public sealed class CaptureCoordinator
     {
         lock (gate) { if (shutdownFinished) { return; } }
         _ = CommitPending();
+        var previousNotice = await SaveRetryPendingAsync().ConfigureAwait(true);
         Task<CaptureJob>? recovery;
         Task? recoveryPersistence;
         lock (gate)
@@ -250,6 +277,9 @@ public sealed class CaptureCoordinator
         {
             staged = new(capture.Id, preparation, persistence);
             pending = capture;
+            // The new capture starts unheld: a failed titled commit may have restored an earlier one since the check above.
+            pendingNeedsRetryChoice = false;
+            retryWarningShown = false;
         }
 
         // Persist the default job before showing the toast or accepting a note title.
@@ -268,6 +298,8 @@ public sealed class CaptureCoordinator
         if (capture.OutsideSession)
         {
             ChooseNoteRequested?.Invoke(capture.Id);
+            // The picker dismisses toasts as it opens, so the notice only reaches the log here.
+            if (previousNotice is not null) { log.Notice(previousNotice); }
             return;
         }
         Session? session = null;
@@ -278,16 +310,50 @@ public sealed class CaptureCoordinator
             pendingToastId = capture.Id;
         }
 
+        // Fold the notice into this toast so it cannot hide it.
+        var subtitle = string.Join(" · ", new[] { capture.Subtitle, previousNotice }.Where(part => !string.IsNullOrEmpty(part)));
         host.ShowStagedToast(new(AppToastStyle.Success, session is null ? Strings.SavedTo(Vault.InboxTitle) : Strings.AddedTo(session.Name),
-            capture.Subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint));
+            subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint));
     }
 
-    /// The staged toast expired: the default destination is the answer.
+    /// A newer capture saves a retry-pending one to its staged default, then says so.
+    private async Task<string?> SaveRetryPendingAsync()
+    {
+        PendingCapture? held;
+        Staged? heldStage;
+        lock (gate)
+        {
+            held = pendingNeedsRetryChoice ? pending : null;
+            heldStage = held is not null && staged?.Id == held.Id ? staged : null;
+        }
+
+        if (held is null) { return null; }
+        var destination = (await TryResult(heldStage?.Preparation).ConfigureAwait(true))?.Prepared.Destination;
+        bool stillHeld;
+        lock (gate) { stillHeld = pendingNeedsRetryChoice && pending?.Id == held.Id; }
+        if (!stillHeld || CommitPending(force: true) is not { } commit) { return null; }
+        // Finish the held capture, including its failure handling, before the newer one is staged.
+        var succeeded = await TryResult(commit).ConfigureAwait(true) is not null;
+        Task? monitor;
+        lock (gate) { monitor = commitMonitor; }
+        await TryWait(monitor).ConfigureAwait(true);
+        return succeeded ? Strings.PreviousCaptureSaved(destination?.Title) : Strings.PreviousCaptureNotSaved;
+    }
+
+    /// The staged toast expired: the default destination is the answer. A retry-pending capture only loses its warning.
     public void ToastExpired()
     {
         bool commit;
-        lock (gate) { commit = pending is not null && pendingToastId == pending.Id; }
+        bool warningGone;
+        lock (gate)
+        {
+            commit = pending is not null && pendingToastId == pending.Id;
+            warningGone = retryWarningShown;
+            retryWarningShown = false;
+        }
+
         if (commit) { _ = CommitPending(); }
+        else if (warningGone) { host.DismissStagedToast(); }
     }
 
     /// Hotkey re-press on the staged toast: stop the toast and choose a destination.
@@ -297,7 +363,10 @@ public sealed class CaptureCoordinator
         host.DismissStagedToast();
     }
 
-    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false)
+    /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an explicit title or
+    /// destination, shutdown, or a newer capture staged in <see cref="StageAsync"/> (force) may save it. A picked
+    /// destination is saved without routing, if its note still exists.
+    public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false, Destination? destination = null)
     {
         PendingCapture capture;
         Staged? stagedJob;
@@ -308,9 +377,12 @@ public sealed class CaptureCoordinator
         lock (gate)
         {
             if (pending is null) { return null; }
+            if (pendingNeedsRetryChoice && !force && noteTitle is null && destination is null && !isTerminating) { return null; }
             capture = pending;
             pending = null;
             pendingToastId = null;
+            pendingNeedsRetryChoice = false;
+            retryWarningShown = false;
             previous = commitTail;
             stagedJob = staged is { } current && current.Id == capture.Id ? current : null;
             staged = null;
@@ -324,11 +396,16 @@ public sealed class CaptureCoordinator
         // Only shutdown's acquired-pixel fallback forces its original destination.
         var preparation = Task.Run(async () =>
         {
-            Destination? destination;
-            if (recovery is not null) { destination = (await TryResult(recovery).ConfigureAwait(false))?.Prepared.Destination; }
-            else if (noteTitle is null) { destination = (await TryResult(stagedJob?.Preparation).ConfigureAwait(false))?.Prepared.Destination; }
-            else { destination = null; }
-            return Prepare(capture, noteTitle, destination);
+            Destination? resolved;
+            if (recovery is not null) { resolved = (await TryResult(recovery).ConfigureAwait(false))?.Prepared.Destination; }
+            else if (destination is not null)
+            {
+                // A note removed since the picker opened fails here and keeps the capture.
+                resolved = destination with { Url = Pipeline.Vault.NoteLocation(Pipeline.Vault.NoteId(destination.Url)).Url };
+            }
+            else if (noteTitle is null) { resolved = (await TryResult(stagedJob?.Preparation).ConfigureAwait(false))?.Prepared.Destination; }
+            else { resolved = null; }
+            return Prepare(capture, noteTitle, resolved);
         });
         int generation;
         Task<SavedCapture> task;
@@ -349,12 +426,13 @@ public sealed class CaptureCoordinator
             generation = ++commitGeneration;
         }
 
-        _ = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle, announce, generation);
+        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle is not null || destination is not null, announce, generation);
+        lock (gate) { commitMonitor = monitor; }
         return task;
     }
 
     private async Task ObserveCommitAsync(Task<SavedCapture> task, Task<CaptureJob> preparation, PendingCapture capture,
-        Staged? stagedJob, string? noteTitle, bool announce, int generation)
+        Staged? stagedJob, bool explicitTarget, bool announce, int generation)
     {
         try
         {
@@ -377,18 +455,39 @@ public sealed class CaptureCoordinator
         }
         catch (Exception error)
         {
-            if (noteTitle is not null && preparation.IsFaulted && stagedJob is not null)
+            if (explicitTarget && preparation.IsFaulted && stagedJob is not null)
             {
+                // The capture is not lost: keep it pending for another note, or leave it to recovery if a newer one took its place.
+                bool held;
                 lock (gate)
                 {
                     preparedJobs.Remove(capture.Id);
-                    staged = stagedJob;
-                    pending = capture;
-                    pendingToastId = capture.Id;
+                    held = pending is null;
+                    if (held)
+                    {
+                        staged = stagedJob;
+                        pending = capture;
+                        pendingToastId = null;
+                        pendingNeedsRetryChoice = true;
+                    }
+                    else { preparedJobs[capture.Id] = stagedJob.Preparation; }
+                }
+
+                if (held)
+                {
+                    log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
+                    // A commit that failed during quit restored the hold after the drain's last implicit commit: save it to its default now.
+                    if (IsTerminating) { _ = CommitPending(); }
+                    else if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
+                    else { ShowRetryChoice(capture, Strings.CouldNotSaveToNote); }
+                }
+                else
+                {
+                    var fallback = (await TryResult(stagedJob.Preparation).ConfigureAwait(false))?.Prepared.Destination;
+                    host.ShowToast(new(AppToastStyle.Warning, Strings.CouldNotSavePreviousCapture, Strings.RecoveryWillRetry(fallback?.Title)));
                 }
             }
-
-            ReportUserSaveFailure(error, Strings.CouldNotSaveCapture);
+            else { ReportUserSaveFailure(error, Strings.CouldNotSaveCapture); }
         }
 
         lock (gate) { if (commitGeneration == generation) { commitTail = null; } }
@@ -439,6 +538,10 @@ public sealed class CaptureCoordinator
                 made ? saved.Destination.Title : PendingCaptures.FirstLine(text)));
         }
     }
+
+    /// Waits for an in-flight acquisition to hand its capture to the processing queue, so a session change cannot
+    /// overtake it (drainCaptures). Never call it from inside an acquisition: that would wait on itself.
+    public Task WaitForAcquisitionAsync() { Task? task; lock (gate) { task = acquisitionTask; } return TryWait(task); }
 
     public Task WaitForProcessingAsync() { Task? tail; lock (gate) { tail = processingTail; } return TryWait(tail); }
 
@@ -533,8 +636,29 @@ public sealed class CaptureCoordinator
         _ = CommitPending();
         await WaitForProcessingAsync().ConfigureAwait(false);
         _ = CommitPending();
+        // Retyping a subheading whose commit failed retries that capture and id, so the quit drain cannot also write it.
+        // Only a failed job with the same text and destination matches; a queued or different one is left alone.
+        Task<CaptureJob>? retry = null;
         var capture = new Capture(Guid.NewGuid(), DateTimeOffset.UtcNow, CaptureContent.Subheading(text), new CaptureSource());
-        var preparation = Task.Run(() => Pipeline.PrepareSubheading(capture, destination));
+        KeyValuePair<Guid, Task<CaptureJob>>[] failed;
+        lock (gate)
+        {
+            failedSubheadingIds.IntersectWith(preparedJobs.Keys);
+            failed = failedSubheadingIds.Select(id => KeyValuePair.Create(id, preparedJobs[id])).ToArray();
+        }
+
+        foreach (var (id, candidate) in failed)
+        {
+            if (await TryResult(candidate).ConfigureAwait(false) is not { } job || job.Prepared.Capture.Content != capture.Content ||
+                destination is not null && job.Prepared.Destination != destination) { continue; }
+            retry = candidate;
+            capture = job.Prepared.Capture;
+            lock (gate) { failedSubheadingIds.Remove(id); }
+            break;
+        }
+
+        var reused = capture;
+        var preparation = retry ?? Task.Run(() => Pipeline.PrepareSubheading(reused, destination));
         Task<SavedCapture> task;
         int generation;
         lock (gate)
@@ -554,6 +678,11 @@ public sealed class CaptureCoordinator
 
         SavedCapture saved;
         try { saved = await task.ConfigureAwait(false); }
+        catch
+        {
+            lock (gate) { failedSubheadingIds.Add(capture.Id); }
+            throw;
+        }
         finally
         {
             // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.
@@ -582,6 +711,57 @@ public sealed class CaptureCoordinator
             return [];
         }
     });
+
+    /// What the title picker offers. Bare titles match root notes first, then sessions, so nested, HOME, shadowed and
+    /// same-titled notes get a value of their own, tied to their exact destination (which commits without routing).
+    public TitlePicks PickerChoices(IReadOnlyList<NoteSuggestion> suggestions)
+    {
+        var vault = Pipeline.Vault;
+        var rules = vault.NamingRules;
+        static bool IsHome(NoteSuggestion s) => s.Path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+        static bool IsRoot(NoteSuggestion s) => s.Kind == NoteKind.Note && !IsHome(s) && !s.Path.Contains('/');
+        var roots = suggestions.Where(IsRoot).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
+        var sessions = suggestions.Where(s => s.Kind == NoteKind.Session).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
+        var picks = new TitlePicks();
+        foreach (var suggestion in suggestions)
+        {
+            var key = NoteTitle.MatchKey(suggestion.Title);
+            var exact = suggestion.Kind switch
+            {
+                NoteKind.Note => IsRoot(suggestion) && roots[key] == 1,
+                NoteKind.Session => !roots.ContainsKey(key) && sessions[key] == 1,
+                _ => true
+            };
+            if (exact && Router.IsHeadingTitle(suggestion.Title, rules)) { continue; }
+            try
+            {
+                var home = IsHome(suggestion);
+                var url = home ? Vault.DecodeFilePath(suggestion.Path) : vault.UrlForRelativePath(suggestion.Path);
+                var relative = home ? Vault.RelativeUnder(url, vault.HomeRoot) : suggestion.Path;
+                if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
+                // The file name with .md is unique among the offered values. Nested, HOME and session notes use their
+                // extensionless path instead when the Router resolves it to the same name.
+                var value = home ? "/" + relative : relative;
+                if (!IsRoot(suggestion))
+                {
+                    var stem = relative[..^3];
+                    var path = home ? "/" + stem : stem;
+                    if (RoundTrips(path, stem, rules)) { value = path; }
+                }
+
+                picks.Add(suggestion, value, new Destination(url, suggestion.Title, suggestion.Kind));
+            }
+            catch (Exception error) when (error is ArgumentException or VaultFileException) { }
+        }
+
+        return picks;
+    }
+
+    private static bool RoundTrips(string path, string stem, VaultNamingRules rules)
+    {
+        try { return string.Equals(NoteTitle.PathName(path, rules).RelativePath, stem, StringComparison.OrdinalIgnoreCase); }
+        catch (NotePathNameException) { return false; }
+    }
 
     // Sessions.
     public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.StartSession(name)));
@@ -641,8 +821,47 @@ public sealed class CaptureCoordinator
     public void ShowToast(AppToast toast)
     {
         _ = CommitPending();
-        lock (gate) { pendingToastId = null; }
+        lock (gate)
+        {
+            pendingToastId = null;
+            retryWarningShown = false;
+        }
+
         if (!IsTerminating || !host.PresentsUi) { host.ShowToast(toast); }
+    }
+
+    /// Warns that a retry-pending capture was kept; its hotkey reopens the picker while the warning is visible.
+    private void ShowRetryChoice(PendingCapture capture, string title, bool ambiguous = false)
+    {
+        bool current;
+        lock (gate)
+        {
+            current = pending?.Id == capture.Id;
+            retryWarningShown = current;
+        }
+
+        if (!current || (IsTerminating && host.PresentsUi)) { return; }
+        var binding = host.BindingFor(capture.Trigger);
+        // Longer than the 3 s warning default, since the shortcut reopens the picker only while this toast is visible.
+        host.ShowStagedToast(new(AppToastStyle.Warning, title, ambiguous ? Strings.CaptureKeptPickByPath(binding) : Strings.CaptureKept(binding), binding,
+            Strings.ChooseNoteHint, Duration: 6));
+    }
+
+    /// The picker closed without a choice: a retry-pending capture shows its warning again, any other saves to its default destination.
+    public void SettleUnchosenCapture(Guid id, bool announce)
+    {
+        if (RestoreRetryWarning(id, Strings.ChooseWhereToSave)) { return; }
+        if (Pending?.Id == id) { _ = CommitPending(announce: announce); }
+    }
+
+    /// Shows the warning of a retry-pending capture again (its hotkey reopens the picker); false when it is not held.
+    public bool RestoreRetryWarning(Guid id, string title)
+    {
+        PendingCapture? capture;
+        lock (gate) { capture = pendingNeedsRetryChoice ? pending : null; }
+        if (capture is null || capture.Id != id) { return false; }
+        ShowRetryChoice(capture, title);
+        return true;
     }
 
     public void Report(Exception error, string title)

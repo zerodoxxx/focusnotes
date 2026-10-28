@@ -34,7 +34,8 @@ internal sealed partial class AppController
             return;
         }
 
-        if (!outsideSession && fromHotkey && Coordinator.PendingWithToast is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
+        // The staged toast, or a retry-pending capture's warning, reopens the picker.
+        if (!outsideSession && fromHotkey && (Coordinator.PendingWithToast ?? Coordinator.PendingWithRetryWarning) is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
         {
             ShowTitlePicker(pending.Id);
             return;
@@ -118,20 +119,28 @@ internal sealed partial class AppController
         Coordinator.ClearToastMarker();
         Coordinator.Enqueue(async c =>
         {
-            if (!await ClosePanelsAsync()) { return; }
+            if (!await ClosePanelsAsync()) { c.RestoreRetryWarning(id, Strings.CouldNotKeepDraft); return; }
             if (c.Pending?.Id != id) { return; }
             var suggestions = await c.SuggestionSnapshotAsync(false);
             if (c.Pending?.Id != id || c.IsTerminating) { return; }
+            // Bare titles match root notes only, so other and same-titled notes are picked by value and saved to that exact note.
+            var picks = c.PickerChoices(suggestions);
             PresentInput(Strings.AddToNotePlaceholder, suggestions: suggestions,
-                onAccept: title => { if (c.Pending?.Id == id) { _ = c.CommitPending(title, true); } },
+                suggestionValue: picks.ValueOf, suggestionPath: picks.ValueOf,
+                onAccept: text =>
+                {
+                    if (c.Pending?.Id != id) { return; }
+                    if (picks.DestinationOf(text) is { } destination) { _ = c.CommitPending(destination: destination, announce: true); }
+                    else { _ = c.CommitPending(text, true); }
+                },
                 onSubmit: _ => { },
-                onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { _ = c.CommitPending(announce: pending.OutsideSession); } });
+                onCancel: () => { if (c.Pending is { } pending && pending.Id == id) { c.SettleUnchosenCapture(id, pending.OutsideSession); } });
         });
     }
 
     private void PresentInput(string placeholder, string? title = null, string? secondary = null,
         IReadOnlyList<NoteSuggestion>? suggestions = null, Action<string>? onAccept = null, Action<string>? onSubmit = null, Action? onCancel = null,
-        Func<NoteSuggestion, string?>? suggestionValue = null)
+        Func<NoteSuggestion, string?>? suggestionValue = null, Func<NoteSuggestion, string?>? suggestionPath = null)
     {
         if (Coordinator.IsTerminating) { return; }
         var list = suggestions ?? [];
@@ -145,7 +154,7 @@ internal sealed partial class AppController
                 .Select(s =>
                 {
                     var session = s.Kind == NoteKind.Session;
-                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
+                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone, suggestionPath?.Invoke(s)), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
                 }).ToArray();
         }, text => { InputClosed(); onSubmit?.Invoke(text); }, () => { InputClosed(); onCancel?.Invoke(); },
             Title: title, Secondary: secondary, OnAccept: onAccept));
@@ -188,6 +197,7 @@ internal sealed partial class AppController
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
+            await c.WaitForAcquisitionAsync();
             _ = c.CommitPending();
             await c.WaitForProcessingAsync();
             _ = c.CommitPending();
@@ -205,6 +215,9 @@ internal sealed partial class AppController
             var suggestions = await c.SuggestionSnapshotAsync(true);
             PresentInput(Strings.SessionNamePlaceholder, suggestions: suggestions, onSubmit: name => c.Enqueue(async inner =>
             {
+                await inner.WaitForAcquisitionAsync();
+                _ = inner.CommitPending();
+                await inner.WaitForProcessingAsync();
                 _ = inner.CommitPending();
                 await inner.WaitForCommitsAsync();
                 try { await inner.StartSessionAsync(name); }
@@ -236,6 +249,9 @@ internal sealed partial class AppController
             if (candidates.FirstOrDefault(c => c.NotePath == path) is not { } candidate) { return; }
             Coordinator.Enqueue(async c =>
             {
+                await c.WaitForAcquisitionAsync();
+                _ = c.CommitPending();
+                await c.WaitForProcessingAsync();
                 _ = c.CommitPending();
                 await c.WaitForCommitsAsync();
                 try { await c.ResumeSessionAsync(candidate); }
@@ -261,6 +277,7 @@ internal sealed partial class AppController
             InputClosed();
             Coordinator.Enqueue(async c =>
             {
+                await c.WaitForAcquisitionAsync();
                 _ = c.CommitPending();
                 await c.WaitForProcessingAsync();
                 _ = c.CommitPending();
@@ -288,6 +305,7 @@ internal sealed partial class AppController
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
+            await c.WaitForAcquisitionAsync();
             _ = c.CommitPending();
             await c.WaitForProcessingAsync();
             _ = c.CommitPending();

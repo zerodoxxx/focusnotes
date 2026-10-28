@@ -1,6 +1,6 @@
 # Release review checklist
 
-Last Updated: 2026-10-23 (previous commit: `3af31ff`)
+Last Updated: 2026-10-28 (previous commit: `e2672b2`)
 
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
@@ -119,7 +119,7 @@ are unaffected. See [releasing.md](releasing.md#windows-release-prerequisites) f
 - [ ] Install and update on native Windows 11 x64, Windows 11 arm64 and Windows 10 22H2 x64; the arm64 installer is
   refused on x64.
 - [ ] The device checks in the Windows section of [manual-tests.md](manual-tests.md) pass on all three targets.
-- [ ] Deviations DV1-DV11, OCR languages not covered by the bundled models, and any exception to the measured focus,
+- [ ] Deviations DV1-DV12, OCR languages not covered by the bundled models, and any exception to the measured focus,
   OCR and resource gates are signed off by the maintainer.
 - [ ] `THIRD_PARTY_NOTICES.md` lists every shipped Windows component at its shipped version.
 - [ ] README, ARCHITECTURE.md, DESIGN.md and the reference match the release candidate, including the unsigned

@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-28 (previous commit: `69e5fba`)
+Last Updated: 2026-10-28 (previous commit: `9d90df6`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -9,8 +9,8 @@ Detailed behaviour of capture, note storage and the quick-note editor. For setup
 Pressing a capture shortcut again while its toast is visible chooses the destination note.
 To choose before saving, use **⌃⇧C** for selection or **⌃⇧S** for an area. These outside-session
 shortcuts open **Add to note…** immediately, with note suggestions. A chosen title routes to an
-existing note, then a matching session title, then Inbox, or a new root note; folder and `/` home
-paths use the same routing as the re-press picker. Escape saves the capture to Inbox. The shortcuts
+existing root note, then a matching session title, then Inbox, or a new root note; nested notes
+need their folder path and home notes a `/` path, as in the re-press picker. Escape saves the capture to Inbox. The shortcuts
 also work without a session. A current session stays active and the toast names it alongside the
 destination; the next normal capture still goes to the session.
 

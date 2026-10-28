@@ -21,6 +21,10 @@ public static class Strings
     public const string CouldNotJournal = "Couldn't journal capture";
     public const string CouldNotSaveCapture = "Couldn't save capture";
     public const string CouldNotSavePending = "Couldn't save pending capture";
+    public const string CouldNotSaveToNote = "Couldn't save to that note";
+    public const string CouldNotSavePreviousCapture = "Couldn't save the previous capture";
+    public const string PreviousCaptureNotSaved = "Couldn't save the previous capture · recovery will retry";
+    public const string ChooseWhereToSave = "Choose where to save";
     public const string CouldNotAddNote = "Couldn't add note; draft kept";
     public const string CouldNotResetDraftPin = "Couldn't reset draft pin";
     public const string CouldNotSelectNote = "Couldn't select note";
@@ -86,6 +90,11 @@ public static class Strings
     public static string AddedTo(string name) => $"Added to {name}";
     public static string SessionStillActive(string message, string? sessionName) => sessionName is null ? message : $"{message} · {sessionName} still active";
     public static string InNote(string title) => $"In {title}";
+    public static string CaptureKept(string binding) => $"Capture kept · press {binding} to choose again";
+    public static string SeveralNotesTitled(string title) => $"Several notes are titled \"{title}\"";
+    public static string CaptureKeptPickByPath(string binding) => $"Capture kept · press {binding}, then pick one by its path";
+    public static string PreviousCaptureSaved(string? title) => title is null ? "Previous capture saved" : $"Previous capture saved to {title}";
+    public static string RecoveryWillRetry(string? title) => title is null ? "Recovery will retry the staged capture." : $"Recovery will retry: {title}.";
     public static string SessionStarted(string name, bool resumed) => $"Session {(resumed ? "resumed" : "started")} · {name}";
     public static string SessionCapturesGoHere(string binding) => $"Captures go here until {binding}";
     public static string SessionEnded(string name) => $"Session ended · {name}";
@@ -97,10 +106,11 @@ public static class Strings
     public static string CandidateSecondary(DateTimeOffset modified, string path, TimeZoneInfo zone) =>
         $"Modified {Stamp(modified, "MMM d, yyyy", zone)} · {path}";
 
-    public static string SuggestionDetail(bool session, DateTimeOffset modified, string path, TimeZoneInfo zone)
+    /// <param name="explicitPath">The path a nested, HOME or same-titled note is picked by; shown so those notes can be told apart.</param>
+    public static string SuggestionDetail(bool session, DateTimeOffset modified, string path, TimeZoneInfo zone, string? explicitPath = null)
     {
         var detail = $"{(session ? "Session" : "Note")} · {Stamp(modified, "MMM d, yyyy", zone)}";
-        return session ? $"{detail} · {path}" : detail;
+        return session ? $"{detail} · {path}" : explicitPath is null ? detail : $"{detail} · {explicitPath}";
     }
 
     public static string BrowseDetail(bool session, DateTimeOffset modified, TimeZoneInfo zone) =>
