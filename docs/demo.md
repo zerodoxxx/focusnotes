@@ -1,7 +1,7 @@
 # Menu bar demo
 
 Run `scripts/run-app.sh` from the project root. The app stays in the menu bar with
-no Dock icon. Click its tray icon → **Permissions → Accessibility** and grant the
+no Dock icon. Click its menu-bar icon → **Permissions → Accessibility** and grant the
 app access in System Settings. Press **⌥⇧S** once to request Screen Recording,
 then grant the app access under **Permissions → Screen Recording**. Relaunch with
 `scripts/run-app.sh` after granting both permissions. The permission checkmarks
@@ -16,13 +16,13 @@ refresh whenever the menu opens.
    searchable OCR; dense prose regions become text when OCR finishes within 1.5 s.
    Slower OCR stages an image and adds searchable text later. Other capture
    shortcuts work while OCR runs. Press Escape to cancel an area.
-4. Press **⌥⇧A**, enter **Demo Session**, and press Enter. The tray icon fills.
+4. Press **⌥⇧A**, enter **Demo Session**, and press Enter. The menu-bar icon fills.
    Capture two selections with **⌥⇧C**, letting each toast expire. Press **⌥⇧A**
    again: “Session ended · Demo Session” shows “2 captures”. Starting **Demo Session**
    again resumes `Sessions/Demo Session.md` and shows “Session resumed · Demo Session”.
    Names match ignoring case after filename cleaning; existing dated notes resume
    in place too.
-   Press **⌥⇧H** (or **Add Subheading…** after the session menu item), type **Tradeoffs**,
+   Press **⌥⇧H** (or **Add Subheading…** in the menu), type **Tradeoffs**,
    and press Enter. The panel says “Add subheading” and “In Demo Session” (or “In
    Inbox” with no session). A pending capture saves first, then `## Tradeoffs` is
    appended. Escape cancels, and empty input does nothing.
@@ -62,12 +62,16 @@ refresh whenever the menu opens.
    **Note saved, but not pinned**, with the destination title below it, while the note save succeeds and clears
    its draft. A success toast must not replace that warning.
    A pending capture commits before a new editor opens. Inside a session, saves append Markdown and show **Saved to <session>**.
-   Outside a session, they create a root note and show **Note created** with its title.
+   Outside a session, the first line names the note, optionally with folders (`science/Biology`) or a `/` home path.
+   A name with no note at that path creates one and shows **Note created** with its title; an existing note at that
+   path (or **Inbox**) is appended to and shows **Note added** with the note's first line. With **Write outside session**
+   on during a session, the toast reads **Saved to <title> · <session> still active**.
    The title is the first non-empty line stripped of heading/list/task/quote syntax,
    emphasis, code delimiters, links (keeping their labels), and HTML comments, with
    whitespace collapsed. Long titles stop at a word boundary within 60 characters
-   and add “…”; empty stripped titles use **Note yyyy-MM-dd HH.mm**. Filenames follow
-   the usual cleaning and collision rules (**Title.md**, **Title 2.md**). If the
+   and add “…”; empty stripped titles use **Note yyyy-MM-dd HH.mm** and always create a new
+   note. Filenames follow the usual cleaning rules (**Title.md**); **Save as New Note** (⌥⌘↩) creates a numbered
+   **Title 2.md** beside an existing note instead of appending. If the
    physical first line equals the untruncated title after stripping, it is omitted
    from the body unless it is a list, task, quote or code line. A title-only note is
    valid. Other body text stays intact, with trailing whitespace trimmed. Saving
@@ -82,9 +86,10 @@ refresh whenever the menu opens.
    indexing, then search for **throttling API traffic** with **⌥⇧F**. The capture
    appears despite having no query words. A cold helper can take several seconds
    to warm; type the query again once indexing has finished. Semantic-only rows
-   have no word highlights. **Permissions** shows **Semantic search: On** when
-   all required model files are present.
-8. Choose **Open Notes Folder** from the tray menu (also **⌥⇧L**). Inspect
+   have no word highlights. When all required model files are present, the menu shows a
+   checked **Semantic Search** item with **Remove Models…** beneath it; otherwise it offers
+   **Enable Semantic Search…**.
+8. Choose **Open Notes Folder** from the menu (also **⌥⇧L**). Inspect
    `Inbox.md`, `Safari Research.md`, any notes created with **⌥⇧N** outside a session,
    `Sessions/Demo Session.md`, and PNGs in
    `assets/`. Capture menu actions work after the menu closes.
@@ -126,9 +131,11 @@ Both modes verify the 1.5-second OCR budget with delayed recognition, subsequent
 OCR searchability, a second acquisition during OCR, source-heading omission,
 session resume, and the controller method used by **⌥⇧H**, including journal replay. They also verify **⌥⇧N** controller saving, pending-first
 ordering, keyword search, atomic draft text/pin-intent persistence, legacy migration, restoration and cleanup, and
-typed-note replay without duplicate bytes. Outside-session controller saves create
+typed-note replay without duplicate bytes. Controller saves without a session create
 a titled root file, are searchable, clear the original draft after title removal,
-use collision suffixes, and replay into their fixed path without another file.
+append when saved again under the same title, use a collision suffix only for Save as
+New Note, and replay into their fixed path without another file. Write outside session
+routing, its toggle and its reset are checked against a live session.
 The real format example is written to `FeedbackCases/Vault/Sessions/Feedback.md`
 inside the self-test directory. Both modes also append an external capture block using FileManager and require
 it to become searchable through the watcher within five seconds, with no explicit

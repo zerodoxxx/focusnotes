@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-28 (previous commit: `9d90df6`)
+Last Updated: 2026-10-29 (previous commit: `f041974`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
@@ -92,7 +92,9 @@ malformed leading-slash HOME paths retain strict validation.
 
 Sessions keep their `Sessions/` namespace: a quick note saved while a session is
 active appends to that session note unless **Write outside session** is selected.
-That action uses the same standalone paths described above without ending the session. Paths containing traversal
+That action uses the same standalone paths described above without ending the session. A quick note opened
+by a folder Quick Note shortcut also skips the session: its typed name is saved inside the shortcut's folder
+(a Browse destination still wins), and the folder stays with the draft until it is saved or discarded. Paths containing traversal
 components such as `..`, paths that cross a symbolic link, and leaves beginning
 with `~$` are rejected. The vault's `assets/` destination is reserved, matched
 case-insensitively; a home-relative path that resolves inside that directory is
@@ -152,13 +154,15 @@ quotes and code stay intact. Captures and subheadings still use Inbox without a
 session. Return inserts a new line and continues lists (removing an empty marker);
 Shift+Return inserts a plain newline, and Tab/Shift+Tab indent/outdent list items.
 Return during IME composition goes to the input method. Escape or
-clicking outside keeps an atomic `draft-note.md` in the app state directory,
-restored next time. Paste is plain text; ⌘Z/⇧⌘Z undo/redo. A pending capture saves
+clicking outside keeps an atomic `draft-note.json` (text, pin intent and any
+folder-shortcut folder) in the app state directory, restored next time; an older
+`draft-note.md` is still read and is replaced on the next draft write. Paste is plain text; ⌘Z/⇧⌘Z undo/redo. A pending capture saves
 first. Typed notes have invisible timestamped `<!-- note:… at=… -->` markers,
 appear with their note title and time in keyword and semantic search, and do not change the capture
 source. A heading typed in a note makes the next capture repeat its source heading.
 Successful saves clear the draft; empty input clears it without appending.
-New notes show “Note created” with their title; session appends show “Saved to <session>” with the note's first line.
+New notes show “Note created” with their title; session appends show “Saved to <session>” with the note's first line,
+and appends to another existing note (or Inbox) show “Note added” with the note's first line.
 An outside-session save names the target and the still-active session, for example
 “Saved to Biology · Thermo still active”.
 The journal retains the chosen path and original draft, so recovery reuses the
