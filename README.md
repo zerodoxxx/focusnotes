@@ -14,8 +14,8 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
 ## Features
 
 - **Capture selection.** Saves the selected text from any app, along with where it came from.
-- **Capture area.** Drag over part of the screen to save it as an image. Text in the image is recognised (OCR) and
-  becomes searchable.
+- **Capture area.** Drag over part of the screen. Text in the area is recognised (OCR): a region of dense text is
+  saved as plain text, and anything else is saved as an image whose recognised text becomes searchable.
 - **Browser links.** Selection and area captures from supported browsers include a separate Markdown `Source` link
   to the current page when its complete HTTP(S) address is exposed by the browser's native accessibility interface.
   FocusNotes reads the address bar only; it does not inspect page contents or selected text to find a URL. If the
@@ -67,7 +67,9 @@ also opens the note picker. The active session stays running in both cases.
 Add up to 20 global shortcuts for specific folders. On macOS, choose **Folder Shortcuts…** from the menu-bar icon.
 On Windows, use **Settings… → Folder Shortcuts**, the **Shortcuts** step in Setup, or **Folder Shortcuts → Configure Folder Shortcuts…** in the tray menu.
 Record a combination and choose **Quick Note** or **Start Session**. Built-in and duplicate combinations
-are rejected; combinations already registered by another app show a conflict. Quick Note folders are
+are rejected; combinations already registered by another app show a conflict. Saved bindings can also be run
+from the menu (**Use Folder Shortcut** on macOS, the **Folder Shortcuts** submenu on Windows) when their
+combination is unavailable. Quick Note folders are
 relative to the selected notes folder. Start Session folders are relative to `Sessions/`; each invocation
 asks for a session name, then creates or resumes that session in the configured folder. Suggestions only
 include sessions in that folder. A name is required; cancelling or submitting a blank name leaves the
@@ -232,7 +234,7 @@ rights. On first launch, complete Setup to choose the notes folder and configure
   Other system tray icons).
 - **Setup on first launch.** A Setup window runs once: it explains what the app uses, asks two questions (the
   clipboard fallback and automatic update checks), then offers a folder picker and checks the notes folder,
-  registers and tests the shortcuts,
+  registers and tests the shortcuts, lets you add folder shortcuts,
   and offers a selection and an area capture test, the tray icon, start at login and the semantic search pointer.
   Nothing is registered or captured until the first page is answered. Reopen it from the tray icon → **Setup…**.
   Windows has no permission prompts for these features, so Setup is where a problem shows up early.

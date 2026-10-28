@@ -29,8 +29,8 @@ The app stores notes as ordinary Markdown and images in the selected local
 vault. Drafts, journals, and search caches are stored in the user's Application
 Support directory. The app does not encrypt these files at rest; anyone or any
 process that can read the user's account or vault can read them. Captures can
-include selected text, screenshots, OCR text, source application names, and
-window titles.
+include selected text, screenshots, OCR text, source application names, window
+titles, and, from supported browsers, the current page's address.
 
 Core vault I/O now uses root-anchored directory descriptors and no-follow
 checks for managed note and asset reads and writes. The final CoreChecks run
