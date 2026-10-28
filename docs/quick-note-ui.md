@@ -45,9 +45,10 @@ whose value is the title. When pinned, a 10pt medium `pin.fill` appears before i
 (`quickTitlePinSize`/`quickTitlePinGap`). Glyph and title are centred as one unit, share the 30%/60%
 reveal alpha, and together respect the button clusters and title truncation.
 
-Text rule: the destination title when a destination is set (session or chosen note), or "Folder: <folder>" for a
-quick note opened by a folder shortcut; otherwise, once the text is non-blank, the title of the existing note it
-will be added to or the title it will be saved under; otherwise "New note". The saved-under title
+Text rule: the destination title when a destination is set (session or chosen note); otherwise, once the text is
+non-blank, the title of the existing note it will be added to or the title it will be saved under; otherwise "New
+note", or "Folder: <folder>" for a quick note opened by a folder shortcut. A folder quick note resolves typed names
+inside its folder, so its title, footer caption and Save as New Note follow the same rules as a standalone note. The saved-under title
 comes from the host through `NoteEditorHandlers.titleForText` (the app passes `TypedNote(...).title`;
 OverlayKit's default is the first non-blank line with leading Markdown markers stripped, cut at 60 characters).
 It is recomputed on every text change (head of the note only) and on `setDestination`.
