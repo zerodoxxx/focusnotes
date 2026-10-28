@@ -261,7 +261,7 @@ public sealed class NoteFileReplaceTests
     public void AppendFailsWhileTheRecoveredNoteCannotBeRestoredAndExtendsItOnRetry()
     {
         using var e = new CheckVault();
-        e.Vault.Prepare();
+        // No Vault.Prepare(): it queues a background sweep with no MoveHook that could restore the copy mid-test.
         e.Write("Note.md", "# Note\n\nbefore\n");
         using (new Hooks())
         {

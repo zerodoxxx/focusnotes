@@ -170,8 +170,8 @@ public static partial class NoteFile
 
     // Moves the newest ".recovered-" copy of a missing target back into place; never overwrites. Older copies
     // are renamed to the plain, non-restorable name (never deleted). Call under no lock; it takes the target's gate.
-    // Returns false only when a restorable copy exists but could not be moved back, so a caller that writes must
-    // not start a fresh note; every other outcome, including "nothing to restore", returns true.
+    // Returns false only when a restorable copy exists, could not be moved back and the target is still missing,
+    // so a caller that writes must not start a fresh note; every other outcome, including "nothing to restore", returns true.
     internal static bool RestoreRecovered(string root, string target)
     {
         var targetName = Path.GetFileName(target);
@@ -190,7 +190,8 @@ public static partial class NoteFile
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 Report($"Could not restore {targetName} from {candidates[0]}: {error}");
-                return false;
+                // If the target was recreated since the check, the move lost to it; that is not a failed restore.
+                return FileMetadata.At(safe) is not null;
             }
 
             Report($"Restored {targetName} from {candidates[0]}");
