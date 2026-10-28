@@ -26,6 +26,7 @@ func checkAppReliability() async throws {
     try await checkHotkeyRedirectEndsWithRetryWarning()
     try await checkAmbiguousCaptureDestinations()
     try await checkQueuedSubmissionSurvivesQuit()
+    try await checkRetypedFailedSubheadingSavesOnce()
     try await checkSessionChangeSurvivesIndexFailure()
     try await checkFailedCaptureDoesNotBlockNote()
     try await checkBlockedTitlePickerKeepsRetryWarning()
@@ -1202,6 +1203,38 @@ private func checkQueuedSubmissionSurvivesQuit() async throws {
             throw SelfTestFailure(pastDeadline ? "A queued subheading started after the shutdown deadline"
                                                : "A subheading queued behind a busy action was dropped on quit")
         }
+    }
+}
+
+/// A subheading whose commit failed and is then retyped must reuse its identity, so the quit drain
+/// writes it once. A failed subheading with different text stays a separate intent and is still saved.
+@MainActor
+private func checkRetypedFailedSubheadingSavesOnce() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retyped-subheading-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vaultRoot = root.appendingPathComponent("Vault")
+    let pipeline = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let controller = AppController(pipeline: pipeline, presentsUI: false)
+    let session = try await controller.startSession(name: "Linked")
+    // A second hard link makes the session note unsafe to write, so each commit fails.
+    let link = root.appendingPathComponent("second-link.md")
+    try FileManager.default.linkItem(at: vaultRoot.appendingPathComponent(session.notePath), to: link)
+    for heading in ["Retyped heading", "Other heading"] {
+        do {
+            _ = try await controller.addSubheading(heading)
+            throw SelfTestFailure("A subheading unexpectedly saved to an unsafe note")
+        } catch is SelfTestFailure { throw SelfTestFailure("A subheading unexpectedly saved to an unsafe note") }
+        catch {}
+    }
+    try FileManager.default.removeItem(at: link)
+    guard try await controller.addSubheading("Retyped heading") != nil else {
+        throw SelfTestFailure("A retyped subheading did not save once the note was writable")
+    }
+    _ = await controller.beginTermination().value
+    let note = try String(contentsOf: vaultRoot.appendingPathComponent(session.notePath), encoding: .utf8)
+    guard note.components(separatedBy: "## Retyped heading\n").count - 1 == 1,
+          note.components(separatedBy: "## Other heading\n").count - 1 == 1 else {
+        throw SelfTestFailure("A retyped failed subheading was not written exactly once alongside the other failed subheading")
     }
 }
 
