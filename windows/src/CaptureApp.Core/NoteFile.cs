@@ -135,6 +135,8 @@ public static partial class NoteFile
     // Test seams: replace/move used by ReplaceFile instead of the real calls, scoped to the calling flow.
     internal static readonly AsyncLocal<Action<string, string>?> ReplaceHook = new();
     internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
+    // Test seam: replaces the note append's write (handle, offset, data), so a test can write some bytes and then fail.
+    internal static readonly AsyncLocal<Action<Microsoft.Win32.SafeHandles.SafeFileHandle, long, byte[]>?> AppendWriteHook = new();
 
     internal static void Report(string message)
     {

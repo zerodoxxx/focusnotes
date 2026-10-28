@@ -240,6 +240,32 @@ public sealed class NoteWriterTests
         }
     }
 
+    [Fact]
+    public void FailedAppendRollsBackPartialBytesAndReplayWritesTheNoteOnce()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var note = CheckVault.Capture("typed body", CaptureContentKind.Note);
+        var file = e.Write("Rollback.md", "# Rollback\n\nexisting\n");
+        var before = File.ReadAllBytes(file);
+        var destination = CheckVault.Destination(file, "Rollback");
+        // The write lands the marker line and then fails, like a full disk or a dropped network vault.
+        NoteFile.AppendWriteHook.Value = (handle, offset, data) =>
+        {
+            RandomAccess.Write(handle, data.AsSpan(0, data.AsSpan().IndexOf("-->"u8) + 3), offset);
+            throw new IOException("disk full");
+        };
+        try { Assert.Throws<IOException>(() => e.Writer.AppendIfMissing(note, destination, noteMarkerIsIdentity: true)); }
+        finally { NoteFile.AppendWriteHook.Value = null; }
+        Assert.Equal(before, File.ReadAllBytes(file));
+        e.Writer.AppendIfMissing(note, destination, noteMarkerIsIdentity: true);
+        var saved = File.ReadAllBytes(file);
+        Assert.Equal("# Rollback\n\nexisting\n\n" + CaptureFormat.Block(note, "", CheckVault.Zone), CheckVault.Read(file));
+        Assert.Equal(1, Count(CheckVault.Read(file), "<!-- note:" + note.Id.ToString("D")));
+        e.Writer.AppendIfMissing(note, destination, noteMarkerIsIdentity: true);
+        Assert.Equal(saved, File.ReadAllBytes(file));
+    }
+
     [UnixFact]
     public void CacheFingerprintUsesCtimeAndInodeAndEvictsAfterEightDestinations()
     {

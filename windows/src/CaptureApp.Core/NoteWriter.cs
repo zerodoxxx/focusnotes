@@ -203,9 +203,38 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     }
 
                     var data = NoteFile.Utf8.GetBytes(separator + emitted);
-                    stream.Seek(0, SeekOrigin.End);
-                    stream.Write(data);
-                    stream.Flush(flushToDisk: true);
+                    // Written through the handle, not the stream's buffer: a stuck buffered flush would otherwise
+                    // be retried (and could leave partial bytes again) when the stream is disposed after rollback.
+                    var handle = stream.SafeFileHandle;
+                    try
+                    {
+                        if (NoteFile.AppendWriteHook.Value is { } hook)
+                        {
+                            hook(handle, initial.Size, data);
+                        }
+                        else
+                        {
+                            RandomAccess.Write(handle, data, initial.Size);
+                            RandomAccess.FlushToDisk(handle);
+                        }
+                    }
+                    catch
+                    {
+                        // A failed append can leave a valid note marker followed by only part of its body, and replay
+                        // accepts the marker alone, so drop this attempt's bytes before the error triggers a retry.
+                        // If rollback fails, still surface the original write error.
+                        try
+                        {
+                            RandomAccess.SetLength(handle, initial.Size);
+                        }
+                        catch (Exception rollback)
+                        {
+                            NoteFile.Report($"Append rollback failed for {target}; partial bytes may remain: {rollback}");
+                        }
+
+                        throw;
+                    }
+
                     var written = FileMetadata.Of(stream);
                     afterAppend?.Invoke(target);
                     if (!Current(stream, written, location))
