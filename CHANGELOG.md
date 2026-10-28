@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `e2672b2`)
+Last Updated: 2026-10-28 (previous commit: `98108ab`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -40,6 +40,8 @@ All notable changes to focusnotes are recorded here. The format follows
 - Windows: the title picker saves a picked suggestion to that exact note and shows the path for nested, HOME and same-titled notes, so notes sharing a heading (such as `Biology.md` and `Biology 2.md`) can each be chosen.
 - Windows: starting, ending, resuming or renaming a session, a folder session shortcut and a subheading now wait for a capture still being acquired, so it can't be saved to Inbox or the next session after the session changes.
 - Windows: retyping a subheading that failed to save no longer writes it twice when the app quits.
+- macOS: Save as New Note on a title already at the file-name length limit (about 120 characters, fewer for CJK and emoji) no longer hangs the app; the number is kept by shortening the title, as on Windows.
+- macOS: a subheading that failed to save and was then typed again is no longer written twice when the app quits.
 
 ## [0.1.0] - Unreleased
 
