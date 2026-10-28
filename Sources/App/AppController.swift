@@ -140,6 +140,8 @@ final class AppController: NSObject, NSMenuDelegate {
     private(set) var commitTail: Task<SavedCapture, Error>?
     private var commitGeneration = 0
     private var preparedJobs: [UUID: Task<CaptureJob, Error>] = [:]
+    // Subheading jobs in `preparedJobs` whose commit already threw; only these can be reused by a retyped subheading.
+    private var failedSubheadingIDs = Set<UUID>()
     private var acquisitionTask: Task<Void, Never>?
     private var acquisitionGeneration = 0
     private var acquisitionFallback: PendingCapture?
@@ -1354,8 +1356,22 @@ final class AppController: NSObject, NSMenuDelegate {
         await processingTail?.value
         _ = commitPending()
         let pipeline = pipeline
-        let capture = Capture(id: UUID(), createdAt: Date(), content: .subheading(text), source: CaptureSource())
-        let preparation = Task.detached(priority: .userInitiated) {
+        // Retyping a subheading whose commit failed retries that capture and id, so the quit drain
+        // cannot also write it. Only a failed job with the same text and destination matches; a
+        // queued or different one is left alone.
+        var retry: Task<CaptureJob, Error>?
+        var capture = Capture(id: UUID(), createdAt: Date(), content: .subheading(text), source: CaptureSource())
+        failedSubheadingIDs.formIntersection(preparedJobs.keys)
+        for id in failedSubheadingIDs {
+            guard let candidate = preparedJobs[id], let job = try? await candidate.value,
+                  job.prepared.capture.content == .subheading(text),
+                  destination == nil || job.prepared.destination == destination else { continue }
+            retry = candidate
+            capture = job.prepared.capture
+            failedSubheadingIDs.remove(id)
+            break
+        }
+        let preparation = retry ?? Task.detached(priority: .userInitiated) { [capture] in
             let prepared = try await pipeline.prepareCapture(capture, destination: destination)
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
@@ -1371,7 +1387,12 @@ final class AppController: NSObject, NSMenuDelegate {
         commitGeneration += 1
         let generation = commitGeneration
         defer { if commitGeneration == generation { commitTail = nil } }
-        let saved = try await task.value
+        let saved: SavedCapture
+        do { saved = try await task.value }
+        catch {
+            failedSubheadingIDs.insert(capture.id)
+            throw error
+        }
         preparedJobs.removeValue(forKey: capture.id)
         showToast(Toast(style: .success, title: "Subheading added", subtitle: text))
         return saved
