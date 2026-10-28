@@ -318,6 +318,27 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
                 "a second generated-title note in the same minute must get a numbered file")
     let rStamp = try resolver("\n\n")
     try require(rStamp == nil, "resolver: generated titles never match")
+    // Save as New on a leaf already at the 120-character / 220-byte cap keeps the whole numbered
+    // suffix by shortening the base leaf, and never loops on an unchanged path. Mirrors the
+    // Windows LongNoteCollisionTests cases.
+    for (leaf, numberedBase) in [
+        (String(repeating: "a", count: 120), String(repeating: "a", count: 118)),
+        (String(repeating: "計", count: 72) + "abcd", String(repeating: "計", count: 72) + "ab"),
+        (String(repeating: "😀", count: 55), String(repeating: "😀", count: 54)),
+    ] {
+        let longFirst = try await service.prepareNote(typed("# \(leaf)\nbody"), calendar: calendar)
+        let longSecond = try await service.prepareNote(typed("# \(leaf)\nbody"), newNote: true, calendar: calendar)
+        let longThird = try await service.prepareNote(typed("# \(leaf)\nbody"), newNote: true, calendar: calendar)
+        try require(longFirst.destination.url.lastPathComponent == leaf + ".md"
+                    && longSecond.destination.url.lastPathComponent == numberedBase + " 2.md"
+                    && longThird.destination.url.lastPathComponent == numberedBase + " 3.md"
+                    && longSecond.createsNote == true && longThird.createsNote == true,
+                    "Save as New Note on a max-length leaf must keep the numbered suffix: \(numberedBase.prefix(3))")
+        for prepared in [longFirst, longSecond, longThird] {
+            let stem = prepared.destination.url.deletingPathExtension().lastPathComponent
+            try require(stem.count <= 120 && stem.utf8.count <= 220, "numbered long names must stay within the name limits")
+        }
+    }
     let rNone = try resolver("Pathbox/Nothingthere")
     try require(rNone == nil, "resolver: unmatched path")
     let rInbox = try resolver("Inbox")

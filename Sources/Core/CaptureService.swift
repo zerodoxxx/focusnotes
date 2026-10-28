@@ -146,9 +146,7 @@ public actor CaptureService {
         if !appendsToMatch, locationExists || preparedNoteURLs.contains(location.url) {
             var suffix = 2
             while true {
-                var components = pathName.components
-                components[components.count - 1] = NoteTitle.fileStem(for: "\(pathName.leafName) \(suffix)")
-                let reservedName = try NotePathName.validated(scope: pathName.scope, components: components)
+                let reservedName = try Self.numberedName(pathName, suffix: suffix)
                 let candidate = try vault.resolveNoteName(reservedName)
                 if !preparedNoteURLs.contains(candidate.url), !FileManager.default.fileExists(atPath: candidate.url.path) {
                     selectedName = reservedName
@@ -163,6 +161,27 @@ public actor CaptureService {
         let destination = Destination(url: location.url, title: destinationTitle, kind: .note)
         preparedNoteURLs.insert(destination.url)
         return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
+    }
+
+    /// `name` with ` suffix` appended to its leaf. `fileStem` caps a leaf at 120 characters and 220
+    /// bytes, so a leaf at the cap is shortened (by grapheme, from the end) until the whole suffix
+    /// survives; otherwise every candidate would equal the occupied path. A near-limit folder path
+    /// can need a shorter leaf too. Throws `tooLong` once the leaf is exhausted.
+    private static func numberedName(_ name: NotePathName, suffix: Int) throws -> NotePathName {
+        let ending = " \(suffix)"
+        let graphemes = Array(name.leafName)
+        for length in stride(from: graphemes.count, to: 0, by: -1) {
+            let leaf = String(graphemes[..<length]) + ending
+            guard NoteTitle.fileStem(for: leaf) == leaf else { continue }
+            var components = name.components
+            components[components.count - 1] = leaf
+            do {
+                return try NotePathName.validated(scope: name.scope, components: components)
+            } catch NotePathNameError.tooLong {
+                continue
+            }
+        }
+        throw NotePathNameError.tooLong
     }
 
     /// The destination a default (not Save as New) typed save would append to, if any: Inbox for a bare
