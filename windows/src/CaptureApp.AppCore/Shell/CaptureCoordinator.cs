@@ -33,6 +33,8 @@ public sealed class CaptureCoordinator
     private readonly ICaptureHost host;
     private readonly AppLog log;
     private readonly Dictionary<Guid, Task<CaptureJob>> preparedJobs = [];
+    // Subheading jobs in preparedJobs whose commit already threw; only these can be reused by a retyped subheading.
+    private readonly HashSet<Guid> failedSubheadingIds = [];
     private readonly Dictionary<Guid, Task<CaptureJob>> recoveryJobs = [];
     private readonly Dictionary<Guid, Task> recoveryPersistences = [];
     private readonly Dictionary<Guid, Task<string?>> deferredOcr = [];
@@ -629,8 +631,29 @@ public sealed class CaptureCoordinator
         _ = CommitPending();
         await WaitForProcessingAsync().ConfigureAwait(false);
         _ = CommitPending();
+        // Retyping a subheading whose commit failed retries that capture and id, so the quit drain cannot also write it.
+        // Only a failed job with the same text and destination matches; a queued or different one is left alone.
+        Task<CaptureJob>? retry = null;
         var capture = new Capture(Guid.NewGuid(), DateTimeOffset.UtcNow, CaptureContent.Subheading(text), new CaptureSource());
-        var preparation = Task.Run(() => Pipeline.PrepareSubheading(capture, destination));
+        KeyValuePair<Guid, Task<CaptureJob>>[] failed;
+        lock (gate)
+        {
+            failedSubheadingIds.IntersectWith(preparedJobs.Keys);
+            failed = failedSubheadingIds.Select(id => KeyValuePair.Create(id, preparedJobs[id])).ToArray();
+        }
+
+        foreach (var (id, candidate) in failed)
+        {
+            if (await TryResult(candidate).ConfigureAwait(false) is not { } job || job.Prepared.Capture.Content != capture.Content ||
+                destination is not null && job.Prepared.Destination != destination) { continue; }
+            retry = candidate;
+            capture = job.Prepared.Capture;
+            lock (gate) { failedSubheadingIds.Remove(id); }
+            break;
+        }
+
+        var reused = capture;
+        var preparation = retry ?? Task.Run(() => Pipeline.PrepareSubheading(reused, destination));
         Task<SavedCapture> task;
         int generation;
         lock (gate)
@@ -650,6 +673,11 @@ public sealed class CaptureCoordinator
 
         SavedCapture saved;
         try { saved = await task.ConfigureAwait(false); }
+        catch
+        {
+            lock (gate) { failedSubheadingIds.Add(capture.Id); }
+            throw;
+        }
         finally
         {
             // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.

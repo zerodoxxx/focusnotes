@@ -75,6 +75,39 @@ public sealed class TypedNoteSaveTests
     }
 
     [Fact]
+    public async Task RetypedFailedSubheadingIsWrittenOnceAcrossQuit()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
+        await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Tradeoffs"));
+        File.Delete(pipeline.Journal.DirectoryPath);
+
+        // The retyped heading retries the failed capture and id, so the quit drain has nothing left to write.
+        Assert.NotNull(await coordinator.AddSubheadingAsync("## Tradeoffs "));
+        Assert.True(await coordinator.BeginTermination());
+        Assert.Equal(1, File.ReadAllText(pipeline.Vault.InboxUrl).Split("## Tradeoffs").Length - 1);
+    }
+
+    [Fact]
+    public async Task DifferentRetypedSubheadingKeepsTheFailedOneForTheQuitDrain()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
+        File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
+        await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Alpha"));
+        File.Delete(pipeline.Journal.DirectoryPath);
+
+        Assert.NotNull(await coordinator.AddSubheadingAsync("Beta"));
+        Assert.True(await coordinator.BeginTermination());
+        var inbox = File.ReadAllText(pipeline.Vault.InboxUrl);
+        Assert.Equal(1, inbox.Split("## Alpha").Length - 1);
+        Assert.Equal(1, inbox.Split("## Beta").Length - 1);
+    }
+
+    [Fact]
     public async Task FailedJournalRemovalKeepsTheAppendRetryable()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows file-sharing semantics.");
