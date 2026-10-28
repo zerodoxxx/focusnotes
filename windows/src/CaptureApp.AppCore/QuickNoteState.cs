@@ -8,7 +8,10 @@ public sealed class QuickNoteState
 {
     public Destination? Destination { get; set; }
     public NoteFolder? Folder { get; }
-    public string? DestinationLabel => Destination?.Title ?? (Folder is { } folder ? "Folder: " + folder.RawValue : null);
+    /// <summary>A chosen session or Browse note; null while the typed name picks the note, as in a folder quick note.</summary>
+    public string? DestinationLabel => Destination?.Title;
+    /// <summary>The title shown while a folder quick note is blank; typed text then names the note in that folder.</summary>
+    public string? FolderLabel => Folder is { } folder ? "Folder: " + folder.RawValue : null;
     public bool OutsideSession { get; private set; }
     /// Opened by the outside-session shortcut; blank New note returns here instead of to the session.
     public bool LaunchedOutside { get; }

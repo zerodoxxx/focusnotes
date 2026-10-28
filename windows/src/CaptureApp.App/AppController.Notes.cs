@@ -73,7 +73,8 @@ internal sealed partial class AppController
                 var state = new QuickNoteState(sessionDestination, restored.PinOnSave, folder, outsideSession);
                 pipeline.Drafts.Store(restored.Text, state.PinOnSave, folder: folder);
                 quickNote.PositionStore ??= new SettingsPanelPositionStore(Settings);
-                quickNote.Present(state.DestinationLabel, IsPinned(state.Destination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination, outsideSession));
+                // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
+                quickNote.Present(state.DestinationLabel, IsPinned(state.Destination, state.PinOnSave), restored.Text, NoteHandlers(c, state, sessionDestination, outsideSession), state.FolderLabel);
                 _ = Task.Run(async () =>
                 {
                     var list = await c.SuggestionSnapshotAsync(false);

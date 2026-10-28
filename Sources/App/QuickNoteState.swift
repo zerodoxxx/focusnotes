@@ -6,7 +6,10 @@ import Core
 final class QuickNoteState {
     var destination: Destination?
     let folder: NoteFolder?
-    var destinationLabel: String? { destination?.title ?? folder.map { "Folder: \($0.rawValue)" } }
+    /// A chosen session or Browse note; nil while the typed name picks the note, as in a folder quick note.
+    var destinationLabel: String? { destination?.title }
+    /// The title shown while a folder quick note is blank; typed text then names the note in that folder.
+    var folderLabel: String? { folder.map { "Folder: \($0.rawValue)" } }
     var outsideSession = false
     /// Opened by the outside-session shortcut; blank ⌘N returns here instead of to the session.
     let launchedOutside: Bool
