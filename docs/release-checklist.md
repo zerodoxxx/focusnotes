@@ -1,6 +1,6 @@
 # Release review checklist
 
-Last Updated: 2026-10-28 (previous commit: `ed1551e`)
+Last Updated: 2026-10-28 (previous commit: `e2672b2`)
 
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified

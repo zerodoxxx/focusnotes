@@ -1,6 +1,6 @@
 # focusnotes reference
 
-Last Updated: 2026-10-28 (previous commit: `c2252eb`)
+Last Updated: 2026-10-28 (previous commit: `9d90df6`)
 
 Detailed behaviour of capture, note storage and the quick-note editor. For setup, see the [README](../README.md).
 
