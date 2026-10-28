@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-28 (previous commit: `d2abe21`)
+Last Updated: 2026-10-28 (previous commit: `86ffe3f`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -24,6 +24,8 @@ All notable changes to focusnotes are recorded here. The format follows
 - macOS: quitting while the app is still launching no longer starts the initial index scan during shutdown.
 - Windows: after a second failed update apply, the next launch now deletes the downloaded package for that version, and any damaged package, so Retry downloads it again instead of reusing the failing package. Readable packages of other versions are kept, and a package that can't be deleted is logged without hiding the "Update failed" state.
 - Windows: an exception in a vault-change observer is now written to the app log instead of being ignored.
+- Windows: a failed note append (for example, a full disk or a dropped network vault) no longer leaves a typed note's marker without its body. The append is truncated back to the note's original length, so the retry writes the whole note.
+- Windows: when a recovered copy of a note can't be moved back in place, an append now fails and the capture is kept for retry instead of starting a new note holding only the new capture that hid the old one.
 - macOS: starting, resuming or ending a session no longer shows an error when only the search-index update afterwards fails; the session change and its toast stand.
 - macOS: a quick note, subheading or session name submitted while the app was busy is no longer dropped when the app quits; it is saved or applied during the five-second quit drain if it starts before that deadline. An ambiguous session name submitted then is logged rather than started.
 - macOS: one note changing while the search index syncs no longer aborts the whole sync; that note keeps its existing results and is picked up by the next sync, and deleted notes are still removed.

@@ -130,7 +130,12 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             lock (NoteFile.Gate(target))
             {
                 // A replace that lost the note leaves a hidden copy; put it back so the append extends the old note.
-                NoteFile.RestoreRecovered(location.Root, target);
+                // If it cannot be put back yet, fail so the capture is retried instead of starting a fresh note.
+                if (!NoteFile.RestoreRecovered(location.Root, target))
+                {
+                    throw new VaultFileException(VaultFileError.Unavailable, $"The recovered copy of {Path.GetFileName(target)} could not be restored yet.");
+                }
+
                 if (savedMarker is not null)
                 {
                     NoteFile.Create(NoteFile.Utf8.GetBytes(header + block), location.Root, location.RelativePath);
@@ -203,9 +208,38 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     }
 
                     var data = NoteFile.Utf8.GetBytes(separator + emitted);
-                    stream.Seek(0, SeekOrigin.End);
-                    stream.Write(data);
-                    stream.Flush(flushToDisk: true);
+                    // Written through the handle, not the stream's buffer: a stuck buffered flush would otherwise
+                    // be retried (and could leave partial bytes again) when the stream is disposed after rollback.
+                    var handle = stream.SafeFileHandle;
+                    try
+                    {
+                        if (NoteFile.AppendWriteHook.Value is { } hook)
+                        {
+                            hook(handle, initial.Size, data);
+                        }
+                        else
+                        {
+                            RandomAccess.Write(handle, data, initial.Size);
+                            RandomAccess.FlushToDisk(handle);
+                        }
+                    }
+                    catch
+                    {
+                        // A failed append can leave a valid note marker followed by only part of its body, and replay
+                        // accepts the marker alone, so drop this attempt's bytes before the error triggers a retry.
+                        // If rollback fails, still surface the original write error.
+                        try
+                        {
+                            RandomAccess.SetLength(handle, initial.Size);
+                        }
+                        catch (Exception rollback)
+                        {
+                            NoteFile.Report($"Append rollback failed for {target}; partial bytes may remain: {rollback}");
+                        }
+
+                        throw;
+                    }
+
                     var written = FileMetadata.Of(stream);
                     afterAppend?.Invoke(target);
                     if (!Current(stream, written, location))
