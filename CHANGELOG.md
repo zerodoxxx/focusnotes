@@ -53,6 +53,7 @@ All notable changes to focusnotes are recorded here. The format follows
 - Windows: retyping a subheading that failed to save no longer writes it twice when the app quits.
 - macOS: Save as New Note on a title already at the file-name length limit (about 120 characters, fewer for CJK and emoji) no longer hangs the app; the number is kept by shortening the title, as on Windows.
 - macOS: a subheading that failed to save and was then typed again is no longer written twice when the app quits.
+- macOS and Windows: a folder Quick Note shortcut now behaves like a standalone quick note in that folder. The title shows the folder until you type, then the note name; the footer reads Create note or Add to note for the name in that folder instead of always Add to note, and Save as New Note makes a numbered copy there instead of appending.
 
 ## [0.1.0] - Unreleased
 

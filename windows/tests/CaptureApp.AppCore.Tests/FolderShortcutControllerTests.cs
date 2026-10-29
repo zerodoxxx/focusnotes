@@ -20,6 +20,10 @@ public sealed class FolderShortcutControllerTests
         Assert.Equal(active, pipeline.Sessions.Current());
         Assert.Equal(before, File.ReadAllText(pipeline.Vault.ManagedUrl(active.NotePath)));
         Assert.Empty(pipeline.Drafts.Load());
+        // The editor's footer and Save as New Note resolve a folder note's typed name inside the folder.
+        var typed = new TypedNote("Biology\n\nmore", DateTimeOffset.Now, TimeZoneInfo.Utc, pipeline.Vault.NamingRules);
+        Assert.Equal("Biology", CaptureService.AppendTarget(typed, pipeline.Service.ReservedNoteUrls, pipeline.Vault, folder: folder)?.Title);
+        Assert.Null(CaptureService.AppendTarget(typed, pipeline.Service.ReservedNoteUrls, pipeline.Vault));
         var picked = new Destination(Path.Combine(pipeline.Vault.Root, "Chosen.md"), "Chosen", NoteKind.Note);
         var browsed = Assert.IsType<SavedCapture>(await coordinator.AddNoteAsync("different\n\nbody", picked, folder: folder));
         Assert.Equal(picked, browsed.Destination);
@@ -59,6 +63,7 @@ public sealed class FolderShortcutControllerTests
         Assert.Null(state.Destination);
         Assert.Equal(folder, state.Folder);
         Assert.True(state.OutsideSession);
-        Assert.Equal("Folder: Work/Research", state.DestinationLabel);
+        Assert.Null(state.DestinationLabel);
+        Assert.Equal("Folder: Work/Research", state.FolderLabel);
     }
 }

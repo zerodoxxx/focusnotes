@@ -385,6 +385,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     private var currentWidth = OverlayTheme.quickMinWidth
     private var pointerInside = false
     private(set) var destination: String?
+    /// The title while no destination is set and the text is blank (a folder quick note's folder); nil uses "New note".
+    let fallbackTitle: String?
     private(set) var isPinned = false
     var holdsReveal = false { didSet { if holdsReveal != oldValue { applyReveal(animated: true) } } }
     var visibleScreenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 900 { didSet { if visibleScreenHeight != oldValue { measure() } } }
@@ -428,8 +430,9 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         if card != nil { resize(animated: false) }
     }
 
-    init(destination: String?, text: String, restoredDraft: Bool) {
+    init(destination: String?, fallbackTitle: String? = nil, text: String, restoredDraft: Bool) {
         self.restoredDraft = restoredDraft
+        self.fallbackTitle = fallbackTitle
         super.init(frame: .zero)
         wantsLayer = true
         addSubview(noteSurface)
@@ -516,10 +519,10 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         needsLayout = true
         measure() // the caption can raise the minimum width
     }
-    /// Destination title, else the title the text will be saved under, else a placeholder name.
+    /// Destination title, else the title the text will be saved under, else the fallback or placeholder name.
     private func updateTitle() {
         let text = textView.string
-        var value = destination ?? OverlayTheme.quickEmptyTitle
+        var value = destination ?? fallbackTitle ?? OverlayTheme.quickEmptyTitle
         var appends = destination != nil
         if destination == nil, let first = text.firstIndex(where: { !$0.isWhitespace }) {
             // Only the head of the note can name it, so keep this cheap for long drafts: skip leading blank
@@ -1066,8 +1069,9 @@ public final class NoteEditorPanel {
     public func focus() { if isVisible { panel?.makeKey(); panel?.orderFrontRegardless() } }
     public init() {}
 
-    public func present(destination: String?, isPinned: Bool, draft: String, handlers: NoteEditorHandlers) {
-        let view = NoteEditorView(destination: destination, text: draft, restoredDraft: !draft.isEmpty)
+    /// `fallbackTitle` names a blank note without choosing its destination, so typed text still resolves the note.
+    public func present(destination: String?, fallbackTitle: String? = nil, isPinned: Bool, draft: String, handlers: NoteEditorHandlers) {
+        let view = NoteEditorView(destination: destination, fallbackTitle: fallbackTitle, text: draft, restoredDraft: !draft.isEmpty)
         view.setDestination(destination, isPinned: isPinned)
         let mouse = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {

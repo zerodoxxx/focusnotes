@@ -150,7 +150,7 @@ medium glyph, 3pt apart, 12pt from the card's right edge). Two groups divided by
 | --- | --- | --- | --- |
 | 1 | New Note | ⌘N | Saves the current text, then opens a blank note. With empty text it clears the chosen destination and restores session routing. |
 | 1 | Write outside session | ⇧⌘N | Shown only with an active session. Toggles standalone routing for this note; choosing it again restores the session destination. |
-| 1 | Save as New Note | ⌥⌘↩ | Creates a numbered note when a standalone title names an existing note, including while writing outside a session. Disabled for an explicit Browse or session destination. |
+| 1 | Save as New Note | ⌥⌘↩ | Creates a numbered note when a standalone title names an existing note, including while writing outside a session and in a folder quick note (numbered in that folder). Disabled for an explicit Browse or session destination. |
 | 1 | Add to Pinned / Remove from Pinned | ⇧⌘P | Adds/removes a note in Browse’s Pinned section. This does not control the window. For an unsaved draft, the intent persists with the draft and pins its created note on save. |
 | 2 | Open as Note | ⌘O | The maximise action (see §6). |
 | 2 | Copy as Markdown | ⇧⌘C | Copies the text. |

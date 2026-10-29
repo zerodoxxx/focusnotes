@@ -62,6 +62,8 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
     private bool pointerInside, measurePending, suppressMeasure, disposed;
     private NoteCardView? card;
     private string? destination;
+    /// <summary>The title while no destination is set and the text is blank (a folder quick note's folder); null uses "New note".</summary>
+    private readonly string? fallbackTitle;
     private bool isPinned;
 
     public MarkdownEditor Editor { get; } = new();
@@ -107,11 +109,11 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
         Canvas.SetLeft(element, x); Canvas.SetTop(element, y); element.Width = Math.Max(Tokens.Zero, width); element.Height = Math.Max(Tokens.Zero, height);
     }
 
-    public QuickNoteView(string? destination, bool isPinned, string draft, bool restoredDraft)
+    public QuickNoteView(string? destination, bool isPinned, string draft, bool restoredDraft, string? fallbackTitle = null)
         : base(Tokens.QuickMinWidth, Tokens.QuickTopBandHeight + Tokens.QuickFooterHeight + Tokens.EditorMinLines * Math.Ceiling(Tokens.EditorFontSize * 1.4), Tokens.QuickPanelRadius)
     {
         quickNoteTheme = new ThemeManager(Resources, darkOverride: true);
-        this.restoredDraft = restoredDraft; this.destination = destination; this.isPinned = isPinned;
+        this.restoredDraft = restoredDraft; this.destination = destination; this.fallbackTitle = fallbackTitle; this.isPinned = isPinned;
         AutomationProperties.SetName(this, "Quick Note");
         AutomationProperties.SetName(Editor, "Note text");
         cluster.SetResourceReference(Border.BackgroundProperty, "QuickClusterFill"); cluster.SetResourceReference(Border.BorderBrushProperty, "QuickClusterBorder");
@@ -159,10 +161,10 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
         saveHint = new KeycapView("Ctrl+↩", caption);
         footer.Children.Add(saveHint);
     }
-    /// <summary>Destination title, else the title the text will be saved under, else a placeholder name.</summary>
+    /// <summary>Destination title, else the title the text will be saved under, else the fallback or placeholder name.</summary>
     private void UpdateTitle()
     {
-        var text = Editor.Head(4_000); var value = destination ?? Tokens.QuickEmptyTitle;
+        var text = Editor.Head(4_000); var value = destination ?? fallbackTitle ?? Tokens.QuickEmptyTitle;
         var appends = destination is not null;
         if (destination is null && text.TakeWhile(char.IsWhiteSpace).Count() is var first && first < text.Length)
         {
@@ -498,11 +500,12 @@ public sealed class QuickNoteController
     public bool IsVisible => panel?.IsVisible == true;
     public bool IsActive => panel?.IsActive == true;
 
-    public void Present(string? destination, bool isPinned, string draft, QuickNoteHandlers handlers)
+    /// <summary><paramref name="fallbackTitle"/> names a blank note without choosing its destination, so typed text still resolves the note.</summary>
+    public void Present(string? destination, bool isPinned, string draft, QuickNoteHandlers handlers, string? fallbackTitle = null)
     {
         panel?.Dismiss(DismissReason.Replaced, false);
         var monitor = MonitorGeometry.UnderPointer();
-        var content = new QuickNoteView(destination, isPinned, draft, draft.Length > 0)
+        var content = new QuickNoteView(destination, isPinned, draft, draft.Length > 0, fallbackTitle)
         {
             TitleForText = handlers.TitleForText ?? QuickNoteHandlers.DefaultTitle,
             ExistingTitleForText = handlers.ExistingTitleForText ?? (_ => null),

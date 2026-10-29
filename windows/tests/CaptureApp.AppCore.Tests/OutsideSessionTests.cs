@@ -248,7 +248,9 @@ public sealed class OutsideSessionTests
         Assert.True(idle.PinOnSave);
         var folder = new QuickNoteState(null, folder: new NoteFolder("science"), outsideSession: true);
         Assert.True(folder.OutsideSession);
-        Assert.Equal("Folder: science", folder.DestinationLabel);
+        // The folder titles the blank editor but is not a destination, so typed names still resolve inside it.
+        Assert.Null(folder.DestinationLabel);
+        Assert.Equal("Folder: science", folder.FolderLabel);
     }
 
     [Theory]

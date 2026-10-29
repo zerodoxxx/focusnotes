@@ -52,6 +52,7 @@ internal static class Program
         CheckGeometry();
         CheckTaskEditing();
         CheckQuickNoteSaveActions();
+        CheckFolderQuickNote();
         var files = new List<string>();
         foreach (var dark in new[] { false, true })
         {
@@ -206,6 +207,48 @@ internal static class Program
         CheckEscapeEnabled(false);
         view.Perform(NoteActionId.SaveAsNewNote);
         Require(saves == 3 && actions.Count == 1, "typed note: an unmatched escape uses the default save");
+    }
+    /// <summary>A folder quick note titles its blank editor with the folder, which is not a chosen destination: the typed
+    /// name still decides the title, the save hint and Save as New Note within that folder.</summary>
+    private static void CheckFolderQuickNote()
+    {
+        const string folder = "Folder: Work/Research";
+        using var view = new QuickNoteView(null, false, "", false, folder)
+        {
+            ExistingTitleForText = text => text.StartsWith("experiment", StringComparison.Ordinal) ? "Experiment" : null
+        };
+        var actions = new List<NoteActionId>();
+        var saves = 0;
+        view.ActionRequested += actions.Add;
+        view.SaveRequested += () => saves++;
+        string[] Texts() => LogicalDescendants(view).OfType<TextBlock>().Select(text => text.Text).ToArray();
+        bool SaveAsNewEnabled()
+        {
+            view.ShowActions();
+            var enabled = LogicalDescendants(view).OfType<Button>()
+                .Single(item => System.Windows.Automation.AutomationProperties.GetName(item) == "Save as New Note").IsEnabled;
+            view.HideActions();
+            return enabled;
+        }
+
+        Require(!view.AppendsToExisting && Texts().Contains(folder) && Texts().Contains("Create note") && !SaveAsNewEnabled(),
+            "folder note: a blank note shows its folder, the create hint and a disabled Save as New Note");
+        view.Editor.SetText("Fresh idea\nBody");
+        Require(!view.AppendsToExisting && Texts().Contains("Fresh idea") && !Texts().Contains(folder) && Texts().Contains("Create note") && !SaveAsNewEnabled(),
+            "folder note: a name with no note in the folder shows the typed title and the create hint");
+        view.Editor.SetText("experiment\nMore");
+        Require(view.AppendsToExisting && Texts().Contains("Experiment") && Texts().Contains("Add to note") && SaveAsNewEnabled(),
+            "folder note: a name matching a note in the folder shows that note, the append hint and Save as New Note");
+        view.Perform(NoteActionId.SaveAsNewNote);
+        Require(actions.SequenceEqual([NoteActionId.SaveAsNewNote]) && saves == 0,
+            "folder note: Save as New Note requests the escape instead of a default save");
+        view.SetDestination("Browse destination", false);
+        Require(!view.AppendsToExisting && Texts().Contains("Browse destination") && !SaveAsNewEnabled(),
+            "folder note: a Browse destination overrides the typed match");
+        view.SetDestination(null, false);
+        view.Editor.SetText("");
+        Require(!view.AppendsToExisting && Texts().Contains(folder) && Texts().Contains("Create note"),
+            "folder note: clearing the text and destination restores the folder title");
     }
     private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)
     {

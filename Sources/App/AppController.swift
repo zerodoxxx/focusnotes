@@ -1122,7 +1122,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 let initiallyPinned = noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 // Persist a shortcut's explicit destination before editing an existing draft.
                 try pipeline.drafts.store(draft, pinOnSave: state.pinOnSave, folder: folder)
-                editor.present(destination: state.destinationLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
+                // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
+                editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
                         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder)
