@@ -27,16 +27,9 @@ public sealed class TitlePicks
 /// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
 public sealed class CaptureCoordinator
 {
-    private sealed record Staged(Guid Id, Task<CaptureJob> Preparation, Task Persistence);
-
     private readonly object gate = new();
     private readonly ICaptureHost host;
     private readonly AppLog log;
-    private readonly Dictionary<Guid, Task<CaptureJob>> preparedJobs = [];
-    // Subheading jobs in preparedJobs whose commit already threw; only these can be reused by a retyped subheading.
-    private readonly HashSet<Guid> failedSubheadingIds = [];
-    private readonly Dictionary<Guid, Task<CaptureJob>> recoveryJobs = [];
-    private readonly Dictionary<Guid, Task> recoveryPersistences = [];
     private readonly Dictionary<Guid, Task<string?>> deferredOcr = [];
     private readonly HashSet<string> reportedRegistryWarnings = new(StringComparer.Ordinal);
     private PendingCapture? pending;
@@ -44,10 +37,8 @@ public sealed class CaptureCoordinator
     // A titled commit that failed in preparation keeps the capture pending but off implicit commits (AppController.swift pendingNeedsRetryChoice).
     private bool pendingNeedsRetryChoice;
     private bool retryWarningShown;
-    private Staged? staged;
-    private Task<SavedCapture>? commitTail;
+    private Guid? stagedId;
     private Task? commitMonitor;
-    private int commitGeneration;
     private Task? acquisitionTask;
     private int acquisitionGeneration;
     private PendingCapture? acquisitionFallback;
@@ -81,7 +72,7 @@ public sealed class CaptureCoordinator
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
     public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
-    internal Task? CommitTail { get { lock (gate) { return commitTail; } } }
+    internal Task? CommitTail => Pipeline.Unsaved.Tail;
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
     public async Task<int> StartAsync()
@@ -231,10 +222,8 @@ public sealed class CaptureCoordinator
     {
         lock (gate)
         {
-            if (recoveryJobs.ContainsKey(capture.Id)) { return; }
-            var preparation = Task.Run(() => Prepare(capture, null, null));
-            recoveryJobs[capture.Id] = preparation;
-            recoveryPersistences[capture.Id] = Task.Run(async () => Pipeline.Journal.Store(await preparation.ConfigureAwait(false)));
+            if (Pipeline.Unsaved.IsRecorded(capture.Id)) { return; }
+            _ = Pipeline.Unsaved.Record(capture.Id, _ => Prepare(capture, null, null));
         }
     }
 
@@ -255,27 +244,11 @@ public sealed class CaptureCoordinator
         lock (gate) { if (shutdownFinished) { return; } }
         _ = CommitPending();
         var previousNotice = await SaveRetryPendingAsync().ConfigureAwait(true);
-        Task<CaptureJob>? recovery;
-        Task? recoveryPersistence;
+        // The staged default keeps the acquisition record's destination.
+        var persistence = Pipeline.Unsaved.Record(capture.Id, recovered => Prepare(capture, null, recovered?.Prepared.Destination));
         lock (gate)
         {
-            recoveryJobs.TryGetValue(capture.Id, out recovery);
-            recoveryPersistences.TryGetValue(capture.Id, out recoveryPersistence);
-        }
-
-        var preparation = Task.Run(async () =>
-        {
-            var recovered = await TryResult(recovery).ConfigureAwait(false);
-            return Prepare(capture, null, recovered?.Prepared.Destination);
-        });
-        var persistence = Task.Run(async () =>
-        {
-            await TryWait(recoveryPersistence).ConfigureAwait(false);
-            Pipeline.Journal.Store(await preparation.ConfigureAwait(false));
-        });
-        lock (gate)
-        {
-            staged = new(capture.Id, preparation, persistence);
+            stagedId = capture.Id;
             pending = capture;
             // The new capture starts unheld: a failed titled commit may have restored an earlier one since the check above.
             pendingNeedsRetryChoice = false;
@@ -320,15 +293,15 @@ public sealed class CaptureCoordinator
     private async Task<string?> SaveRetryPendingAsync()
     {
         PendingCapture? held;
-        Staged? heldStage;
+        bool heldStaged;
         lock (gate)
         {
             held = pendingNeedsRetryChoice ? pending : null;
-            heldStage = held is not null && staged?.Id == held.Id ? staged : null;
+            heldStaged = held is not null && stagedId == held.Id;
         }
 
         if (held is null) { return null; }
-        var destination = (await TryResult(heldStage?.Preparation).ConfigureAwait(true))?.Prepared.Destination;
+        var destination = !heldStaged ? null : (await Pipeline.Unsaved.RecordedAsync(held.Id).ConfigureAwait(true))?.Prepared.Destination;
         bool stillHeld;
         lock (gate) { stillHeld = pendingNeedsRetryChoice && pending?.Id == held.Id; }
         if (!stillHeld || CommitPending(force: true) is not { } commit) { return null; }
@@ -369,10 +342,7 @@ public sealed class CaptureCoordinator
     public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false, Destination? destination = null)
     {
         PendingCapture capture;
-        Staged? stagedJob;
-        Task<CaptureJob>? recovery;
-        Task? recoveryPersistence;
-        Task<SavedCapture>? previous;
+        bool wasStaged;
         bool terminating;
         lock (gate)
         {
@@ -383,68 +353,40 @@ public sealed class CaptureCoordinator
             pendingToastId = null;
             pendingNeedsRetryChoice = false;
             retryWarningShown = false;
-            previous = commitTail;
-            stagedJob = staged is { } current && current.Id == capture.Id ? current : null;
-            staged = null;
+            wasStaged = stagedId == capture.Id;
+            stagedId = null;
             terminating = isTerminating;
-            recovery = null;
-            if (terminating) { recoveryJobs.TryGetValue(capture.Id, out recovery); }
-            recoveryPersistences.TryGetValue(capture.Id, out recoveryPersistence);
         }
 
         if (host.PresentsUi) { host.DismissStagedToast(); }
-        // Only shutdown's acquired-pixel fallback forces its original destination.
+        // Only shutdown forces the recorded destination (the acquired-pixel fallback, shared by the staged default).
         var preparation = Task.Run(async () =>
         {
             Destination? resolved;
-            if (recovery is not null) { resolved = (await TryResult(recovery).ConfigureAwait(false))?.Prepared.Destination; }
+            if (terminating && await Pipeline.Unsaved.RecordedAsync(capture.Id).ConfigureAwait(false) is { } recorded) { resolved = recorded.Prepared.Destination; }
             else if (destination is not null)
             {
                 // A note removed since the picker opened fails here and keeps the capture.
                 resolved = destination with { Url = Pipeline.Vault.NoteLocation(Pipeline.Vault.NoteId(destination.Url)).Url };
             }
-            else if (noteTitle is null) { resolved = (await TryResult(stagedJob?.Preparation).ConfigureAwait(false))?.Prepared.Destination; }
+            else if (noteTitle is null && wasStaged) { resolved = (await Pipeline.Unsaved.RecordedAsync(capture.Id).ConfigureAwait(false))?.Prepared.Destination; }
             else { resolved = null; }
             return Prepare(capture, noteTitle, resolved);
         });
-        int generation;
-        Task<SavedCapture> task;
-        lock (gate)
-        {
-            preparedJobs[capture.Id] = preparation;
-            // Journal before waiting for earlier writes, so even queued work is recoverable.
-            task = Task.Run(async () =>
-            {
-                var job = await preparation.ConfigureAwait(false);
-                await TryWait(stagedJob?.Persistence).ConfigureAwait(false);
-                await TryWait(recoveryPersistence).ConfigureAwait(false);
-                Pipeline.Journal.Store(job);
-                await TryWait(previous).ConfigureAwait(false);
-                return CommitJob(job, null);
-            });
-            commitTail = task;
-            generation = ++commitGeneration;
-        }
-
-        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle is not null || destination is not null, announce, generation);
+        var task = Pipeline.Unsaved.Commit(capture.Id, preparation, job => CommitJob(job, null));
+        var monitor = ObserveCommitAsync(task, preparation, capture, wasStaged, noteTitle is not null || destination is not null, announce);
         lock (gate) { commitMonitor = monitor; }
         return task;
     }
 
     private async Task ObserveCommitAsync(Task<SavedCapture> task, Task<CaptureJob> preparation, PendingCapture capture,
-        Staged? stagedJob, bool explicitTarget, bool announce, int generation)
+        bool wasStaged, bool explicitTarget, bool announce)
     {
         try
         {
             var saved = await task.ConfigureAwait(false);
             bool noPending;
-            lock (gate)
-            {
-                preparedJobs.Remove(capture.Id);
-                recoveryJobs.Remove(capture.Id);
-                recoveryPersistences.Remove(capture.Id);
-                noPending = pending is null;
-            }
+            lock (gate) { noPending = pending is null; }
 
             if (announce && noPending)
             {
@@ -455,22 +397,22 @@ public sealed class CaptureCoordinator
         }
         catch (Exception error)
         {
-            if (explicitTarget && preparation.IsFaulted && stagedJob is not null)
+            if (explicitTarget && preparation.IsFaulted && wasStaged)
             {
                 // The capture is not lost: keep it pending for another note, or leave it to recovery if a newer one took its place.
                 bool held;
                 lock (gate)
                 {
-                    preparedJobs.Remove(capture.Id);
                     held = pending is null;
                     if (held)
                     {
-                        staged = stagedJob;
+                        stagedId = capture.Id;
                         pending = capture;
                         pendingToastId = null;
                         pendingNeedsRetryChoice = true;
+                        Pipeline.Unsaved.Forget(capture.Id);
                     }
-                    else { preparedJobs[capture.Id] = stagedJob.Preparation; }
+                    else { Pipeline.Unsaved.Keep(capture.Id); }
                 }
 
                 if (held)
@@ -483,14 +425,12 @@ public sealed class CaptureCoordinator
                 }
                 else
                 {
-                    var fallback = (await TryResult(stagedJob.Preparation).ConfigureAwait(false))?.Prepared.Destination;
+                    var fallback = (await Pipeline.Unsaved.RecordedAsync(capture.Id).ConfigureAwait(false))?.Prepared.Destination;
                     host.ShowToast(new(AppToastStyle.Warning, Strings.CouldNotSavePreviousCapture, Strings.RecoveryWillRetry(fallback?.Title)));
                 }
             }
             else { ReportUserSaveFailure(error, Strings.CouldNotSaveCapture); }
         }
-
-        lock (gate) { if (commitGeneration == generation) { commitTail = null; } }
     }
 
     private SavedCapture CommitJob(CaptureJob job, bool? pinOnSave, string? noteText = null, bool outsideSession = false)
@@ -555,7 +495,7 @@ public sealed class CaptureCoordinator
 
     internal Task WaitForProcessingAsync() { Task? tail; lock (gate) { tail = processingTail; } return TryWait(tail); }
 
-    internal Task WaitForCommitsAsync() { Task? tail; lock (gate) { tail = commitTail; } return TryWait(tail); }
+    internal Task WaitForCommitsAsync() => Pipeline.Unsaved.WaitForCommitsAsync();
 
     // Notes and subheadings.
     public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false,
@@ -567,72 +507,15 @@ public sealed class CaptureCoordinator
         if (string.IsNullOrWhiteSpace(text)) { return null; }
         await SettleCapturesAsync().ConfigureAwait(false);
 
-        Task<CaptureJob>? retry = null;
-        KeyValuePair<Guid, Task<CaptureJob>>[] candidates;
-        var superseded = new Dictionary<Guid, Guid>();
-        lock (gate) { candidates = preparedJobs.ToArray(); }
-        foreach (var (key, candidate) in candidates)
-        {
-            if (await TryResult(candidate).ConfigureAwait(false) is not { } job) { continue; }
-            var sameText = job.NoteDraft is { } draft
-                ? CaptureFormat.NoteBody(draft) == text
-                : job.Prepared.Capture.Content == CaptureContent.Note(text);
-            if (sameText)
-            {
-                if (job.NoteOutsideSession != outsideSession || job.NoteFolder != folder ||
-                    destination is not null && job.Prepared.Destination != destination ||
-                    newNote && job.Prepared.CreatesNote != true)
-                {
-                    superseded[key] = job.Prepared.Capture.Id;
-                    continue;
-                }
-
-                retry = candidate;
-                break;
-            }
-        }
-
-        // Remove the durable append first. If removal fails, keep the old job retryable and the draft intact.
-        foreach (var (key, id) in superseded)
-        {
-            Pipeline.Journal.Remove(id);
-            lock (gate) { preparedJobs.Remove(key); }
-        }
-
-        var preparation = retry ?? Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote, outsideSession: outsideSession, folder: folder));
-        var prepared = (await preparation.ConfigureAwait(false)).Prepared;
-        var noteId = prepared.Capture.Id;
-        Task<SavedCapture> task;
-        int generation;
-        lock (gate)
-        {
-            preparedJobs[noteId] = preparation;
-            var previous = commitTail;
-            task = Task.Run(async () =>
-            {
-                var job = await preparation.ConfigureAwait(false);
-                Pipeline.Journal.Store(job);
-                await TryWait(previous).ConfigureAwait(false);
-                return CommitJob(job, pinOnSave, text, outsideSession);
-            });
-            commitTail = task;
-            generation = ++commitGeneration;
-        }
-
-        SavedCapture saved;
-        try { saved = await task.ConfigureAwait(false); }
-        finally
-        {
-            // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.
-            lock (gate)
-            {
-                if (commitGeneration == generation) { commitTail = null; }
-            }
-        }
-
-        lock (gate) { preparedJobs.Remove(noteId); }
-
-        return saved;
+        // A failed note with the same body is retried under its id; the same body with other options supersedes it.
+        bool SameText(CaptureJob job) => job.NoteDraft is { } draft
+            ? CaptureFormat.NoteBody(draft) == text
+            : job.Prepared.Capture.Content == CaptureContent.Note(text);
+        bool SameOptions(CaptureJob job) => job.NoteOutsideSession == outsideSession && job.NoteFolder == folder &&
+            (destination is null || job.Prepared.Destination == destination) && (!newNote || job.Prepared.CreatesNote == true);
+        var job = await Pipeline.Unsaved.FindRetryAsync(kept => SameText(kept) && SameOptions(kept), kept => SameText(kept) && !SameOptions(kept)).ConfigureAwait(false)
+            ?? await Task.Run(() => Pipeline.PrepareNote(text, new CaptureSource(), destination, rawText, newNote: newNote, outsideSession: outsideSession, folder: folder)).ConfigureAwait(false);
+        return await Pipeline.Unsaved.Commit(job.Prepared.Capture.Id, Task.FromResult(job), prepared => CommitJob(prepared, pinOnSave, text, outsideSession)).ConfigureAwait(false);
     }
 
     public async Task<SavedCapture?> AddSubheadingAsync(string rawText, Destination? destination = null)
@@ -642,62 +525,11 @@ public sealed class CaptureCoordinator
         await SettleCapturesAsync().ConfigureAwait(false);
         // Retyping a subheading whose commit failed retries that capture and id, so the quit drain cannot also write it.
         // Only a failed job with the same text and destination matches; a queued or different one is left alone.
-        Task<CaptureJob>? retry = null;
         var capture = new Capture(Guid.NewGuid(), DateTimeOffset.UtcNow, CaptureContent.Subheading(text), new CaptureSource());
-        KeyValuePair<Guid, Task<CaptureJob>>[] failed;
-        lock (gate)
-        {
-            failedSubheadingIds.IntersectWith(preparedJobs.Keys);
-            failed = failedSubheadingIds.Select(id => KeyValuePair.Create(id, preparedJobs[id])).ToArray();
-        }
-
-        foreach (var (id, candidate) in failed)
-        {
-            if (await TryResult(candidate).ConfigureAwait(false) is not { } job || job.Prepared.Capture.Content != capture.Content ||
-                destination is not null && job.Prepared.Destination != destination) { continue; }
-            retry = candidate;
-            capture = job.Prepared.Capture;
-            lock (gate) { failedSubheadingIds.Remove(id); }
-            break;
-        }
-
-        var reused = capture;
-        var preparation = retry ?? Task.Run(() => Pipeline.PrepareSubheading(reused, destination));
-        Task<SavedCapture> task;
-        int generation;
-        lock (gate)
-        {
-            preparedJobs[capture.Id] = preparation;
-            var previous = commitTail;
-            task = Task.Run(async () =>
-            {
-                var job = await preparation.ConfigureAwait(false);
-                Pipeline.Journal.Store(job);
-                await TryWait(previous).ConfigureAwait(false);
-                return CommitJob(job, null);
-            });
-            commitTail = task;
-            generation = ++commitGeneration;
-        }
-
-        SavedCapture saved;
-        try { saved = await task.ConfigureAwait(false); }
-        catch
-        {
-            lock (gate) { failedSubheadingIds.Add(capture.Id); }
-            throw;
-        }
-        finally
-        {
-            // Clear the tail even on failure so it isn't re-awaited later; a failed job stays in preparedJobs for retry.
-            lock (gate)
-            {
-                if (commitGeneration == generation) { commitTail = null; }
-            }
-        }
-
-        lock (gate) { preparedJobs.Remove(capture.Id); }
-
+        var retry = await Pipeline.Unsaved.FindRetryAsync(job => job.Prepared.Capture.Content == capture.Content &&
+            (destination is null || job.Prepared.Destination == destination)).ConfigureAwait(false);
+        var preparation = retry is not null ? Task.FromResult(retry) : Task.Run(() => Pipeline.PrepareSubheading(capture, destination));
+        var saved = await Pipeline.Unsaved.Commit(retry?.Prepared.Capture.Id ?? capture.Id, preparation, job => CommitJob(job, null)).ConfigureAwait(false);
         ShowToast(new(AppToastStyle.Success, Strings.SubheadingAdded, text));
         return saved;
     }
@@ -966,41 +798,15 @@ public sealed class CaptureCoordinator
             lock (gate) { processing = processingTail; }
             await TryWait(processing).ConfigureAwait(false);
             await TryWait(actions).ConfigureAwait(false);
-            Task[] persistences;
-            lock (gate) { persistences = recoveryPersistences.Values.ToArray(); }
-            foreach (var persistence in persistences)
-            {
-                try { await persistence.ConfigureAwait(false); }
-                catch (Exception error) { log.Error($"Shutdown recovery journal failed: {error.GetType().Name}"); }
-            }
-
             lock (gate) { if (shutdownFinished) { return; } }
             _ = CommitPending();
-            await WaitForCommitsAsync().ConfigureAwait(false);
-            lock (gate) { if (shutdownFinished) { return; } }
-            // A journal write itself may have failed earlier: retry the exact prepared capture.
-            KeyValuePair<Guid, Task<CaptureJob>>[] jobs;
-            lock (gate) { jobs = preparedJobs.ToArray(); }
-            foreach (var (id, preparation) in jobs)
-            {
-                try
-                {
-                    var job = await preparation.ConfigureAwait(false);
-                    Pipeline.Journal.Store(job);
-                    CommitJob(job, null);
-                    lock (gate) { preparedJobs.Remove(id); }
-                }
-                catch (Exception error) { log.Error($"Shutdown save retained in journal: {error.GetType().Name}"); }
-            }
-
+            await Pipeline.Unsaved.DrainAsync(job => CommitJob(job, null), () => { lock (gate) { return shutdownFinished; } }).ConfigureAwait(false);
             await TryWait(watcherStop).ConfigureAwait(false);
         });
         var task = Task.Run(async () =>
         {
             var completed = await ShutdownWait.WaitAsync(drain, deadline).ConfigureAwait(false);
-            Task[] persistences;
-            lock (gate) { persistences = recoveryPersistences.Values.ToArray(); }
-            try { await ShutdownWait.WaitAsync(Task.WhenAll(persistences), TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            try { await ShutdownWait.WaitAsync(Pipeline.Unsaved.WhenRecorded(), TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
             catch (Exception error) { log.Error($"Shutdown recovery journal failed: {error.GetType().Name}"); }
             lock (gate)
             {
