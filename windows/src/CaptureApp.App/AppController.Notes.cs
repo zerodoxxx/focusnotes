@@ -53,7 +53,7 @@ internal sealed partial class AppController
             {
                 restored = pipeline.Drafts.LoadSnapshot();
                 folder = requestedFolder is null ? restored.Folder : new NoteFolder(requestedFolder);
-                sessionDestination = folder is not null ? null : await Task.Run(() => pipeline.Service.SessionDestination());
+                sessionDestination = folder is not null ? null : await Task.Run(() => pipeline.SessionDestination());
             }
             catch (Exception error) { c.Report(error, Strings.CouldNotResolveDestination); return; }
 
@@ -150,7 +150,7 @@ internal sealed partial class AppController
                         catch (Exception error) { c.Report(error, Strings.CouldNotResetDraftPin); return; }
                         try
                         {
-                            state.Destination = pipeline.Service.PickedDestination(new NotePick(item.Id, item.Title, state.Kinds.GetValueOrDefault(item.Id, NoteKind.Note)));
+                            state.Destination = pipeline.PickedDestination(new NotePick(item.Id, item.Title, state.Kinds.GetValueOrDefault(item.Id, NoteKind.Note)));
                         }
                         catch (Exception error) { c.Report(error, Strings.CouldNotSelectNote); return; }
                         quickNote.SetDestination(item.Title, pipeline.Pins.IsPinned(item.Id));
@@ -189,7 +189,7 @@ internal sealed partial class AppController
                     error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)), folder: state.Folder);
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
             },
-            ExistingTitleForText: text => pipeline.Service.ExistingTitle(text, state.Intent(), zone),
+            ExistingTitleForText: text => pipeline.ExistingTitle(text, state.Intent(), zone),
             OnSaveAsNew: text => c.Enqueue(async inner =>
             {
                 try { await Save(text, newNote: true); }

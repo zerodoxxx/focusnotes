@@ -25,12 +25,12 @@ public sealed class CapturePipeline : IDisposable
     private bool disposed;
 
     public Vault Vault { get; }
-    public SessionStore Sessions { get; }
-    public CaptureService Service { get; }
+    internal SessionStore Sessions { get; }
+    internal CaptureService Service { get; }
     public SearchIndex Index { get; }
     public VaultMonitor Monitor { get; }
-    public CaptureJournal Journal { get; }
-    public UnsavedCaptures Unsaved { get; }
+    internal CaptureJournal Journal { get; }
+    internal UnsavedCaptures Unsaved { get; }
     public NoteDraftStore Drafts { get; }
     public NotePinStore Pins { get; }
     public TimeZoneInfo TimeZone { get; }
@@ -204,6 +204,16 @@ public sealed class CapturePipeline : IDisposable
         if (isNote) { onNoteSaved?.Invoke(saved, pinFailed); }
         return saved;
     }
+
+    public Session? CurrentSession() => Sessions.Current();
+
+    public Destination? SessionDestination() => Service.SessionDestination();
+
+    public Destination DefaultDestination() => Service.DefaultDestination();
+
+    public Destination PickedDestination(NotePick note) => Service.PickedDestination(note);
+
+    public string? ExistingTitle(string markdown, CaptureIntent intent, TimeZoneInfo timeZone) => Service.ExistingTitle(markdown, intent, timeZone);
 
     public Session StartSession(string name) => ChangeSession(() => Sessions.Start(name));
 

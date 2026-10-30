@@ -7,4 +7,7 @@
     <ProjectReference Include="../CaptureApp.Core/CaptureApp.Core.csproj" />
     <ProjectReference Include="../CaptureApp.Embed/CaptureApp.Embed.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CaptureApp.App.Tests" />
+  </ItemGroup>
 </Project>
