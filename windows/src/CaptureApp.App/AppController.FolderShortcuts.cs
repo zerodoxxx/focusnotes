@@ -112,6 +112,7 @@ internal sealed partial class AppController
                 {
                     PresentSessionCandidates(ambiguous.Candidates);
                 }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { c.Report(error, Strings.CouldNotStartSession); }
             }));
     }

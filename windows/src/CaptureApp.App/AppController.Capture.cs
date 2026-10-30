@@ -204,6 +204,7 @@ internal sealed partial class AppController
             if (session is not null)
             {
                 try { await c.EndSessionAsync(session); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { c.Report(error, Strings.CouldNotEndSession); }
                 return;
             }
@@ -216,6 +217,7 @@ internal sealed partial class AppController
                 {
                     PresentSessionCandidates(ambiguous.Candidates);
                 }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { inner.Report(error, Strings.CouldNotStartSession); }
             }));
         });
@@ -241,6 +243,7 @@ internal sealed partial class AppController
             Coordinator.Enqueue(async c =>
             {
                 try { await c.ResumeSessionAsync(candidate); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { c.Report(error, Strings.CouldNotResumeSession); }
             });
         }, InputClosed, Title: Strings.MultipleSessionsTitle, Secondary: Strings.SessionPickerHint,
@@ -265,6 +268,7 @@ internal sealed partial class AppController
             {
                 if (c.IsTerminating) return;
                 try { await c.RenameSessionAsync(candidate, name); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error)
                 {
                     c.Report(error, Strings.CouldNotRenameSession);

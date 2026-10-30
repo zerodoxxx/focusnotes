@@ -1,5 +1,5 @@
-using CaptureApp.Core;
 using CaptureApp.AppCore.Shell;
+using CaptureApp.Core;
 using Xunit;
 
 namespace CaptureApp.AppCore.Tests;
