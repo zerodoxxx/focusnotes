@@ -48,7 +48,7 @@ public sealed class WiringTests
                 // and ShowTitlePicker's CommitPending callback before inspecting the save.
                 WaitUntil(() => controller.InputForChecks is null, "Escape did not close the title picker.");
                 Assert.Null(controller.Coordinator.Pending);
-                var commit = controller.Coordinator.WaitForCommitsAsync();
+                var commit = controller.Coordinator.SettleCapturesAsync();
                 UiWait.Pump(commit, TimeSpan.FromSeconds(5));
                 Assert.True(commit.IsCompleted, "The title picker cancellation did not finish saving.");
                 commit.GetAwaiter().GetResult();

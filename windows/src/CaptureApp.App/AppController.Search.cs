@@ -28,11 +28,8 @@ internal sealed partial class AppController
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
-            _ = c.CommitPending();
-            await c.WaitForProcessingAsync();
-            _ = c.CommitPending();
+            await c.SettleCapturesAsync();
             if (!await ClosePanelsAsync()) { return; }
-            await c.WaitForCommitsAsync();
             if (c.IsTerminating) { return; }
             if (!pipeline.Monitor.IsRunning) { _ = Task.Run(() => pipeline.SyncAsync()); }
             if (semantic is { } indexer) { _ = Task.Run(() => indexer.WarmAsync()); }

@@ -43,17 +43,8 @@ internal sealed partial class AppController
                 return;
             }
 
-            var pendingCommit = c.CommitPending();
-            await c.WaitForProcessingAsync();
-            var processedCommit = c.CommitPending();
+            await c.SettleCapturesAsync();
             if (!await ClosePanelsAsync()) { return; }
-            try
-            {
-                if (pendingCommit is not null) { await pendingCommit; }
-                if (processedCommit is not null) { await processedCommit; }
-                if (c.CommitTail is { } tail) { await tail; }
-            }
-            catch (Exception error) { c.Report(error, Strings.CouldNotSavePending); return; }
             if (c.IsTerminating) { return; }
 
             Destination? sessionDestination;
