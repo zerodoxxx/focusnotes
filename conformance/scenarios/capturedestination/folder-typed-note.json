@@ -1,0 +1,39 @@
+{
+  "area" : "capturedestination",
+  "description" : "A typed note in a folder quick note bypasses the session and names a new note in that folder.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : true,
+        "kind" : "note",
+        "path" : "Projects/Plan.md",
+        "title" : "Plan"
+      }
+    ]
+  },
+  "id" : "folder-typed-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "startSession"
+      },
+      {
+        "content" : "note",
+        "folder" : "Projects",
+        "op" : "resolve",
+        "text" : "Plan\nbody"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "area" : "capturedestination",
+  "description" : "A folder quick note previews matches inside its folder only.",
+  "expected" : {
+    "files" : {
+      "Projects/Plan.md" : "# Plan\n"
+    },
+    "results" : [
+      "Plan",
+      null
+    ]
+  },
+  "id" : "existing-title-folder",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Projects/Plan.md" : "# Plan\n"
+    },
+    "ops" : [
+      {
+        "folder" : "Projects",
+        "op" : "existingTitle",
+        "text" : "Plan\nx"
+      },
+      {
+        "op" : "existingTitle",
+        "text" : "Plan\nx"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

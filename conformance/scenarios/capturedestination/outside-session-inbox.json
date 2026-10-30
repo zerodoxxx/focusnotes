@@ -1,0 +1,38 @@
+{
+  "area" : "capturedestination",
+  "description" : "Outside a session, a text capture goes to the fixed Inbox even when the session is named Inbox.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Inbox.md" : "# Inbox\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : false,
+        "kind" : "inbox",
+        "path" : "Inbox.md",
+        "title" : "Inbox"
+      }
+    ]
+  },
+  "id" : "outside-session-inbox",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Inbox",
+        "op" : "startSession"
+      },
+      {
+        "op" : "resolve",
+        "outsideSession" : true,
+        "text" : "outside text"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

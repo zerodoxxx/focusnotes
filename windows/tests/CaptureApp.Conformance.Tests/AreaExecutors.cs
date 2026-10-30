@@ -12,6 +12,7 @@ public sealed class NoteWriterExecutor() : CoreAreaExecutor("notewriter");
 public sealed class VaultNamingExecutor() : CoreAreaExecutor("vault-naming");
 public sealed class SessionStoreExecutor() : CoreAreaExecutor("sessionstore");
 public sealed class NoteParserExecutor() : CoreAreaExecutor("noteparser");
+public sealed class CaptureDestinationExecutor() : CoreAreaExecutor("capturedestination");
 public sealed class SearchIndexExecutor() : IAreaExecutor
 {
     public string Area => "searchindex";
@@ -110,7 +111,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
 
     public Task<ScenarioExpected> ExecuteAsync(ScenarioInput input, CancellationToken cancellationToken = default)
     {
-        using var execution = new Execution(input);
+        using var execution = new Execution(input, Area);
         var results = new List<JsonElement>();
         foreach (var op in input.Ops)
         {
@@ -163,10 +164,13 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
         private readonly Vault vault;
         private readonly NoteWriter writer;
         private readonly FixedClock clock;
+        private readonly string area;
         private SessionStore sessions;
-        internal Execution(ScenarioInput input)
+        private CaptureService? service;
+        internal Execution(ScenarioInput input, string area)
         {
             this.input = input;
+            this.area = area;
             root = Path.Combine(temporary, "vault");
             home = Path.Combine(temporary, "home");
             state = Path.Combine(temporary, "state");
@@ -226,8 +230,70 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
             }, new(Optional(op, "app"), Optional(op, "window")));
         }
 
+        // One CaptureService per case, so note reservations persist between ops.
+        private CaptureService Service => service ??= new(vault, sessions, writer, clock);
+
+        private static CaptureIntent Intent(Dictionary<string, JsonElement> op)
+        {
+            var (pick, title) = (Optional(op, "pick"), Optional(op, "title"));
+            if (pick is not null && title is not null)
+            {
+                throw new JsonException("title and pick are mutually exclusive.");
+            }
+
+            CaptureTarget? target = pick is not null
+                ? new CaptureTarget.Pick(new(pick, Path.GetFileNameWithoutExtension(pick), S(op, "pickKind", "note") switch
+                {
+                    "note" => NoteKind.Note,
+                    "session" => NoteKind.Session,
+                    "inbox" => NoteKind.Inbox,
+                    var kind => throw new JsonException("Unknown pickKind: " + kind)
+                }))
+                : title is not null ? new CaptureTarget.Title(title) : null;
+            return new(target, B(op, "outsideSession"), Optional(op, "folder") is { } raw ? new NoteFolder(raw) : null, B(op, "newNote"));
+        }
+
+        private object? PerformCaptureDestination(Dictionary<string, JsonElement> op)
+        {
+            switch (S(op, "op"))
+            {
+                case "startSession":
+                    sessions.Start(S(op, "name"));
+                    return null;
+                case "resolve":
+                    var intent = Intent(op);
+                    PreparedCapture prepared;
+                    try
+                    {
+                        prepared = Service.Resolve(Capture(op), intent, zone);
+                    }
+                    catch (FileNotFoundException) when (intent.Target is CaptureTarget.Pick)
+                    {
+                        return new { error = "noteNotFound" };
+                    }
+
+                    return new
+                    {
+                        path = LogicalPath(prepared.Destination.Url),
+                        title = prepared.Destination.Title,
+                        kind = Lower(prepared.Destination.Kind.ToString()),
+                        createsNote = prepared.CreatesNote == true
+                    };
+                case "existingTitle":
+                    return Service.ExistingTitle(S(op, "text"), Intent(op), zone);
+                default:
+                    throw new InvalidOperationException("Missing capturedestination operation: " + S(op, "op"));
+            }
+        }
+
         internal object? Perform(Dictionary<string, JsonElement> op)
         {
+            // Other ops in this area use the common ops below, as in the Swift runner.
+            if (area == "capturedestination" && S(op, "op") is "startSession" or "resolve" or "existingTitle")
+            {
+                return PerformCaptureDestination(op);
+            }
+
             switch (S(op, "op"))
             {
                 case "prepare":

@@ -1,0 +1,39 @@
+{
+  "area" : "capturedestination",
+  "description" : "A picked note wins over the active session.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Physics.md" : "# Physics\n",
+      "Sessions/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : false,
+        "kind" : "note",
+        "path" : "Physics.md",
+        "title" : "Physics"
+      }
+    ]
+  },
+  "id" : "pick-over-session",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Physics.md" : "# Physics\n"
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "startSession"
+      },
+      {
+        "op" : "resolve",
+        "pick" : "Physics.md",
+        "text" : "picked text"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

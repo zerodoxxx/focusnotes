@@ -100,8 +100,8 @@ private func checkFailedChoiceHoldsCapture() async throws {
         guard queue.pending?.id == capture.id, queue.needsRetryChoice else {
             throw SelfTestFailure("Queue: a failed chosen title did not hold the same capture for a retry choice")
         }
-        let chosen = Destination(url: secondURL, title: "Target", kind: .session)
-        guard let task = queue.commitPending(destination: chosen) else { throw SelfTestFailure("Queue: held capture was not committable") }
+        let chosen = NotePick(noteID: "Sessions/Second.md", title: "Target", kind: .session)
+        guard let task = queue.commitPending(pick: chosen) else { throw SelfTestFailure("Queue: held capture was not committable") }
         _ = try await task.value
         await queue.waitForCommits()
         let second = try String(contentsOf: secondURL, encoding: .utf8)

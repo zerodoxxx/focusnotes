@@ -1,0 +1,45 @@
+{
+  "area" : "capturedestination",
+  "description" : "Save as New numbers past an existing note; a default save appends to it.",
+  "expected" : {
+    "files" : {
+      "Ideas.md" : "# Ideas\n"
+    },
+    "results" : [
+      {
+        "createsNote" : true,
+        "kind" : "note",
+        "path" : "Ideas 2.md",
+        "title" : "Ideas 2"
+      },
+      {
+        "createsNote" : false,
+        "kind" : "note",
+        "path" : "Ideas.md",
+        "title" : "Ideas"
+      }
+    ]
+  },
+  "id" : "save-as-new-numbered",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Ideas.md" : "# Ideas\n"
+    },
+    "ops" : [
+      {
+        "content" : "note",
+        "newNote" : true,
+        "op" : "resolve",
+        "text" : "Ideas\nmore"
+      },
+      {
+        "content" : "note",
+        "id" : "00000000-0000-4000-8000-000000000002",
+        "op" : "resolve",
+        "text" : "Ideas\nmore"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

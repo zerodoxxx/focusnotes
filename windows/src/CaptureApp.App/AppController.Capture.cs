@@ -296,8 +296,7 @@ internal sealed partial class AppController
             Destination destination;
             try
             {
-                var active = await Task.Run(() => pipeline.Sessions.Current());
-                destination = Router.Destination(null, active, [], pipeline.Vault);
+                destination = await Task.Run(() => pipeline.Service.DefaultDestination());
             }
             catch (Exception error) { c.Report(error, Strings.CouldNotResolveDestination); return; }
             PresentInput(Strings.SubheadingPlaceholder, Strings.AddSubheadingTitle, Strings.InNote(destination.Title),

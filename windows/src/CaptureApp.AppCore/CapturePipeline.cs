@@ -90,7 +90,7 @@ public sealed class CapturePipeline : IDisposable
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Text(text), source);
-        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), NoteDraft: noteDraft);
+        return new(Service.Resolve(capture, new(Target(destination, noteTitle)), TimeZone), NoteDraft: noteDraft);
     }
 
     public CaptureJob PrepareImage(byte[] png, CaptureSource source, string? noteTitle = null, string? ocr = null,
@@ -106,7 +106,7 @@ public sealed class CapturePipeline : IDisposable
         var stamp = CaptureFormat.LocalStamp(created, "yyyy-MM-dd-HHmmss", TimeZone);
         var asset = $"{Vault.AssetsDirectoryName}/{stamp}-{captureId.ToString("D").ToLowerInvariant()}.png";
         var capture = new Capture(captureId, created, CaptureContent.Image(asset), source);
-        return new(destination is null ? Service.Prepare(capture, noteTitle) : new PreparedCapture(capture, destination), png, ocr);
+        return new(Service.Resolve(capture, new(Target(destination, noteTitle)), TimeZone), png, ocr);
     }
 
     public CaptureJob PrepareNote(string markdown, CaptureSource source, Destination? destination = null,
@@ -118,11 +118,14 @@ public sealed class CapturePipeline : IDisposable
     {
         ThrowIfDisposed();
         var capture = new Capture(id ?? Guid.NewGuid(), createdAt ?? clock.GetUtcNow(), CaptureContent.Note(markdown), source);
-        return new(Service.PrepareNote(capture, TimeZone, destination, newNote, outsideSession, folder), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession, NoteFolder: folder);
+        return new(Service.Resolve(capture, new(Target(destination, null), outsideSession, folder, newNote), TimeZone), NoteDraft: noteDraft ?? markdown, NoteOutsideSession: outsideSession, NoteFolder: folder);
     }
 
     public CaptureJob PrepareSubheading(Capture capture, Destination? destination = null) => PrepareLocked(() =>
-        new(destination is null ? Service.Prepare(capture) : new PreparedCapture(capture, destination)));
+        new(Service.Resolve(capture, new(Target(destination, null)), TimeZone)));
+
+    private static CaptureTarget? Target(Destination? destination, string? noteTitle) =>
+        destination is not null ? new CaptureTarget.Resolved(destination) : noteTitle is not null ? new CaptureTarget.Title(noteTitle) : null;
 
     public CaptureJob WithDestination(CaptureJob job, Destination destination) => PrepareLocked(() =>
         job with { Prepared = job.Prepared with { Destination = destination } });

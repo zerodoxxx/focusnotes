@@ -1,0 +1,39 @@
+{
+  "area" : "capturedestination",
+  "description" : "Outside a session, a typed note names its own new note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : true,
+        "kind" : "note",
+        "path" : "Draft.md",
+        "title" : "Draft"
+      }
+    ]
+  },
+  "id" : "outside-session-typed-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "startSession"
+      },
+      {
+        "content" : "note",
+        "op" : "resolve",
+        "outsideSession" : true,
+        "text" : "Draft\nbody"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

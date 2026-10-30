@@ -14,7 +14,8 @@ public sealed class ConformanceTests
         new VaultNamingExecutor(),
         new SessionStoreExecutor(),
         new NoteParserExecutor(),
-        new SearchIndexExecutor()
+        new SearchIndexExecutor(),
+        new CaptureDestinationExecutor()
     }.ToDictionary(e => e.Area, StringComparer.Ordinal);
     public static IEnumerable<TheoryDataRow<string>> Scenarios() => ScenarioLoader.LoadAll().Select(item =>
     {

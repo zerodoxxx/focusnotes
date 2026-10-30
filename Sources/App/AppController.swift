@@ -575,10 +575,8 @@ final class AppController: NSObject, NSMenuDelegate {
                     _ = controller.captures.commitPending(noteTitle: text, announce: true)
                     return
                 }
-                // A note removed since the picker opened fails commitPending's existence check and keeps the capture.
-                let url = (try? controller.pipeline.vault.noteLocation(forID: picked.path).url)
-                    ?? controller.pipeline.vault.url(forRelativePath: picked.path)
-                _ = controller.captures.commitPending(destination: Destination(url: url, title: picked.title, kind: picked.kind),
+                // A note removed since the picker opened fails to resolve and keeps the capture.
+                _ = controller.captures.commitPending(pick: NotePick(noteID: picked.path, title: picked.title, kind: picked.kind),
                                                       announce: true)
             }, onSubmit: { _ in }, onCancel: { [weak controller] in
                 controller?.settleUnchosenCapture(id, announce: outsideSession)
@@ -636,7 +634,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     // An explicit choice saves even if the editor can't close; the save shows no panel.
                     await controller.closePanels()
                     guard controller.captures.pending?.id == capture.id else { return }
-                    _ = controller.captures.commitPending(destination: candidate, announce: true)
+                    _ = controller.captures.commitPending(pick: controller.pipeline.service.pick(for: candidate), announce: true)
                 }
             }, onCancel: { [weak controller] in
                 guard let controller else { return }
@@ -880,22 +878,18 @@ final class AppController: NSObject, NSMenuDelegate {
             let pipeline = controller.pipeline
             do { try await pipeline.recoverSessionIdentity() }
             catch { controller.report(error, title: "Couldn't restore session state"); return }
-            let active = await pipeline.sessions.current()
             guard await controller.waitForAcquisition() else { return }
             let restored: NoteDraftSnapshot
             do { restored = try pipeline.drafts.loadSnapshot() }
             catch { controller.report(error, title: "Couldn't restore draft"); return }
             let folder = requestedFolder ?? restored.folder
             let sessionDestination: Destination?
-            if folder == nil, let active {
-                do {
-                    sessionDestination = try Router.destination(noteTitle: nil, activeSession: active,
-                                                                 notes: [], vault: pipeline.vault)
-                } catch {
-                    controller.report(error, title: "Couldn't resolve note destination")
-                    return
-                }
-            } else { sessionDestination = nil }
+            do {
+                sessionDestination = folder == nil ? try await pipeline.service.sessionDestination() : nil
+            } catch {
+                controller.report(error, title: "Couldn't resolve note destination")
+                return
+            }
             do {
                 let draft = restored.text
                 let editor = NoteEditorPanel()
@@ -951,7 +945,7 @@ final class AppController: NSObject, NSMenuDelegate {
                                         if !controller.isTerminating { controller.openNote(saved.destination.url) }
                                         return
                                     }
-                                } else if let url = state.destination?.url, FileManager.default.fileExists(atPath: url.path) {
+                                } else if let url = state.existingDestination?.url {
                                     if !controller.isTerminating { controller.openNote(url) }
                                     return
                                 }
@@ -975,8 +969,8 @@ final class AppController: NSObject, NSMenuDelegate {
                             do { try state.resetPinOnSave(in: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
                             do {
-                                let location = try pipeline.vault.noteLocation(forID: item.id)
-                                state.destination = Destination(url: location.url, title: item.title, kind: state.kinds[item.id] ?? .note)
+                                state.destination = try pipeline.service.pickedDestination(noteID: item.id, title: item.title,
+                                                                                           kind: state.kinds[item.id] ?? .note)
                             } catch { controller?.report(error, title: "Couldn't select note"); return }
                             editor?.setDestination(item.title, isPinned: pipeline.pins.isPinned(item.id))
                         case .open:
@@ -991,7 +985,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         do {
                             guard let destination = state.destination else { return try state.togglePinOnSave(in: pipeline.drafts) }
                             guard let path = noteID(destination) else { return false }
-                            guard FileManager.default.fileExists(atPath: destination.url.path) else { return try state.togglePinOnSave(in: pipeline.drafts) }
+                            guard state.existingDestination != nil else { return try state.togglePinOnSave(in: pipeline.drafts) }
                             return try pipeline.pins.toggle(path)
                         } catch {
                             controller?.report(error, title: "Couldn't update Pinned")
@@ -1012,10 +1006,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     existingTitleForText: { text in
-                        // A session or Browse destination takes precedence over typed-name matching, as in prepareNote.
-                        guard state.destination == nil, sessionDestination == nil || state.outsideSession else { return nil }
-                        let note = TypedNote(markdown: text, createdAt: Date(), calendar: calendar)
-                        return (try? CaptureService.appendTarget(for: note, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault, folder: state.folder))?.title
+                        pipeline.service.existingTitle(forTypedNote: text, intent: state.intent(), calendar: calendar)
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
@@ -1066,9 +1057,7 @@ final class AppController: NSObject, NSMenuDelegate {
             let destination: Destination
             do {
                 try await controller.pipeline.recoverSessionIdentity()
-                let active = await controller.pipeline.sessions.current()
-                destination = try Router.destination(noteTitle: nil, activeSession: active,
-                                                     notes: [], vault: controller.pipeline.vault)
+                destination = try await controller.pipeline.service.defaultDestination()
             } catch {
                 controller.report(error, title: "Couldn't resolve note destination")
                 return
