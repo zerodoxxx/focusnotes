@@ -1,6 +1,5 @@
 import CaptureKit
 import Core
-import CryptoKit
 import Foundation
 import os
 
@@ -15,38 +14,6 @@ struct CaptureJob: Sendable {
 }
 
 actor CaptureJournal {
-    struct SessionRenameIntent: Codable, Sendable {
-        let oldPath: String
-        let session: Session
-        let captureIDs: [UUID]
-        let source: ManagedFileIdentity
-        let sourceSize: Int64
-        let sourceModifiedSeconds: Int64
-        let sourceModifiedNanoseconds: Int64
-        let sourceChangedSeconds: Int64
-        let sourceChangedNanoseconds: Int64
-        let sourceDigest: String
-        var installation: SessionRenameStage? = nil
-        var previousInstallations: [SessionRenameStage] = []
-
-        func isOriginal(_ snapshot: VaultFileSnapshot) -> Bool {
-            guard ManagedFileIdentity(snapshot) == source else { return false }
-            if snapshot.size == sourceSize &&
-                snapshot.modifiedSeconds == sourceModifiedSeconds && snapshot.modifiedNanoseconds == sourceModifiedNanoseconds &&
-                snapshot.changedSeconds == sourceChangedSeconds && snapshot.changedNanoseconds == sourceChangedNanoseconds { return true }
-            // A rolled-back atomic swap updates ctime even though the original
-            // inode and every byte are restored. Accept that same original only
-            // after hashing a fresh validated snapshot, never by inode alone.
-            guard let contents = snapshot.contents else { return false }
-            return Self.digest(contents) == sourceDigest
-        }
-        func isInstalled(_ snapshot: VaultFileSnapshot) -> Bool {
-            ManagedFileIdentity(snapshot) == installation?.installed
-        }
-        static func digest(_ contents: Data) -> String {
-            SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
-        }
-    }
     struct Record: Codable {
         let prepared: PreparedCapture
         let hasPNG: Bool
@@ -56,13 +23,13 @@ actor CaptureJournal {
         var noteFolder: NoteFolder? = nil
     }
 
+    let stateDirectory: URL
     let directory: URL
-    private let renameIntentURL: URL
     private let redirectsURL: URL
 
     init(stateDirectory: URL) {
+        self.stateDirectory = stateDirectory
         directory = stateDirectory.appendingPathComponent("unsaved", isDirectory: true)
-        renameIntentURL = stateDirectory.appendingPathComponent("session-rename.json")
         redirectsURL = stateDirectory.appendingPathComponent("capture-destinations.json")
     }
 
@@ -78,12 +45,9 @@ actor CaptureJournal {
         try Self.writeJSON(record, to: directory.appendingPathComponent(stem + ".json"))
     }
 
-    /// Persist the identity change before touching Markdown. Redirects are keyed
-    /// by capture UUID, so creating a new session at the old filename later does
-    /// not redirect unrelated captures.
-    func beginSessionRename(oldPath: String, session: Session, vault: Vault,
-                            preparedJobs: [CaptureJob]) throws -> SessionRenameIntent {
-        let currentJobs = try preparedJobs.map { try redirected($0) }
+    /// Captures bound for `oldPath`: in-flight jobs (after redirects) and stored records.
+    func captureIDs(targeting oldPath: String, vault: Vault, among jobs: [CaptureJob]) throws -> [UUID] {
+        let currentJobs = try jobs.map { try redirected($0) }
         var ids = Set(currentJobs.filter {
             (try? vault.noteID(for: $0.prepared.destination.url)) == oldPath
         }.map { $0.prepared.capture.id })
@@ -94,30 +58,7 @@ actor CaptureJournal {
                 ids.insert(record.prepared.capture.id)
             }
         }
-        guard let source = try vault.fileSnapshot(relativePath: oldPath), let contents = source.contents else {
-            throw SessionStoreError.candidateNoLongerExists(oldPath)
-        }
-        let intent = SessionRenameIntent(oldPath: oldPath, session: session,
-                                        captureIDs: ids.sorted { $0.uuidString < $1.uuidString },
-                                        source: ManagedFileIdentity(source), sourceSize: source.size,
-                                        sourceModifiedSeconds: source.modifiedSeconds, sourceModifiedNanoseconds: source.modifiedNanoseconds,
-                                        sourceChangedSeconds: source.changedSeconds, sourceChangedNanoseconds: source.changedNanoseconds,
-                                        sourceDigest: SessionRenameIntent.digest(contents))
-        try FileManager.default.createDirectory(at: renameIntentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Self.writeJSON(intent, to: renameIntentURL)
-        return intent
-    }
-
-    /// The staged inode is recorded before the atomic swap. Recovery only adopts
-    /// that exact managed file, never an unrelated file at the destination name.
-    func installationRecorder(for intent: SessionRenameIntent) -> @Sendable (SessionRenameStage) throws -> Void {
-        let url = renameIntentURL
-        return { stage in
-            var installed = intent
-            if let previous = installed.installation { installed.previousInstallations.append(previous) }
-            installed.installation = stage
-            try Self.writeJSON(installed, to: url)
-        }
+        return ids.sorted { $0.uuidString < $1.uuidString }
     }
 
     private static func key(for id: UUID) -> String { id.uuidString.lowercased() }
@@ -131,31 +72,12 @@ actor CaptureJournal {
         catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {}
     }
 
-    /// An undecodable intent is quarantined so it cannot block startup or captures.
-    func pendingSessionRename() throws -> SessionRenameIntent? {
-        guard FileManager.default.fileExists(atPath: renameIntentURL.path) else { return nil }
-        let data = try Data(contentsOf: renameIntentURL)
-        do { return try JSONDecoder().decode(SessionRenameIntent.self, from: data) }
-        catch {
-            let corrupt = directory.appendingPathComponent("corrupt", isDirectory: true)
-            try FileManager.default.createDirectory(at: corrupt, withIntermediateDirectories: true)
-            let stem = renameIntentURL.deletingPathExtension().lastPathComponent
-            let target = FileManager.default.fileExists(atPath: corrupt.appendingPathComponent(stem + ".json").path)
-                ? stem + "-" + UUID().uuidString.lowercased() : stem
-            try FileManager.default.moveItem(at: renameIntentURL, to: corrupt.appendingPathComponent(target + ".json"))
-            Logger(subsystem: AppInfo.bundleIdentifier, category: "journal")
-                .error("Corrupt session rename intent quarantined (\(AppErrorLog.summary(error), privacy: .public))")
-            return nil
-        }
-    }
-
-    func finishSessionRename(_ intent: SessionRenameIntent, vault: Vault) throws {
+    /// Point the given captures at `destination`, both for in-flight jobs and stored records.
+    func relocate(_ ids: [UUID], to destination: Destination) throws {
         var redirects = try destinationRedirects()
-        let destination = Destination(url: try vault.managedURL(forRelativePath: intent.session.notePath),
-                                      title: intent.session.name, kind: .session)
-        for id in intent.captureIDs { redirects[Self.key(for: id)] = destination }
+        for id in ids { redirects[Self.key(for: id)] = destination }
         try Self.writeJSON(redirects, to: redirectsURL)
-        for id in intent.captureIDs {
+        for id in ids {
             let url = directory.appendingPathComponent(Self.key(for: id) + ".json")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             // Replay quarantines an undecodable record; it must not block recovery at startup.
@@ -172,10 +94,6 @@ actor CaptureJournal {
     /// fresh process has no stale prepared objects requiring UUID redirects.
     func discardPreviousProcessRedirects() throws {
         try Self.removeIfPresent(redirectsURL)
-    }
-
-    func clearSessionRename() throws {
-        try Self.removeIfPresent(renameIntentURL)
     }
 
     func redirected(_ job: CaptureJob) throws -> CaptureJob {

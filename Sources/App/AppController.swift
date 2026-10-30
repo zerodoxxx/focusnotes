@@ -961,7 +961,7 @@ final class AppController: NSObject, NSMenuDelegate {
         for task in tasks {
             if let job = try? await task.value { knownJobs.append(job) }
         }
-        let outcome = try await pipeline.renameSession(candidate, to: name, preparedJobs: knownJobs)
+        let outcome = try await pipeline.renames.rename(candidate, to: name, followingCaptures: knownJobs)
         activeSession = outcome.session
         refreshStatus()
         if outcome.identityUpdatePending {
