@@ -31,7 +31,7 @@ extension AppController {
         defer { pipeline.monitor.stop() }
         let context = FrontmostContext(appName: "Demo Source", bundleIdentifier: nil, processIdentifier: 0, windowTitle: "Pipeline smoke test")
         let textPending = CapturePipeline.selection(text: "selftestneedle full body\nSecond line for copying.", context: context)
-        await stage(textPending)
+        await captures.stage(textPending)
         let stagedURLs = try await pipeline.journal.recordURLs()
         guard stagedURLs.count == 1,
               try await pipeline.journal.load(record: stagedURLs[0]).prepared.capture.id == textPending.id,
@@ -39,20 +39,20 @@ extension AppController {
               try await pipeline.index.capture(id: textPending.id) == nil else {
             throw SelfTestFailure("Staged, uncommitted capture was not journaled at its default destination")
         }
-        guard let textTask = commitPending(noteTitle: "Demo Heading") else { throw SelfTestFailure("Text was not pending") }
+        guard let textTask = captures.commitPending(noteTitle: "Demo Heading") else { throw SelfTestFailure("Text was not pending") }
         let text = try await textTask.value
 
         let png = try await AppMedia.demoPNG()
         let imagePending = await pipeline.region(png: png, context: context)
         guard case .image = imagePending.content else { throw SelfTestFailure("Sparse diagram must remain an image") }
-        await stage(imagePending)
-        guard let imageTask = commitPending() else { throw SelfTestFailure("Image was not pending") }
+        await captures.stage(imagePending)
+        guard let imageTask = captures.commitPending() else { throw SelfTestFailure("Image was not pending") }
         let image = try await imageTask.value
 
         let session = try await startSession(name: "Demo Session")
         for text in ["selftestneedle session capture one", "selftestneedle session capture two"] {
-            await stage(CapturePipeline.selection(text: text, context: context))
-            guard let task = commitPending() else { throw SelfTestFailure("Session capture was not pending") }
+            await captures.stage(CapturePipeline.selection(text: text, context: context))
+            guard let task = captures.commitPending() else { throw SelfTestFailure("Session capture was not pending") }
             let saved = try await task.value
             guard saved.destination.kind == .session else { throw SelfTestFailure("Session routing failed") }
         }
@@ -88,8 +88,8 @@ extension AppController {
         var semanticCapture: SavedCapture?
         let hasModels = SemanticIndexer.modelsInstalled(in: pipeline.semantic.modelsDirectory)
         if hasModels {
-            await stage(CapturePipeline.selection(text: "Token buckets allow bursts", context: context))
-            guard let task = commitPending() else { throw SelfTestFailure("Semantic capture was not pending") }
+            await captures.stage(CapturePipeline.selection(text: "Token buckets allow bursts", context: context))
+            guard let task = captures.commitPending() else { throw SelfTestFailure("Semantic capture was not pending") }
             semanticCapture = try await task.value
         }
         if let deferredOCR = imagePending.deferredOCR {
@@ -176,7 +176,7 @@ extension AppController {
         // Verify accepted termination drains a still-pending default commit only
         // after the semantic checks, because termination permanently closes the
         // semantic helper client.
-        await stage(CapturePipeline.selection(text: "shutdownneedle pending capture", context: context))
+        await captures.stage(CapturePipeline.selection(text: "shutdownneedle pending capture", context: context))
         _ = await beginTermination().value
         guard !pipeline.monitor.isRunning else { throw SelfTestFailure("Vault watcher remained running on termination") }
         let shutdownHits = try await pipeline.index.search("shutdownneedle")
@@ -234,8 +234,8 @@ extension AppController {
         _ = try await selfTestValue(of: Task {
             // Yield until the second interactive operation has entered the ordered processing queue.
             while controller.acquisitionInProgress { await Task.yield() }
-            await controller.waitForProcessing()
-            guard let tail = controller.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
+            await controller.captures.waitForProcessing()
+            guard let tail = controller.captures.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
             return try await tail.value
         }, label: "Second acquisition during OCR")
         let elapsed = start.duration(to: .now)
@@ -259,9 +259,9 @@ extension AppController {
         let session = try await controller.startSession(name: "Feedback")
         let browser = FrontmostContext(appName: "Firefox", bundleIdentifier: nil, processIdentifier: 0,
                                        windowTitle: "System Design — Mozilla Firefox")
-        await controller.stage(CapturePipeline.selection(text: "First paragraph.", context: browser))
-        _ = try await controller.commitPending()?.value
-        await controller.stage(CapturePipeline.selection(text: "Second paragraph.", context: browser))
+        await controller.captures.stage(CapturePipeline.selection(text: "First paragraph.", context: browser))
+        _ = try await controller.captures.commitPending()?.value
+        await controller.captures.stage(CapturePipeline.selection(text: "Second paragraph.", context: browser))
         // This directly exercises the ⌥⇧H submit method with a pending capture.
         guard let subheading = try await controller.addSubheading("### Tradeoffs\n and limits") else {
             throw SelfTestFailure("Subheading was not appended")
@@ -275,8 +275,8 @@ extension AppController {
         let replay = Capture(id: subheading.captureID, createdAt: Date(), content: .subheading("Tradeoffs and limits"), source: CaptureSource())
         try await live.journal.store(CaptureJob(prepared: PreparedCapture(capture: replay, destination: subheading.destination), png: nil, ocr: nil))
         guard await live.replayUnsaved() == 1, try Data(contentsOf: example) == beforeEmpty else { throw SelfTestFailure("Subheading journal replay duplicated the block") }
-        await controller.stage(CapturePipeline.selection(text: "Third paragraph.", context: browser))
-        _ = try await controller.commitPending()?.value
+        await controller.captures.stage(CapturePipeline.selection(text: "Third paragraph.", context: browser))
+        _ = try await controller.captures.commitPending()?.value
         let markdown = try String(contentsOf: example, encoding: .utf8)
         guard markdown.components(separatedBy: "### System Design\n").count - 1 == 2,
               let second = markdown.range(of: "Second paragraph."), let heading = markdown.range(of: "## Tradeoffs and limits"), second.lowerBound < heading.lowerBound,
@@ -285,7 +285,7 @@ extension AppController {
         try live.drafts.store(draftText)
         let restoredDrafts = NoteDraftStore(stateDirectory: base.appendingPathComponent("State"))
         guard try restoredDrafts.load() == draftText else { throw SelfTestFailure("Draft was not persisted/restored") }
-        await controller.stage(CapturePipeline.selection(text: "Fourth paragraph.", context: browser))
+        await controller.captures.stage(CapturePipeline.selection(text: "Fourth paragraph.", context: browser))
         guard let typed = try await controller.addNote(try restoredDrafts.load()) else { throw SelfTestFailure("Typed note was not saved through controller") }
         guard try live.drafts.load().isEmpty, !FileManager.default.fileExists(atPath: live.drafts.url.path),
               let hit = try await live.index.search("typednoteneedle").first,
@@ -295,8 +295,8 @@ extension AppController {
         let typedCapture = Capture(id: typed.captureID, createdAt: typedDate, content: .note(CaptureFormat.noteBody(draftText)), source: CaptureSource())
         try await live.journal.store(CaptureJob(prepared: PreparedCapture(capture: typedCapture, destination: typed.destination), png: nil, ocr: nil))
         guard await live.replayUnsaved() == 1, try Data(contentsOf: example) == beforeNoteReplay else { throw SelfTestFailure("Typed-note journal replay duplicated note") }
-        await controller.stage(CapturePipeline.selection(text: "Fifth paragraph.", context: browser))
-        _ = try await controller.commitPending()?.value
+        await controller.captures.stage(CapturePipeline.selection(text: "Fifth paragraph.", context: browser))
+        _ = try await controller.captures.commitPending()?.value
         let withNote = try String(contentsOf: example, encoding: .utf8)
         guard withNote.components(separatedBy: "### System Design\n").count - 1 == 2,
               let preceding = withNote.range(of: "Fourth paragraph."), let noteBody = withNote.range(of: "typednoteneedle"),
@@ -457,24 +457,24 @@ extension AppController {
         }
         let context = FrontmostContext(appName: "Outside session test", bundleIdentifier: nil, processIdentifier: 0, windowTitle: nil)
         let chosen = CapturePipeline.selection(text: "outside chosen capture", context: context)
-        await controller.stage(chosen, outsideSession: true)
-        guard let chosenTask = controller.commitPending(noteTitle: "science/Biology", announce: true),
+        await controller.captures.stage(chosen, outsideSession: true)
+        guard let chosenTask = controller.captures.commitPending(noteTitle: "science/Biology", announce: true),
               try await chosenTask.value.destination.url == saved.destination.url else {
             throw SelfTestFailure("Outside capture did not use chosen note")
         }
         let cancelled = CapturePipeline.selection(text: "outside cancelled capture", context: context)
-        await controller.stage(cancelled, outsideSession: true)
+        await controller.captures.stage(cancelled, outsideSession: true)
         let records = try await selfTestJournalJobs(live.journal)
         guard records.contains(where: { $0.prepared.capture.id == cancelled.id && $0.prepared.destination.kind == .inbox }),
-              let cancelTask = controller.commitPending(), try await cancelTask.value.destination.kind == .inbox,
+              let cancelTask = controller.captures.commitPending(), try await cancelTask.value.destination.kind == .inbox,
               try Data(contentsOf: destination.url) == initialSession, await live.sessions.current() == session else {
             throw SelfTestFailure("Outside capture cancel/recovery fallback changed the session")
         }
         let png = try await AppMedia.demoPNG()
         let image = PendingCapture(trigger: .region, content: .image(png: png, ocr: "outside image OCR"),
                                    source: CapturePipeline.source(context), subtitle: "Image")
-        await controller.stage(image, outsideSession: true)
-        guard let imageTask = controller.commitPending(noteTitle: "science/Images"),
+        await controller.captures.stage(image, outsideSession: true)
+        guard let imageTask = controller.captures.commitPending(noteTitle: "science/Images"),
               live.vault.relativePath(of: try await imageTask.value.destination.url) == "science/Images.md",
               let imageHit = try await live.index.capture(id: image.id), let asset = imageHit.assetPath,
               try await live.assetData(asset) == png,
@@ -485,14 +485,14 @@ extension AppController {
               nextNote.destination == destination,
               feedback.last?.title == "Saved to \(destination.title)",
               feedback.last?.subtitle == "Another title" else { throw SelfTestFailure("Next quick note did not return to the session") }
-        await controller.stage(CapturePipeline.selection(text: "normal capture returns to Thermo", context: context))
-        guard let normalTask = controller.commitPending(), try await normalTask.value.destination == destination else {
+        await controller.captures.stage(CapturePipeline.selection(text: "normal capture returns to Thermo", context: context))
+        guard let normalTask = controller.captures.commitPending(), try await normalTask.value.destination == destination else {
             throw SelfTestFailure("Next normal capture did not return to the session")
         }
         // Closing the picker on shutdown must keep its journaled Inbox fallback.
         let beforeShutdown = try Data(contentsOf: destination.url)
         let shutdownCapture = CapturePipeline.selection(text: "outside shutdown fallback", context: context)
-        await controller.stage(shutdownCapture, outsideSession: true)
+        await controller.captures.stage(shutdownCapture, outsideSession: true)
         _ = await controller.beginTermination().value
         guard try await live.index.capture(id: shutdownCapture.id)?.notePath == "Inbox.md",
               try Data(contentsOf: destination.url) == beforeShutdown, await live.sessions.current() == session else {
@@ -645,7 +645,7 @@ extension AppController {
             } catch let error as POSIXError where error.code == .EACCES {
                 // NoteFile cannot create its temporary note in the read-only vault.
             }
-            guard retryController.commitTail == nil else {
+            guard retryController.captures.commitTailForChecks == nil else {
                 throw SelfTestFailure("Failed note save left a stale commit tail that blocks the editor")
             }
         }
@@ -742,7 +742,7 @@ extension AppController {
             if (try? await failController.addSubheading("Blocked")) != nil {
                 throw SelfTestFailure("Read-only subheading commit unexpectedly succeeded")
             }
-            guard failController.commitTail == nil else {
+            guard failController.captures.commitTailForChecks == nil else {
                 throw SelfTestFailure("Failed subheading save left a stale commit tail that blocks the editor")
             }
         }
@@ -834,8 +834,8 @@ extension AppController {
         let image = PendingCapture(trigger: .region, content: .image(png: png, ocr: "journal image recovery"),
                                    source: CapturePipeline.source(context), subtitle: "Image")
         for capture in [text, image] {
-            await controller.stage(capture)
-            guard let task = controller.commitPending() else { throw SelfTestFailure("Recovery capture not pending") }
+            await controller.captures.stage(capture)
+            guard let task = controller.captures.commitPending() else { throw SelfTestFailure("Recovery capture not pending") }
             do {
                 _ = try await task.value
                 throw SelfTestFailure("Injected destination failure unexpectedly succeeded")
@@ -914,7 +914,7 @@ extension AppController {
         let base = pipeline.vault.root.appendingPathComponent("AcquisitionCases")
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: base.appendingPathComponent("State"), calendar: pipeline.calendar)
         let controller = AppController(pipeline: live, presentsUI: false)
-        await controller.stage(CapturePipeline.selection(text: "quit pending work", context: context))
+        await controller.captures.stage(CapturePipeline.selection(text: "quit pending work", context: context))
         let accepted = controller.beginAcquisition {
             try? await Task.sleep(for: .milliseconds(120))
             return CapturePipeline.selection(text: "quit in-flight work", context: context)

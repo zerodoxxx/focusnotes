@@ -31,6 +31,7 @@ func checkAppReliability() async throws {
     try await checkFailedCaptureDoesNotBlockNote()
     try await checkBlockedTitlePickerKeepsRetryWarning()
     try await checkQueuedPanelWaitsForSelectionRead()
+    try await checkCaptureCommitQueue()
 }
 
 @MainActor
@@ -51,9 +52,9 @@ private func checkAmbiguousCaptureDestinations() async throws {
         let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
         let capture = PendingCapture(trigger: .selection, content: .text("save to the selected duplicate"),
                                      source: CaptureSource(appName: "Ambiguity check"), subtitle: "check")
-        await controller.stage(capture, outsideSession: true)
+        await controller.captures.stage(capture, outsideSession: true)
         do {
-            _ = try await controller.commitPending(noteTitle: "Target")?.value
+            _ = try await controller.captures.commitPending(noteTitle: "Target")?.value
             throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination")
         } catch is SelfTestFailure { throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination") }
         catch {}
@@ -63,7 +64,7 @@ private func checkAmbiguousCaptureDestinations() async throws {
             try await Task.sleep(for: .milliseconds(20))
         }
         guard controller.isChoosingDestinationForChecks, let picker = controller.inputForChecks,
-              controller.pendingForChecks?.id == capture.id else {
+              controller.captures.pending?.id == capture.id else {
             throw SelfTestFailure("Ambiguous title did not retain the capture and show exact destinations")
         }
 
@@ -77,7 +78,7 @@ private func checkAmbiguousCaptureDestinations() async throws {
             while controller.isChoosingDestinationForChecks, ContinuousClock.now < closeDeadline {
                 try await Task.sleep(for: .milliseconds(20))
             }
-            guard controller.pendingForChecks?.id == capture.id,
+            guard controller.captures.pending?.id == capture.id,
                   toasts.last?.title == "Choose where to save",
                   (try await pipeline.index.captureCount(notePath: "Sessions/First.md")) == 0,
                   (try await pipeline.index.captureCount(notePath: "Sessions/Second.md")) == 0 else {
@@ -181,18 +182,18 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
     let controller = AppController(pipeline: pipeline, presentsUI: true) { toasts.append($0) }
     let capture = PendingCapture(trigger: .selection, content: .text("retry this capture once"),
                                  source: CaptureSource(appName: "Retry check"), subtitle: "check")
-    await controller.stage(capture, outsideSession: true)
+    await controller.captures.stage(capture, outsideSession: true)
     do {
-        _ = try await controller.commitPending(noteTitle: "../escape")?.value
+        _ = try await controller.captures.commitPending(noteTitle: "../escape")?.value
         throw SelfTestFailure("Invalid chosen note unexpectedly saved")
     } catch is SelfTestFailure { throw SelfTestFailure("Invalid chosen note unexpectedly saved") }
     catch {}
 
     let failureDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.pendingForChecks?.id != capture.id, ContinuousClock.now < failureDeadline {
+    while controller.captures.pending?.id != capture.id, ContinuousClock.now < failureDeadline {
         try await Task.sleep(for: .milliseconds(20))
     }
-    guard controller.pendingForChecks?.id == capture.id,
+    guard controller.captures.pending?.id == capture.id,
           toasts.last?.title == "Couldn't save to that note",
           toasts.last?.subtitle?.contains("Capture kept") == true else {
         throw SelfTestFailure("Failed chosen-note save did not preserve the capture with retry guidance")
@@ -224,7 +225,7 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
     }
     _ = input.handleKeyForChecks(enter)
     let saveDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.pendingForChecks != nil, ContinuousClock.now < saveDeadline {
+    while controller.captures.pending != nil, ContinuousClock.now < saveDeadline {
         try await Task.sleep(for: .milliseconds(20))
     }
     var saved = try await pipeline.index.capture(id: capture.id)
@@ -233,7 +234,7 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
         saved = try await pipeline.index.capture(id: capture.id)
     }
     let targetCount = try await pipeline.index.captureCount(notePath: pick)
-    guard controller.pendingForChecks == nil, saved?.notePath == pick, targetCount == 1 else {
+    guard controller.captures.pending == nil, saved?.notePath == pick, targetCount == 1 else {
         throw SelfTestFailure("Retry did not save the retained capture exactly once to the selected note")
     }
     _ = await controller.beginTermination().value
@@ -271,7 +272,7 @@ private func checkOutsideCaptureInboxCollisions() async throws {
                 // Escape runs the actual picker callback; other cases need no panel.
                 let controller = AppController(pipeline: pipeline, presentsUI: completion == "escape")
                 defer { controller.inputForChecks?.dismiss() }
-                await controller.stage(capture, outsideSession: true)
+                await controller.captures.stage(capture, outsideSession: true)
                 let records = try await pipeline.journal.recordURLs()
                 guard records.count == 1 else { throw SelfTestFailure("Outside capture was not journaled before choosing a note") }
                 let journaled = try await pipeline.journal.load(record: records[0])
@@ -1026,13 +1027,13 @@ private func checkDraftTerminationVeto() async throws {
 private func makeRetryPendingCapture(_ controller: AppController, text: String) async throws -> PendingCapture {
     let capture = PendingCapture(trigger: .selection, content: .text(text),
                                  source: CaptureSource(appName: "Retry check"), subtitle: "check")
-    await controller.stage(capture, outsideSession: true)
-    _ = try? await controller.commitPending(noteTitle: "../escape")?.value
+    await controller.captures.stage(capture, outsideSession: true)
+    _ = try? await controller.captures.commitPending(noteTitle: "../escape")?.value
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.pendingForChecks?.id != capture.id, ContinuousClock.now < deadline {
+    while controller.captures.pending?.id != capture.id, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
-    guard controller.pendingForChecks?.id == capture.id else {
+    guard controller.captures.pending?.id == capture.id else {
         throw SelfTestFailure("Failed chosen-note save did not leave the capture retry-pending")
     }
     return capture
@@ -1049,17 +1050,17 @@ private func checkNewCaptureSavesRetryPendingCapture() async throws {
     let first = try await makeRetryPendingCapture(controller, text: "retry pending first capture")
     let second = PendingCapture(trigger: .selection, content: .text("newer second capture"),
                                 source: CaptureSource(appName: "Retry check"), subtitle: "newer")
-    await controller.stage(second)
+    await controller.captures.stage(second)
 
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     var savedFirst = try await pipeline.index.capture(id: first.id)
-    while (savedFirst == nil || controller.hasPreparedJobForChecks(first.id)), ContinuousClock.now < deadline {
+    while (savedFirst == nil || controller.captures.hasPreparedJobForChecks(first.id)), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
         savedFirst = try await pipeline.index.capture(id: first.id)
     }
-    guard let savedFirst, controller.pendingForChecks?.id == second.id,
+    guard let savedFirst, controller.captures.pending?.id == second.id,
           try await pipeline.index.capture(id: second.id) == nil,
-          !controller.hasPreparedJobForChecks(first.id) else {
+          !controller.captures.hasPreparedJobForChecks(first.id) else {
         throw SelfTestFailure("A newer capture did not save the retry-pending capture before itself")
     }
     guard toasts.contains(where: { $0.subtitle?.contains("Previous capture saved") == true }) else {
@@ -1093,7 +1094,7 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         while controller.inputForChecks == nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        guard controller.inputForChecks != nil, controller.pendingForChecks?.id == first.id else {
+        guard controller.inputForChecks != nil, controller.captures.pending?.id == first.id else {
             throw SelfTestFailure("The capture hotkey did not reopen the chooser while the retry warning was visible")
         }
     }
@@ -1108,7 +1109,7 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         controller.showToastForChecks(Toast(style: .warning, title: "Unrelated warning"))
         await controller.drainCaptures()
         try await Task.sleep(for: .milliseconds(100))
-        guard controller.pendingForChecks?.id == first.id, try await pipeline.index.capture(id: first.id) == nil else {
+        guard controller.captures.pending?.id == first.id, try await pipeline.index.capture(id: first.id) == nil else {
             throw SelfTestFailure("An implicit commit saved a retry-pending capture to the default destination")
         }
     }
@@ -1124,10 +1125,10 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         controller.hideToastForChecks()
         controller.capture(.selection, context: other)
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while controller.pendingForChecks?.id != second.id, ContinuousClock.now < deadline {
+        while controller.captures.pending?.id != second.id, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        guard controller.pendingForChecks?.id == second.id, controller.inputForChecks == nil else {
+        guard controller.captures.pending?.id == second.id, controller.inputForChecks == nil else {
             throw SelfTestFailure("The capture hotkey did not stage a new capture after the retry warning was gone")
         }
         await controller.drainCaptures()
@@ -1276,8 +1277,8 @@ private func checkFailedCaptureDoesNotBlockNote() async throws {
     // A second hard link makes the session note unsafe to write, so the capture's own commit fails.
     try FileManager.default.linkItem(at: vaultRoot.appendingPathComponent(session.notePath),
                                      to: root.appendingPathComponent("second-link.md"))
-    await controller.stage(PendingCapture(trigger: .selection, content: .text("capture for a linked session"),
-                                          source: CaptureSource(appName: "Commit check"), subtitle: "check"))
+    await controller.captures.stage(PendingCapture(trigger: .selection, content: .text("capture for a linked session"),
+                                                   source: CaptureSource(appName: "Commit check"), subtitle: "check"))
     let saved = try await controller.addNote("Unblocked note\nstill saved", outsideSession: true)
     guard saved != nil, FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent("Unblocked note.md").path) else {
         throw SelfTestFailure("An unrelated failed capture commit blocked saving a quick note")
@@ -1345,7 +1346,7 @@ private func checkBlockedTitlePickerKeepsRetryWarning() async throws {
     while !restoredWarning(), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
-    guard restoredWarning(), controller.pendingForChecks?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
+    guard restoredWarning(), controller.captures.pending?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
         throw SelfTestFailure("A picker blocked by an editor that can't close left a retry-pending capture without its warning")
     }
 }
