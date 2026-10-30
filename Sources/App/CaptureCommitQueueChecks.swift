@@ -74,7 +74,7 @@ private func checkStagedCapturesCommitInOrder() async throws {
         await queue.waitForCommits()
         let inbox = try String(contentsOf: pipeline.vault.inboxURL, encoding: .utf8)
         guard let first = inbox.range(of: "first queued capture"), let second = inbox.range(of: "second queued capture"),
-              first.lowerBound < second.lowerBound, try await pipeline.journal.recordURLs().isEmpty else {
+              first.lowerBound < second.lowerBound, try await pipeline.selfCheck.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: staged captures were not saved in order with a clean journal")
         }
     }
@@ -107,7 +107,7 @@ private func checkFailedChoiceHoldsCapture() async throws {
         let second = try String(contentsOf: secondURL, encoding: .utf8)
         let first = try String(contentsOf: firstURL, encoding: .utf8)
         guard second.components(separatedBy: "held for an exact choice").count - 1 == 1, !first.contains("held for an exact choice"),
-              queue.pending == nil, try await pipeline.journal.recordURLs().isEmpty else {
+              queue.pending == nil, try await pipeline.selfCheck.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: an explicit destination did not save the held capture exactly once")
         }
     }
@@ -116,7 +116,7 @@ private func checkFailedChoiceHoldsCapture() async throws {
 @MainActor
 private func checkRetypedSubheadingSavesOnce() async throws {
     try await withQueue("queue-subheading") { queue, _, pipeline, root in
-        let session = try await pipeline.sessions.start(name: "Linked")
+        let session = try await pipeline.selfCheck.sessions.start(name: "Linked")
         let noteURL = root.appendingPathComponent("Vault").appendingPathComponent(session.notePath)
         // A second hard link makes the session note unsafe to write, so the commit fails.
         let link = root.appendingPathComponent("second-link.md")
@@ -133,7 +133,7 @@ private func checkRetypedSubheadingSavesOnce() async throws {
         queue.close()
         let note = try String(contentsOf: noteURL, encoding: .utf8)
         guard note.components(separatedBy: "## Queue heading\n").count - 1 == 1,
-              try await pipeline.journal.recordURLs().isEmpty else {
+              try await pipeline.selfCheck.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: a retyped failed subheading was not written exactly once")
         }
     }
@@ -154,7 +154,7 @@ private func checkQuitDrainSavesHeldCapture() async throws {
         queue.close()
         let inbox = try String(contentsOf: pipeline.vault.inboxURL, encoding: .utf8)
         guard queue.pending == nil, inbox.components(separatedBy: "held capture saved by quit").count - 1 == 1,
-              try await pipeline.journal.recordURLs().isEmpty else {
+              try await pipeline.selfCheck.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: the quit drain did not save a retry-held capture")
         }
     }

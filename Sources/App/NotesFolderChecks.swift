@@ -31,41 +31,41 @@ func checkNotesFolder() async throws {
     }
 
     let pipeline = try await CapturePipeline.open(vaultRoot: original, stateDirectory: originalState, calendar: .current)
-    let session = try await pipeline.sessions.start(name: "Original session")
+    let session = try await pipeline.selfCheck.sessions.start(name: "Original session")
     try pipeline.drafts.store("Original draft")
     try pipeline.pins.set(session.notePath, pinned: true)
     let capture = PendingCapture(trigger: .selection, content: .text("original pending capture"),
                                  source: CaptureSource(appName: "Folder checks"), subtitle: "check")
     let job = try await pipeline.prepare(capture)
-    try await pipeline.journal.store(job)
+    try await pipeline.selfCheck.journal.store(job)
     _ = try await pipeline.index.sync()
     try NotesFolder.save(other, defaults: defaults)
     let otherState = try NotesFolder.stateDirectory(for: other, base: base)
     let otherPipeline = try await CapturePipeline.open(vaultRoot: other, stateDirectory: otherState, calendar: .current,
                                                      modelsDirectory: base.appendingPathComponent("models", isDirectory: true))
-    let otherSession = await otherPipeline.sessions.current()
-    let otherJobs = try await otherPipeline.journal.recordURLs()
+    let otherSession = await otherPipeline.selfCheck.sessions.current()
+    let otherJobs = try await otherPipeline.selfCheck.journal.recordURLs()
     let otherHits = try await otherPipeline.index.titleSuggestions(prefix: "", limit: 20)
     guard otherState != originalState, otherSession == nil, otherJobs.isEmpty, otherHits.isEmpty,
           try otherPipeline.drafts.load().isEmpty, otherPipeline.pins.paths().isEmpty,
           try NotesFolder.stateDirectory(for: other, base: base) == otherState else {
         throw SelfTestFailure("Changing notes folders leaked state from the original folder")
     }
-    guard await pipeline.sessions.current() == session,
+    guard await pipeline.selfCheck.sessions.current() == session,
           try pipeline.drafts.load() == "Original draft",
           pipeline.pins.isPinned(session.notePath),
-          try await pipeline.journal.recordURLs().count == 1 else {
+          try await pipeline.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Changing notes folders altered the running pipeline")
     }
     try NotesFolder.save(original, defaults: defaults)
     let restoredState = try NotesFolder.stateDirectory(for: original, base: base)
     let restored = try await CapturePipeline.open(vaultRoot: original, stateDirectory: restoredState, calendar: .current)
     // startedAt is persisted with reduced precision, so compare it with a tolerance.
-    let restoredSession = await restored.sessions.current()
+    let restoredSession = await restored.selfCheck.sessions.current()
     guard restoredState == base, restoredSession?.name == session.name, restoredSession?.notePath == session.notePath,
           abs(restoredSession?.startedAt.timeIntervalSince(session.startedAt) ?? .infinity) < 1,
           try restored.drafts.load() == "Original draft", restored.pins.isPinned(session.notePath),
-          try await restored.journal.recordURLs().count == 1 else {
+          try await restored.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Returning to a notes folder did not preserve its state")
     }
     let aliases = temporary.appendingPathComponent("Alias", isDirectory: true)

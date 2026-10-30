@@ -17,7 +17,7 @@ func checkFolderShortcutActions() async throws {
     let before = try Data(contentsOf: activeURL)
     guard let saved = try await controller.addNote("Experiment\nObservations", outsideSession: true, folder: folder),
           saved.destination.url.path.hasSuffix("/Science/Research/Experiment.md"),
-          await pipeline.sessions.current() == active,
+          await pipeline.selfCheck.sessions.current() == active,
           try Data(contentsOf: activeURL) == before,
           try pipeline.drafts.load().isEmpty else {
         throw SelfTestFailure("Folder quick note failed to override routing without changing the session")
@@ -26,14 +26,14 @@ func checkFolderShortcutActions() async throws {
     let second = try await controller.startFolderSession(name: "Experiment review", in: folder)
     guard first.notePath == "Sessions/Science/Research/Experiment review.md", first.notePath == second.notePath,
           second.resumed == true,
-          await pipeline.sessions.current() == second else {
+          await pipeline.selfCheck.sessions.current() == second else {
         throw SelfTestFailure("Folder shortcut did not create and resume the named session inside its folder")
     }
     do {
         _ = try await controller.startFolderSession(name: " \n\t ", in: folder)
         throw SelfTestFailure("Blank folder-session name created a session")
     } catch NotePathNameError.emptyPath { }
-    guard await pipeline.sessions.current() == second else {
+    guard await pipeline.selfCheck.sessions.current() == second else {
         throw SelfTestFailure("Blank folder-session name changed the active session")
     }
     guard AppController.sessionPath(second.notePath, isIn: folder),
@@ -60,7 +60,7 @@ func checkFolderShortcutActions() async throws {
         while controller.inputForChecks != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        guard controller.inputForChecks == nil, await pipeline.sessions.current() == second else {
+        guard controller.inputForChecks == nil, await pipeline.selfCheck.sessions.current() == second else {
             throw SelfTestFailure("Cancel or blank session prompt changed the active session")
         }
     }
@@ -92,11 +92,11 @@ func checkFolderShortcutActions() async throws {
             throw SelfTestFailure("Folder session suggestion lost its exact path identity")
         }
     }
-    while await pipeline.sessions.current()?.name != "Visible review", ContinuousClock.now < selectionDeadline {
+    while await pipeline.selfCheck.sessions.current()?.name != "Visible review", ContinuousClock.now < selectionDeadline {
         try await Task.sleep(for: .milliseconds(10))
     }
-    guard await pipeline.sessions.current()?.notePath == second.notePath,
-          await pipeline.sessions.current()?.name == "Visible review",
+    guard await pipeline.selfCheck.sessions.current()?.notePath == second.notePath,
+          await pipeline.selfCheck.sessions.current()?.name == "Visible review",
           !FileManager.default.fileExists(atPath: selectedURL.deletingLastPathComponent().appendingPathComponent("Visible review.md").path) else {
         throw SelfTestFailure("Choosing a folder session by its display title created a sibling instead of resuming its exact path")
     }
@@ -107,10 +107,10 @@ func checkFolderShortcutActions() async throws {
     let prepared = try await pipeline.resolve(capture, intent: CaptureIntent(folder: folder))
     let job = CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: text,
                          noteOutsideSession: true, noteFolder: folder)
-    try await pipeline.journal.store(job)
-    let records = try await pipeline.journal.recordURLs()
+    try await pipeline.selfCheck.journal.store(job)
+    let records = try await pipeline.selfCheck.journal.recordURLs()
     guard let record = records.first else { throw SelfTestFailure("Folder note did not journal") }
-    let reloaded = try await pipeline.journal.load(record: record)
+    let reloaded = try await pipeline.selfCheck.journal.load(record: record)
     guard reloaded.noteFolder == folder, reloaded.prepared.destination == prepared.destination else {
         throw SelfTestFailure("Folder note journal lost its destination context")
     }
@@ -135,13 +135,13 @@ func checkFolderShortcutActions() async throws {
     // That drives the footer (Add to note) and Save as New Note, which numbers a copy in the same folder.
     let existing = TypedNote(markdown: "Experiment\nFollow-up observations", createdAt: Date(), calendar: .current)
     guard state.destinationLabel == nil,
-          try CaptureService.appendTarget(for: existing, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault, folder: folder)?.title == "Experiment",
-          try CaptureService.appendTarget(for: existing, reserved: pipeline.service.reservedNoteURLs, vault: pipeline.vault) == nil else {
+          try CaptureService.appendTarget(for: existing, reserved: pipeline.selfCheck.service.reservedNoteURLs, vault: pipeline.vault, folder: folder)?.title == "Experiment",
+          try CaptureService.appendTarget(for: existing, reserved: pipeline.selfCheck.service.reservedNoteURLs, vault: pipeline.vault) == nil else {
         throw SelfTestFailure("Folder quick note did not resolve its typed name inside the folder")
     }
     guard let copy = try await controller.addNote("Experiment\nFollow-up observations", newNote: true, outsideSession: true, folder: folder),
           copy.destination.url.path.hasSuffix("/Science/Research/Experiment 2.md"),
-          await pipeline.sessions.current()?.notePath == second.notePath else {
+          await pipeline.selfCheck.sessions.current()?.notePath == second.notePath else {
         throw SelfTestFailure("Save as New Note in a folder quick note did not create a numbered note in the folder")
     }
 }

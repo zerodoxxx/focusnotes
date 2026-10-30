@@ -198,7 +198,7 @@ final class AppController: NSObject, NSMenuDelegate {
         startupReplayTask = replay
         let restored = await replay.value
         startupReplayTask = nil
-        activeSession = await pipeline.sessions.current()
+        activeSession = await pipeline.currentSession()
         guard !isTerminating else { return restored }
         if presentsUI {
             do { folderShortcuts = try folderShortcutStore.load() }
@@ -363,7 +363,7 @@ final class AppController: NSObject, NSMenuDelegate {
     func startFolderSession(name: String, in folder: NoteFolder) async throws -> Session {
         guard !NoteTitle.cleanTitle(name).isEmpty else { throw NotePathNameError.emptyPath }
         try await pipeline.recoverSessionIdentity()
-        let session = try await pipeline.sessions.start(name: name, in: folder)
+        let session = try await pipeline.startSession(name: name, in: folder)
         return try await activateSession(session)
     }
 
@@ -634,7 +634,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     // An explicit choice saves even if the editor can't close; the save shows no panel.
                     await controller.closePanels()
                     guard controller.captures.pending?.id == capture.id else { return }
-                    _ = controller.captures.commitPending(pick: controller.pipeline.service.pick(for: candidate), announce: true)
+                    _ = controller.captures.commitPending(pick: controller.pipeline.pick(for: candidate), announce: true)
                 }
             }, onCancel: { [weak controller] in
                 guard let controller else { return }
@@ -722,7 +722,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard await controller.closePanels() else { return }
             await controller.waitForCommits()
             guard !controller.isTerminating else { return }
-            if let session = await controller.pipeline.sessions.current() {
+            if let session = await controller.pipeline.currentSession() {
                 do { _ = try await controller.endSession(session) }
                 catch { controller.report(error, title: "Couldn't end session") }
             } else {
@@ -746,20 +746,20 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func startSession(name: String) async throws -> Session {
         try await pipeline.recoverSessionIdentity()
-        let session = try await pipeline.sessions.start(name: name)
+        let session = try await pipeline.startSession(name: name)
         return try await activateSession(session)
     }
 
     private func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
         try await pipeline.recoverSessionIdentity()
-        let session = try await pipeline.sessions.resume(candidate)
+        let session = try await pipeline.resumeSession(candidate)
         return try await activateSession(session)
     }
 
     @discardableResult
     func renameSession(_ candidate: SessionCandidate, to name: String) async throws -> Session {
         let knownJobs = await captures.knownJobs()
-        let outcome = try await pipeline.renames.rename(candidate, to: name, followingCaptures: knownJobs)
+        let outcome = try await pipeline.renameSession(candidate, to: name, followingCaptures: knownJobs)
         activeSession = outcome.session
         refreshStatus()
         if outcome.identityUpdatePending {
@@ -850,7 +850,7 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func endSession(_ session: Session) async throws -> Int? {
         try await pipeline.recoverSessionIdentity()
-        try await pipeline.sessions.end()
+        try await pipeline.endSession()
         activeSession = nil
         refreshStatus()
         // The session has ended; an unreadable count only drops the toast subtitle.
@@ -885,7 +885,7 @@ final class AppController: NSObject, NSMenuDelegate {
             let folder = requestedFolder ?? restored.folder
             let sessionDestination: Destination?
             do {
-                sessionDestination = folder == nil ? try await pipeline.service.sessionDestination() : nil
+                sessionDestination = folder == nil ? try await pipeline.sessionDestination() : nil
             } catch {
                 controller.report(error, title: "Couldn't resolve note destination")
                 return
@@ -969,8 +969,8 @@ final class AppController: NSObject, NSMenuDelegate {
                             do { try state.resetPinOnSave(in: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
                             do {
-                                state.destination = try pipeline.service.pickedDestination(noteID: item.id, title: item.title,
-                                                                                           kind: state.kinds[item.id] ?? .note)
+                                state.destination = try pipeline.pickedDestination(noteID: item.id, title: item.title,
+                                                                                   kind: state.kinds[item.id] ?? .note)
                             } catch { controller?.report(error, title: "Couldn't select note"); return }
                             editor?.setDestination(item.title, isPinned: pipeline.pins.isPinned(item.id))
                         case .open:
@@ -1006,7 +1006,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     existingTitleForText: { text in
-                        pipeline.service.existingTitle(forTypedNote: text, intent: state.intent(), calendar: calendar)
+                        pipeline.existingTitle(forTypedNote: text, intent: state.intent(), calendar: calendar)
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
@@ -1057,7 +1057,7 @@ final class AppController: NSObject, NSMenuDelegate {
             let destination: Destination
             do {
                 try await controller.pipeline.recoverSessionIdentity()
-                destination = try await controller.pipeline.service.defaultDestination()
+                destination = try await controller.pipeline.defaultDestination()
             } catch {
                 controller.report(error, title: "Couldn't resolve note destination")
                 return
@@ -1550,7 +1550,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
 extension AppController: CaptureQueueHost {
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async {
-        let session = await pipeline.sessions.current()
+        let session = await pipeline.currentSession()
         guard presentsUI, captures.pending?.id == capture.id, !isTerminating else { return }
         if outsideSession {
             showTitlePicker(for: capture.id)
@@ -1574,7 +1574,7 @@ extension AppController: CaptureQueueHost {
     }
 
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
-        let session = outsideSession ? await pipeline.sessions.current() : nil
+        let session = outsideSession ? await pipeline.currentSession() : nil
         let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
             + (session.map { " · \($0.name) still active" } ?? "")
         if captures.pending == nil { showToast(Toast(style: .success, title: title, duration: 1.6)) }
