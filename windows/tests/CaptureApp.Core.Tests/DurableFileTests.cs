@@ -66,4 +66,23 @@ public sealed class DurableFileTests : IDisposable
         Assert.True(DurableFile.IsTransient(new UnauthorizedAccessException(), windows: true));
         Assert.False(DurableFile.IsTransient(new UnauthorizedAccessException(), windows: false));
     }
+
+    [Fact]
+    public void ReadOnlyTargetFailsAtOnceInsteadOfWaitingOutTheRetry()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows read-only replace semantics.");
+        var path = Path.Combine(directory, "settings.json");
+        DurableFile.Write(path, "old"u8.ToArray());
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Throws<UnauthorizedAccessException>(() => DurableFile.Write(path, "new"u8.ToArray()));
+
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(5), $"Took {elapsed.Elapsed}.");
+            Assert.Equal("old", File.ReadAllText(path));
+            Assert.Equal(path, Assert.Single(Directory.GetFiles(directory)));
+        }
+        finally { File.SetAttributes(path, FileAttributes.Normal); }
+    }
 }

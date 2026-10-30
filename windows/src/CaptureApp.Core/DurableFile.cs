@@ -21,7 +21,7 @@ public static class DurableFile
                 stream.Flush(true);
             }
 
-            RetryWhileLocked(() => (MoveHook.Value ?? ((source, target) => File.Move(source, target, true)))(temporary, fullPath));
+            RetryWhileLocked(() => (MoveHook.Value ?? ((source, target) => File.Move(source, target, true)))(temporary, fullPath), fullPath);
         }
         finally
         {
@@ -32,7 +32,8 @@ public static class DurableFile
 
     // Antivirus scanners and indexers briefly open a file that was just written. Retry for up to 10 s like
     // NoteFile.OpenExclusive, so a journal record staged a moment earlier can still be replaced or removed.
-    public static void RetryWhileLocked(Action change)
+    // Access denied on a read-only `target` is permanent, so it fails at once instead of stalling the caller.
+    public static void RetryWhileLocked(Action change, string? target = null)
     {
         var until = Environment.TickCount64 + 10000;
         while (true)
@@ -42,7 +43,8 @@ public static class DurableFile
                 change();
                 return;
             }
-            catch (Exception error) when (Environment.TickCount64 < until && IsTransient(error, OperatingSystem.IsWindows()))
+            catch (Exception error) when (Environment.TickCount64 < until && IsTransient(error, OperatingSystem.IsWindows())
+                                          && !(error is UnauthorizedAccessException && target is not null && IsReadOnly(target)))
             {
                 Thread.Sleep(2);
             }
@@ -53,4 +55,10 @@ public static class DurableFile
     // process holds open can report access denied instead, so that is retried too.
     internal static bool IsTransient(Exception error, bool windows) =>
         error is IOException && (error.HResult & 0xFFFF) is 11 or 32 or 33 || windows && error is UnauthorizedAccessException;
+
+    private static bool IsReadOnly(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
+    }
 }
