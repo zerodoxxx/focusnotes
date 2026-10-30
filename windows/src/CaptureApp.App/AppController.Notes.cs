@@ -1,4 +1,3 @@
-using System.IO;
 using CaptureApp.AppCore;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
@@ -54,8 +53,7 @@ internal sealed partial class AppController
             {
                 restored = pipeline.Drafts.LoadSnapshot();
                 folder = requestedFolder is null ? restored.Folder : new NoteFolder(requestedFolder);
-                var active = await Task.Run(() => pipeline.Sessions.Current());
-                sessionDestination = folder is not null || active is null ? null : Router.Destination(null, active, [], pipeline.Vault);
+                sessionDestination = folder is not null ? null : await Task.Run(() => pipeline.Service.SessionDestination());
             }
             catch (Exception error) { c.Report(error, Strings.CouldNotResolveDestination); return; }
 
@@ -124,9 +122,9 @@ internal sealed partial class AppController
                     {
                         if (await Save(text) is { } saved) { OpenNote(saved.Destination.Url); return; }
                     }
-                    else if (state.Destination?.Url is { } url && File.Exists(url))
+                    else if (state.ExistingDestination is { } existing)
                     {
-                        OpenNote(url);
+                        OpenNote(existing.Url);
                         return;
                     }
 
@@ -152,8 +150,7 @@ internal sealed partial class AppController
                         catch (Exception error) { c.Report(error, Strings.CouldNotResetDraftPin); return; }
                         try
                         {
-                            var location = pipeline.Vault.NoteLocation(item.Id);
-                            state.Destination = new Destination(location.Url, item.Title, state.Kinds.GetValueOrDefault(item.Id, NoteKind.Note));
+                            state.Destination = pipeline.Service.PickedDestination(new NotePick(item.Id, item.Title, state.Kinds.GetValueOrDefault(item.Id, NoteKind.Note)));
                         }
                         catch (Exception error) { c.Report(error, Strings.CouldNotSelectNote); return; }
                         quickNote.SetDestination(item.Title, pipeline.Pins.IsPinned(item.Id));
@@ -174,7 +171,7 @@ internal sealed partial class AppController
                 {
                     if (state.Destination is not { } destination) { return state.TogglePinOnSave(pipeline.Drafts); }
                     if (NoteId(destination) is not { } id) { return false; }
-                    return File.Exists(destination.Url) ? pipeline.Pins.Toggle(id) : state.TogglePinOnSave(pipeline.Drafts);
+                    return state.ExistingDestination is not null ? pipeline.Pins.Toggle(id) : state.TogglePinOnSave(pipeline.Drafts);
                 }
                 catch (Exception error)
                 {
@@ -192,17 +189,7 @@ internal sealed partial class AppController
                     error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)), folder: state.Folder);
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
             },
-            ExistingTitleForText: text =>
-            {
-                // Session and Browse destinations take precedence over typed-name matching, as in PrepareNote.
-                if (state.Destination is not null) return null;
-                try
-                {
-                    var note = new TypedNote(text, DateTimeOffset.Now, zone, pipeline.Vault.NamingRules);
-                    return CaptureService.AppendTarget(note, pipeline.Service.ReservedNoteUrls, pipeline.Vault, folder: state.Folder)?.Title;
-                }
-                catch (Exception) { return null; } // Invalid or unavailable paths are reported when saving.
-            },
+            ExistingTitleForText: text => pipeline.Service.ExistingTitle(text, state.Intent(), zone),
             OnSaveAsNew: text => c.Enqueue(async inner =>
             {
                 try { await Save(text, newNote: true); }

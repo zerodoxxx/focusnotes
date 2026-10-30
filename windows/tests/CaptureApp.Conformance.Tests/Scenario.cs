@@ -39,7 +39,8 @@ public static class ScenarioLoader
         "vault-naming",
         "sessionstore",
         "noteparser",
-        "searchindex"
+        "searchindex",
+        "capturedestination"
     };
 
     private static readonly JsonSerializerOptions Options = new()

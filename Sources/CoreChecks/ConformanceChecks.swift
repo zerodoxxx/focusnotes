@@ -68,7 +68,8 @@ private let conformanceOperations: [String: Set<String>] = [
     "vault-naming": ["pathName", "resolve", "unique", "list"],
     "sessionstore": ["start", "current", "end", "reload", "persisted", "writeState", "resume"],
     "noteparser": ["parse"],
-    "searchindex": ["sync", "query", "reindex"]
+    "searchindex": ["sync", "query", "reindex"],
+    "capturedestination": ["startSession", "resolve", "existingTitle"]
 ]
 private let commonConformanceOperations: Set<String> = ["prepare", "write", "read", "remove"]
 
@@ -128,6 +129,7 @@ private final class ConformanceExecution {
     let writer: NoteWriter
     var sessions: SessionStore
     var index: SearchIndex?
+    var service: CaptureService?
 
     init(input: ConformanceScenario.Input) throws {
         clock = try fixtureDate(input.clock)
@@ -209,16 +211,62 @@ private final class ConformanceExecution {
         return created
     }
 
+    func captureService() -> CaptureService {
+        if let service { return service }
+        let fixedClock = clock
+        let created = CaptureService(vault: vault, sessions: sessions, writer: writer, now: { fixedClock })
+        service = created
+        return created
+    }
+
+    func intent(_ op: [String: FixtureValue]) throws -> CaptureIntent {
+        guard op["title"] == nil || op["pick"] == nil else { throw CheckFailure.failed("title and pick are mutually exclusive") }
+        let target: CaptureIntent.Target
+        if let title = op["title"]?.text { target = .title(title) }
+        else if let pick = op["pick"]?.text {
+            let kind: NoteKind
+            switch op["pickKind"]?.text ?? "note" {
+            case "note": kind = .note
+            case "session": kind = .session
+            case "inbox": kind = .inbox
+            default: throw CheckFailure.failed("Unknown pickKind")
+            }
+            target = .pick(NotePick(noteID: pick, title: URL(fileURLWithPath: pick).deletingPathExtension().lastPathComponent, kind: kind))
+        } else { target = .automatic }
+        return CaptureIntent(target, outsideSession: op["outsideSession"]?.flag ?? false,
+                             folder: try op["folder"]?.text.map { try NoteFolder(rawValue: $0) }, newNote: op["newNote"]?.flag ?? false)
+    }
+
     func execute(_ op: [String: FixtureValue], area: String) async throws -> FixtureValue {
         let name = try op.string("op")
         guard commonConformanceOperations.contains(name) || conformanceOperations[area]?.contains(name) == true else {
             throw CheckFailure.failed("Unknown operation \(area)/\(name)")
         }
-        do { return try await perform(name, op: op) }
+        do { return try await perform(name, op: op, area: area) }
         catch { return try fixtureError(error) }
     }
 
-    private func perform(_ name: String, op: [String: FixtureValue]) async throws -> FixtureValue {
+    private func perform(_ name: String, op: [String: FixtureValue], area: String) async throws -> FixtureValue {
+        if area == "capturedestination" {
+            switch name {
+            case "startSession": _ = try await sessions.start(name: op.string("name")); return .null
+            case "resolve":
+                let intent = try intent(op)
+                let prepared: PreparedCapture
+                do { prepared = try await captureService().resolve(capture(op), intent: intent, calendar: calendar) }
+                catch let error as CocoaError where error.code == .fileNoSuchFile && op["pick"] != nil {
+                    // A picked note that no longer exists; elsewhere this error fails the harness.
+                    return .object(["error": .string("noteNotFound")])
+                }
+                return .object(["path": .string(try path(prepared.destination.url)), "title": .string(prepared.destination.title),
+                                "kind": .string(checkKindName(prepared.destination.kind)),
+                                "createsNote": .bool(prepared.createsNote == true)])
+            case "existingTitle":
+                return fixtureString(captureService().existingTitle(forTypedNote: try op.string("text"), intent: try intent(op),
+                                                                    calendar: calendar))
+            default: break
+            }
+        }
         switch name {
         case "prepare": try vault.prepare(); return .null
         case "write": try write(op.string("text"), path: op.string("path")); return .null

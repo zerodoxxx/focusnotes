@@ -1,0 +1,29 @@
+{
+  "area" : "capturedestination",
+  "description" : "A chosen note wins, so the preview names no typed-name match.",
+  "expected" : {
+    "files" : {
+      "Ideas.md" : "# Ideas\n",
+      "Physics.md" : "# Physics\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "existing-title-chosen-note",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Ideas.md" : "# Ideas\n",
+      "Physics.md" : "# Physics\n"
+    },
+    "ops" : [
+      {
+        "op" : "existingTitle",
+        "pick" : "Physics.md",
+        "text" : "Ideas\nx"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

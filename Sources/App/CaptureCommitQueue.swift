@@ -69,7 +69,7 @@ final class CaptureCommitQueue {
         guard recoveryJobs[capture.id] == nil else { return }
         let pipeline = pipeline
         let preparation = Task.detached(priority: .userInitiated) {
-            try await pipeline.prepare(capture, noteTitle: nil, outsideSession: outsideSession)
+            try await pipeline.prepare(capture, intent: CaptureIntent(outsideSession: outsideSession))
         }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
@@ -111,7 +111,8 @@ final class CaptureCommitQueue {
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
             let recovered = try? await recovery?.value
-            return try await pipeline.prepare(capture, noteTitle: nil, destination: recovered?.prepared.destination, outsideSession: outsideSession)
+            return try await pipeline.prepare(capture, intent: CaptureIntent(recovered.map { .resolved($0.prepared.destination) } ?? .automatic,
+                                                                             outsideSession: outsideSession))
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
@@ -131,9 +132,9 @@ final class CaptureCommitQueue {
     /// Implicit commits (drain, toast, rename, draft save) skip a retry-pending capture; only an
     /// explicit destination, shutdown, or a newer capture staged in `stage()` may save it.
     @discardableResult
-    func commitPending(noteTitle: String? = nil, destination: Destination? = nil, announce: Bool = false, force: Bool = false) -> Task<SavedCapture, Error>? {
+    func commitPending(noteTitle: String? = nil, pick: NotePick? = nil, announce: Bool = false, force: Bool = false) -> Task<SavedCapture, Error>? {
         guard let capture = pending else { return nil }
-        if needsRetryChoice, !force, noteTitle == nil, destination == nil, !isQuitting { return nil }
+        if needsRetryChoice, !force, noteTitle == nil, pick == nil, !isQuitting { return nil }
         let outsideSession = pendingOutsideSession
         pending = nil
         pendingOutsideSession = false
@@ -146,20 +147,14 @@ final class CaptureCommitQueue {
         let recovery = isQuitting ? recoveryJobs[capture.id] : nil
         let recoveryPersistence = recoveryPersistences[capture.id]
         let preparation = Task.detached(priority: .userInitiated) {
-            let resolvedDestination: Destination?
-            if let recovery { resolvedDestination = try? await recovery.value.prepared.destination }
-            else if let destination { resolvedDestination = destination }
-            else if noteTitle == nil { resolvedDestination = try? await staged?.preparation.value.prepared.destination }
-            else { resolvedDestination = nil }
-            if destination != nil {
-                // noteLocation covers HOME notes too; it fails when the note no longer exists.
-                guard let resolvedDestination,
-                      let noteID = try? pipeline.vault.noteID(for: resolvedDestination.url),
-                      (try? pipeline.vault.noteLocation(forID: noteID)) != nil else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
-            }
-            return try await pipeline.prepare(capture, noteTitle: noteTitle, destination: resolvedDestination, outsideSession: outsideSession)
+            // A picked note that no longer exists fails to resolve, which keeps the capture for retry.
+            let target: CaptureIntent.Target
+            if let recovered = try? await recovery?.value { target = .resolved(recovered.prepared.destination) }
+            else if let pick { target = .pick(pick) }
+            else if let noteTitle { target = .title(noteTitle) }
+            else if let staged = try? await staged?.preparation.value { target = .resolved(staged.prepared.destination) }
+            else { target = .automatic }
+            return try await pipeline.prepare(capture, intent: CaptureIntent(target, outsideSession: outsideSession))
         }
         preparedJobs[capture.id] = preparation
         let (task, generation) = enqueueCommit(preparation, after: commitTail,
@@ -174,7 +169,7 @@ final class CaptureCommitQueue {
                     await self?.host?.captureSaved(saved, outsideSession: outsideSession)
                 }
             } catch {
-                if (noteTitle != nil || destination != nil), case .failure = await preparation.result, let staged {
+                if (noteTitle != nil || pick != nil), case .failure = await preparation.result, let staged {
                     self?.preparedJobs.removeValue(forKey: capture.id)
                     if self?.pending == nil {
                         self?.stagedJob = staged
@@ -230,7 +225,8 @@ final class CaptureCommitQueue {
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
         let preparation = retry ?? Task.detached(priority: .userInitiated) {
-            let prepared = try await pipeline.prepareNote(capture, destination: destination, newNote: newNote, outsideSession: outsideSession, folder: folder)
+            let prepared = try await pipeline.resolve(capture, intent: CaptureIntent(destination.map { .resolved($0) } ?? .automatic,
+                                                                                     outsideSession: outsideSession, folder: folder, newNote: newNote))
             return CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: rawText, noteOutsideSession: outsideSession, noteFolder: folder)
         }
         let preparedNote = try await preparation.value.prepared
@@ -271,7 +267,7 @@ final class CaptureCommitQueue {
             break
         }
         let preparation = retry ?? Task.detached(priority: .userInitiated) { [capture] in
-            let prepared = try await pipeline.prepareCapture(capture, destination: destination)
+            let prepared = try await pipeline.resolve(capture, intent: CaptureIntent(destination.map { .resolved($0) } ?? .automatic))
             return CaptureJob(prepared: prepared, png: nil, ocr: nil)
         }
         preparedJobs[capture.id] = preparation

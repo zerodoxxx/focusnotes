@@ -17,6 +17,12 @@ public sealed class QuickNoteState
     public bool LaunchedOutside { get; }
     public bool PinOnSave { get; private set; }
     public IReadOnlyList<NoteSuggestion> Suggestions { get; set; } = [];
+    /// <summary>The chosen destination while its file exists; Open as Note and the pin toggle act on it.</summary>
+    public Destination? ExistingDestination => Destination is { } destination && File.Exists(destination.Url) ? destination : null;
+
+    /// The editor's intent for the typed-name preview: a chosen note is replayed, else the typed name decides.
+    public CaptureIntent Intent() =>
+        new(Destination is { } destination ? new CaptureTarget.Resolved(destination) : null, OutsideSession, Folder);
 
     public IReadOnlyDictionary<string, NoteKind> Kinds
     {

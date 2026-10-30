@@ -1,0 +1,38 @@
+{
+  "area" : "capturedestination",
+  "description" : "A typed note without folder or outside-session goes to the active session note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : false,
+        "kind" : "session",
+        "path" : "Sessions/Standup.md",
+        "title" : "Standup"
+      }
+    ]
+  },
+  "id" : "typed-note-session-default",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "startSession"
+      },
+      {
+        "content" : "note",
+        "op" : "resolve",
+        "text" : "Plan\nbody"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -362,8 +362,8 @@ private func checkFixedCapturePreparationBypassesRouting() async throws {
         let capture = PendingCapture(trigger: image ? .region : .selection,
                                      content: image ? .image(png: Data([137, 80, 78, 71]), ocr: nil) : .text("fixed capture"),
                                      source: CaptureSource(appName: "Fixed routing check", windowTitle: nil), subtitle: "check")
-        let outside = try await pipeline.prepare(capture, noteTitle: nil, outsideSession: true)
-        let fixed = try await pipeline.prepare(capture, noteTitle: "../invalid", destination: inbox)
+        let outside = try await pipeline.prepare(capture, intent: CaptureIntent(outsideSession: true))
+        let fixed = try await pipeline.prepare(capture, intent: CaptureIntent(.resolved(inbox)))
         guard outside.prepared.destination == inbox, fixed.prepared.destination == inbox,
               try Data(contentsOf: registry) == invalidRegistry,
               try Data(contentsOf: pipeline.vault.inboxURL) == inboxBefore,
@@ -411,7 +411,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
             let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
             let capture = PendingCapture(trigger: .selection, content: .text("capture after corrupt intent"),
                                          source: CaptureSource(appName: "Rename check", windowTitle: nil), subtitle: "check")
-            let saved = try await reopened.commit(try await reopened.prepare(capture, noteTitle: nil))
+            let saved = try await reopened.commit(try await reopened.prepare(capture))
             let corrupt = try FileManager.default.contentsOfDirectory(atPath: quarantined.deletingLastPathComponent().path)
             guard try await reopened.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: intentURL.path),
@@ -609,7 +609,7 @@ private func checkSessionRenameAbandonment() async throws {
         if scenario == "editor-replacement" {
             let capture = PendingCapture(trigger: .selection, content: .text("capture after rollback"),
                                          source: CaptureSource(appName: "Rename check", windowTitle: nil), subtitle: "check")
-            let job = try await recovered.prepare(capture, noteTitle: nil)
+            let job = try await recovered.prepare(capture)
             let saved = try await recovered.commit(job)
             guard saved.destination.url == oldURL,
                   try Data(contentsOf: oldURL).starts(with: edited),
@@ -782,26 +782,26 @@ private func checkSessionRenameIdentity() async throws {
     let pendingCapture = PendingCapture(trigger: .selection, content: .text("new UUID after rename"), source: capture.source, subtitle: "check")
     let directCapture = Capture(id: UUID(), createdAt: Date(), content: .note("typed UUID after rename"), source: capture.source)
     do {
-        _ = try await finished.prepare(pendingCapture, noteTitle: nil)
+        _ = try await finished.prepare(pendingCapture)
         throw SelfTestFailure("Capture preparation routed around an unfinished rename")
     } catch let error as CocoaError {
         guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
     }
     do {
-        _ = try await finished.prepareNote(directCapture, destination: nil, newNote: false)
+        _ = try await finished.resolve(directCapture, intent: CaptureIntent())
         throw SelfTestFailure("Typed-note preparation routed around an unfinished rename")
     } catch let error as CocoaError {
         guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
     }
     do {
-        _ = try await finished.prepareCapture(directCapture, destination: nil)
+        _ = try await finished.resolve(Capture(id: directCapture.id, createdAt: directCapture.createdAt, content: .subheading("subheading after rename"), source: directCapture.source), intent: CaptureIntent())
         throw SelfTestFailure("Subheading preparation routed around an unfinished rename")
     } catch let error as CocoaError {
         guard error.code == .fileReadUnknown || error.code == .fileReadNoPermission else { throw error }
     }
     try FileManager.default.removeItem(at: finished.pins.url)
     try FileManager.default.moveItem(at: pinBackup, to: finished.pins.url)
-    let afterRepair = try await finished.prepare(pendingCapture, noteTitle: nil)
+    let afterRepair = try await finished.prepare(pendingCapture)
     guard afterRepair.prepared.destination.url == vaultRoot.appendingPathComponent(pendingOutcome.session.notePath),
           finished.pins.isPinned(pendingOutcome.session.notePath),
           !FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent(secondRename.session.notePath).path) else {
@@ -825,7 +825,7 @@ private func checkSessionRenameIdentity() async throws {
         throw SelfTestFailure("Abandoned rename recovery retained its intent or altered the edited source")
     }
     let next = PendingCapture(trigger: .selection, content: .text("capture after drift"), source: capture.source, subtitle: "check")
-    let nextJob = try await afterDrift.prepare(next, noteTitle: nil)
+    let nextJob = try await afterDrift.prepare(next)
     let nextSaved = try await afterDrift.commit(nextJob)
     guard nextSaved.destination.url == changedURL, try Data(contentsOf: changedURL).starts(with: edited),
           try String(contentsOf: changedURL, encoding: .utf8).contains("capture after drift"),

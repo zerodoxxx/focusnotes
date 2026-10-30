@@ -1,0 +1,29 @@
+{
+  "area" : "capturedestination",
+  "description" : "A picked note that no longer exists fails with noteNotFound.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "error" : "noteNotFound"
+      }
+    ]
+  },
+  "id" : "pick-missing",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "resolve",
+        "pick" : "Gone.md",
+        "text" : "picked text"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

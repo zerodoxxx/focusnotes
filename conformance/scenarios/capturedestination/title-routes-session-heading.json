@@ -1,0 +1,38 @@
+{
+  "area" : "capturedestination",
+  "description" : "A picker title equal to the session name routes to the session note.",
+  "expected" : {
+    "files" : {
+      "Inbox.md" : "# Inbox\n",
+      "Sessions/Standup.md" : "# Standup\n"
+    },
+    "results" : [
+      null,
+      {
+        "createsNote" : false,
+        "kind" : "session",
+        "path" : "Sessions/Standup.md",
+        "title" : "Standup"
+      }
+    ]
+  },
+  "id" : "title-routes-session-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "name" : "Standup",
+        "op" : "startSession"
+      },
+      {
+        "op" : "resolve",
+        "text" : "titled text",
+        "title" : "Standup"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -107,6 +107,71 @@ public actor CaptureService {
         ))
     }
 
+    /// Turns a capture intent into its destination, once; the single answer to "where does this capture go?".
+    /// `.resolved` replays unchanged; `.pick` must still exist; `.title` is routed; `.automatic` uses the typed
+    /// note's name, the session default or Inbox. Outside a session, non-note captures go to the fixed Inbox,
+    /// independent of notes or sessions named Inbox.
+    public func resolve(_ capture: Capture, intent: CaptureIntent, calendar: Calendar) async throws -> PreparedCapture {
+        switch intent.target {
+        case .resolved(let destination):
+            return PreparedCapture(capture: capture, destination: destination)
+        case .pick(let pick):
+            return PreparedCapture(capture: capture, destination: try pickedDestination(noteID: pick.noteID, title: pick.title, kind: pick.kind))
+        case .title(let title):
+            return try await prepare(capture, noteTitle: title)
+        case .automatic:
+            break
+        }
+        guard case .note(let markdown) = capture.content else {
+            if intent.outsideSession {
+                return PreparedCapture(capture: capture, destination: Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox))
+            }
+            return try await prepare(capture, noteTitle: nil)
+        }
+        if intent.folder == nil, !intent.outsideSession, let active = await sessions.current() {
+            return PreparedCapture(capture: capture, destination: try Router.destination(
+                noteTitle: nil, activeSession: active, notes: [], vault: vault))
+        }
+        return try typedNote(capture, markdown: markdown, newNote: intent.newNote, folder: intent.folder, calendar: calendar)
+    }
+
+    /// The active session's note, or nil without a session.
+    public func sessionDestination() async throws -> Destination? {
+        guard let active = await sessions.current() else { return nil }
+        return try Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: vault)
+    }
+
+    /// Where an untitled capture goes: the session note, else Inbox.
+    public func defaultDestination() async throws -> Destination {
+        try Router.destination(noteTitle: nil, activeSession: await sessions.current(), notes: [], vault: vault)
+    }
+
+    /// The exact note a picker or Browse chose. `noteLocation` covers HOME notes too; it fails when the
+    /// note no longer exists, so the capture is kept for retry.
+    public nonisolated func pickedDestination(noteID: String, title: String, kind: NoteKind) throws -> Destination {
+        guard !noteID.isEmpty else { throw CocoaError(.fileNoSuchFile) }
+        do {
+            return Destination(url: try vault.noteLocation(forID: noteID).url, title: title, kind: kind)
+        } catch {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSUnderlyingErrorKey: error])
+        }
+    }
+
+    /// A pick for a destination listed earlier (e.g. an ambiguous-title candidate). An unidentifiable
+    /// destination gets an empty note ID, which fails `.pick` resolution and keeps the capture for retry.
+    public nonisolated func pick(for destination: Destination) -> NotePick {
+        NotePick(noteID: (try? vault.noteID(for: destination.url)) ?? "", title: destination.title, kind: destination.kind)
+    }
+
+    /// The quick note editor's live preview: the existing note a default typed save would append to.
+    /// A chosen session or Browse note wins, so only `.automatic` intents match; errors are reported on save.
+    /// This preview does not read the session: callers must pass an active session as `.resolved`, as the editor does.
+    public nonisolated func existingTitle(forTypedNote markdown: String, intent: CaptureIntent, calendar: Calendar) -> String? {
+        guard intent.target == .automatic else { return nil }
+        let note = TypedNote(markdown: markdown, createdAt: now(), calendar: calendar)
+        return (try? Self.appendTarget(for: note, reserved: reservedNoteURLs, vault: vault, folder: intent.folder))?.title
+    }
+
     /// Chooses the note for a typed capture, once. Unless `newNote` is set or the title is a
     /// generated timestamp, a name whose exact path exists, or was reserved earlier in
     /// this process, appends to it. Otherwise a new path is reserved. Replay saves this
@@ -114,14 +179,12 @@ public actor CaptureService {
     /// session now exists. `outsideSession` bypasses the active session for this preparation
     /// only; explicit Browse destinations still take precedence and session state is untouched.
     public func prepareNote(_ capture: Capture, destination: Destination? = nil, newNote: Bool = false, outsideSession: Bool = false, folder: NoteFolder? = nil, calendar: Calendar) async throws -> PreparedCapture {
-        if let destination { return PreparedCapture(capture: capture, destination: destination) }
-        if folder == nil, !outsideSession, let active = await sessions.current() {
-            return PreparedCapture(capture: capture, destination: try Router.destination(
-                noteTitle: nil, activeSession: active, notes: [], vault: vault))
-        }
-        guard case .note(let markdown) = capture.content else {
-            return try await prepare(capture, noteTitle: outsideSession ? Vault.inboxTitle : nil)
-        }
+        try await resolve(capture, intent: CaptureIntent(destination.map { .resolved($0) } ?? .automatic,
+                                                          outsideSession: outsideSession, folder: folder, newNote: newNote),
+                          calendar: calendar)
+    }
+
+    private func typedNote(_ capture: Capture, markdown: String, newNote: Bool, folder: NoteFolder?, calendar: Calendar) throws -> PreparedCapture {
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
         guard let parsedName = note.pathName else {
             throw note.pathNameError ?? NotePathNameError.invalidComponent

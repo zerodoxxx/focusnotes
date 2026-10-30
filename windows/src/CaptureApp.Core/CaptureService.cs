@@ -76,22 +76,86 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
     }
 
     public PreparedCapture PrepareNote(Capture capture, TimeZoneInfo timeZone, Destination? destination = null, bool newNote = false, bool outsideSession = false, NoteFolder? folder = null)
+        => Resolve(capture, new(destination is null ? null : new CaptureTarget.Resolved(destination), outsideSession, folder, newNote), timeZone);
+
+    /// The one place a capture intent becomes its destination; Router stays an internal detail.
+    public PreparedCapture Resolve(Capture capture, CaptureIntent intent, TimeZoneInfo timeZone)
+    {
+        switch (intent.Target)
+        {
+            case CaptureTarget.Resolved resolved:
+                return new(capture, resolved.Destination);
+            case CaptureTarget.Pick pick:
+                return new(capture, PickedDestination(pick.Note));
+            case CaptureTarget.Title title:
+                return Prepare(capture, title.Value);
+        }
+
+        if (capture.Content.Kind == CaptureContentKind.Note)
+        {
+            return PrepareTypedNote(capture, timeZone, intent);
+        }
+
+        // Outside a session an untitled capture goes to Inbox, even when a session or note is named Inbox.
+        return intent.OutsideSession ? new(capture, new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox)) : Prepare(capture);
+    }
+
+    /// The active session's note, or null without a session.
+    public Destination? SessionDestination()
     {
         lock (gate)
         {
-            if (destination is not null)
-            {
-                return new(capture, destination);
-            }
+            return sessions.Current() is { } active ? Router.Destination(null, active, [], vault) : null;
+        }
+    }
 
+    /// Where an untitled capture goes: the session note, else Inbox.
+    public Destination DefaultDestination()
+    {
+        lock (gate)
+        {
+            return Router.Destination(null, sessions.Current(), [], vault);
+        }
+    }
+
+    /// Throws <see cref="FileNotFoundException"/> when the picked note no longer exists or cannot be resolved.
+    public Destination PickedDestination(NotePick note)
+    {
+        try
+        {
+            return new(vault.NoteLocation(note.NoteId).Url, note.Title, note.Kind);
+        }
+        catch (Exception error) when (error is not FileNotFoundException)
+        {
+            throw new FileNotFoundException("The chosen note no longer exists.", note.NoteId, error);
+        }
+    }
+
+    /// The quick note editor's live preview of the note a typed save appends to; a chosen note wins, so this is then null.
+    /// Callers pass an active session default as <see cref="CaptureTarget.Resolved"/> (the editor does), so Automatic means no session.
+    public string? ExistingTitle(string markdown, CaptureIntent intent, TimeZoneInfo timeZone)
+    {
+        if (intent.Target is not (null or CaptureTarget.Automatic))
+        {
+            return null;
+        }
+
+        try
+        {
+            var note = new TypedNote(markdown, clock.GetUtcNow(), timeZone, vault.NamingRules);
+            return AppendTarget(note, preparedNoteUrls.Snapshot, vault, intent.Folder)?.Title;
+        }
+        catch (Exception) { return null; } // Invalid or unavailable paths are reported when saving.
+    }
+
+    private PreparedCapture PrepareTypedNote(Capture capture, TimeZoneInfo timeZone, CaptureIntent intent)
+    {
+        var (newNote, outsideSession, folder) = (intent.NewNote, intent.OutsideSession, intent.Folder);
+        lock (gate)
+        {
             if (folder is null && !outsideSession && sessions.Current() is { } active)
             {
                 return new(capture, Router.Destination(null, active, [], vault));
-            }
-
-            if (capture.Content.Kind != CaptureContentKind.Note)
-            {
-                return Prepare(capture);
             }
 
             var note = new TypedNote(capture.Content.Value, capture.CreatedAt, timeZone, vault.NamingRules);

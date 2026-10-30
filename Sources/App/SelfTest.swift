@@ -59,7 +59,7 @@ extension AppController {
         guard let sessionCount = try await endSession(session) else { throw SelfTestFailure("Session capture count was unavailable") }
         let ownExternal = PendingCapture(trigger: .selection, content: .text("coalescedownneedle app append"),
                                          source: CapturePipeline.source(context), subtitle: "App append")
-        let ownJob = try await pipeline.prepare(ownExternal, noteTitle: "External Edit")
+        let ownJob = try await pipeline.prepare(ownExternal, intent: CaptureIntent(.title("External Edit")))
         try await pipeline.journal.store(ownJob)
         _ = try await pipeline.commit(ownJob)
         let external = Capture(id: UUID(), createdAt: Date(), content: .text("watcherexternalneedle appended by another editor"),
@@ -414,7 +414,7 @@ extension AppController {
         var feedback: [Toast] = []
         let controller = AppController(pipeline: live, presentsUI: false, onToast: { feedback.append($0) })
         let session = try await controller.startSession(name: "Thermo")
-        let destination = try Router.destination(noteTitle: nil, activeSession: session, notes: [], vault: live.vault)
+        guard let destination = try await live.service.sessionDestination() else { throw SelfTestFailure("Session \(session.name) had no destination") }
         let initialSession = try Data(contentsOf: destination.url)
         let state = QuickNoteState(destination: destination)
         try live.drafts.store("science/Biology\nA thought outside Thermo.")
@@ -880,7 +880,7 @@ extension AppController {
         let state = base.appendingPathComponent("State")
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: state, calendar: pipeline.calendar)
         let good = CapturePipeline.selection(text: "goodjournalneedle survives corrupt neighbor", context: context)
-        try await live.journal.store(live.prepare(good, noteTitle: nil))
+        try await live.journal.store(live.prepare(good))
         let unsaved = state.appendingPathComponent("unsaved")
         let corruptStem = "00000000-0000-4000-8000-000000000000"
         let corruptData = Data("{broken JSON".utf8)
@@ -889,7 +889,7 @@ extension AppController {
         var missingCaptures: [PendingCapture] = []
         for text in ["missingpngneedle recovered OCR", ""] {
             let missing = PendingCapture(trigger: .region, content: .image(png: png, ocr: text), source: CapturePipeline.source(context), subtitle: "Image")
-            try await live.journal.store(live.prepare(missing, noteTitle: nil))
+            try await live.journal.store(live.prepare(missing))
             try FileManager.default.removeItem(at: unsaved.appendingPathComponent(missing.id.uuidString.lowercased() + ".png"))
             missingCaptures.append(missing)
         }

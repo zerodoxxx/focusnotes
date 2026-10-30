@@ -36,7 +36,7 @@ func checkNotesFolder() async throws {
     try pipeline.pins.set(session.notePath, pinned: true)
     let capture = PendingCapture(trigger: .selection, content: .text("original pending capture"),
                                  source: CaptureSource(appName: "Folder checks"), subtitle: "check")
-    let job = try await pipeline.prepare(capture, noteTitle: nil)
+    let job = try await pipeline.prepare(capture)
     try await pipeline.journal.store(job)
     _ = try await pipeline.index.sync()
     try NotesFolder.save(other, defaults: defaults)

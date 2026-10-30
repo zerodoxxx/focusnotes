@@ -104,7 +104,7 @@ func checkFolderShortcutActions() async throws {
     // Replay retains its exact folder while a same-text newer draft has another destination.
     let text = "Replay topic\nPending observations"
     let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
-    let prepared = try await pipeline.prepareNote(capture, destination: nil, newNote: false, folder: folder)
+    let prepared = try await pipeline.resolve(capture, intent: CaptureIntent(folder: folder))
     let job = CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: text,
                          noteOutsideSession: true, noteFolder: folder)
     try await pipeline.journal.store(job)

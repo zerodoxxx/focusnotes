@@ -1,4 +1,5 @@
 import Core
+import Foundation
 
 /// Per-panel state of the quick note editor: where the next save goes, and whether a
 /// note that does not exist yet should be pinned when it is created.
@@ -24,6 +25,14 @@ final class QuickNoteState {
         self.launchedOutside = launchedOutside
         self.outsideSession = folder != nil || launchedOutside
         self.pinOnSave = self.destination == nil && pinOnSave
+    }
+    /// What a save asks Core for; a chosen session or Browse note is replayed unchanged.
+    func intent() -> CaptureIntent {
+        CaptureIntent(destination.map { .resolved($0) } ?? .automatic, outsideSession: outsideSession, folder: folder)
+    }
+    /// The chosen note when its file exists on disk.
+    var existingDestination: Destination? {
+        destination.flatMap { FileManager.default.fileExists(atPath: $0.url.path) ? $0 : nil }
     }
     func togglePinOnSave(in drafts: NoteDraftStore) throws -> Bool {
         try drafts.setPinOnSave(!pinOnSave)

@@ -1,0 +1,31 @@
+{
+  "area" : "capturedestination",
+  "description" : "The editor preview names an existing note a default typed save would append to.",
+  "expected" : {
+    "files" : {
+      "Ideas.md" : "# Ideas\n"
+    },
+    "results" : [
+      "Ideas",
+      null
+    ]
+  },
+  "id" : "existing-title-preview",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Ideas.md" : "# Ideas\n"
+    },
+    "ops" : [
+      {
+        "op" : "existingTitle",
+        "text" : "Ideas\nx"
+      },
+      {
+        "op" : "existingTitle",
+        "text" : "Fresh\nx"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}
