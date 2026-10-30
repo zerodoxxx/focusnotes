@@ -227,6 +227,12 @@ func runBehaviorChecks() async throws {
     toast.dismiss(expire: true)
     try await settle()
     try require(expired == 2 && !toast.isVisible, "Toast dismissal during fade retained old toast or expired twice")
+    let beforeOrphan = Set(NSApp.windows.map(ObjectIdentifier.init))
+    ToastController().show(Toast(style: .warning, title: "Orphaned", duration: 0.03))
+    let orphan = NSApp.windows.first { $0 is OverlayPanel && $0.isVisible && !beforeOrphan.contains(ObjectIdentifier($0)) }
+    try require(orphan != nil, "Orphaned toast did not appear")
+    try await settle(until: { orphan?.isVisible == false })
+    try require(orphan?.isVisible == false, "A toast whose controller was freed stayed on screen")
 
     let search = SearchPanelController()
     var performed: [String] = []
