@@ -1,11 +1,12 @@
-namespace CaptureApp.AppCore;
+namespace CaptureApp.Core;
 
-internal static class AtomicJsonFile
+/// Writes a file through a flushed hidden temporary and a move, retrying while a scanner holds it.
+public static class DurableFile
 {
     // Test seam: replaces the final move, scoped to the calling flow.
     internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
 
-    internal static void Write(string path, byte[] contents)
+    public static void Write(string path, byte[] contents)
     {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)!;
@@ -25,13 +26,13 @@ internal static class AtomicJsonFile
         finally
         {
             try { File.Delete(temporary); }
-            catch (FileNotFoundException) { }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
 
     // Antivirus scanners and indexers briefly open a file that was just written. Retry for up to 10 s like
     // NoteFile.OpenExclusive, so a journal record staged a moment earlier can still be replaced or removed.
-    internal static void RetryWhileLocked(Action change)
+    public static void RetryWhileLocked(Action change)
     {
         var until = Environment.TickCount64 + 10000;
         while (true)

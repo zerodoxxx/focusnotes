@@ -44,19 +44,7 @@ public sealed class FolderShortcutStore(string path)
         var envelope = new Envelope(1, bindings.Select(binding => new SavedBinding(binding.Id,
             binding.Shortcut.DisplayString, binding.Action, binding.Folder)).ToArray());
         var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, new JsonSerializerOptions { WriteIndented = true });
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        var temporary = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                       4096, FileOptions.WriteThrough))
-            {
-                stream.Write(bytes);
-                stream.Flush(flushToDisk: true);
-            }
-            File.Move(temporary, fullPath, overwrite: true);
-        }
-        finally { if (File.Exists(temporary)) { File.Delete(temporary); } }
+        DurableFile.Write(fullPath, bytes);
     }
 
     public static void Validate(IReadOnlyList<FolderShortcutBinding> bindings,
