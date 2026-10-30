@@ -27,8 +27,6 @@ public sealed class TitlePicks
 /// shutdown drain. The App's controller owns panels, tray and hotkeys and calls into this class.
 public sealed class CaptureCoordinator
 {
-    private sealed record Staged(Guid Id);
-
     private readonly object gate = new();
     private readonly ICaptureHost host;
     private readonly AppLog log;
@@ -39,7 +37,7 @@ public sealed class CaptureCoordinator
     // A titled commit that failed in preparation keeps the capture pending but off implicit commits (AppController.swift pendingNeedsRetryChoice).
     private bool pendingNeedsRetryChoice;
     private bool retryWarningShown;
-    private Staged? staged;
+    private Guid? stagedId;
     private Task? commitMonitor;
     private Task? acquisitionTask;
     private int acquisitionGeneration;
@@ -250,7 +248,7 @@ public sealed class CaptureCoordinator
         var persistence = Pipeline.Unsaved.Record(capture.Id, recovered => Prepare(capture, null, recovered?.Prepared.Destination));
         lock (gate)
         {
-            staged = new(capture.Id);
+            stagedId = capture.Id;
             pending = capture;
             // The new capture starts unheld: a failed titled commit may have restored an earlier one since the check above.
             pendingNeedsRetryChoice = false;
@@ -295,15 +293,15 @@ public sealed class CaptureCoordinator
     private async Task<string?> SaveRetryPendingAsync()
     {
         PendingCapture? held;
-        Staged? heldStage;
+        bool heldStaged;
         lock (gate)
         {
             held = pendingNeedsRetryChoice ? pending : null;
-            heldStage = held is not null && staged?.Id == held.Id ? staged : null;
+            heldStaged = held is not null && stagedId == held.Id;
         }
 
         if (held is null) { return null; }
-        var destination = heldStage is null ? null : (await Pipeline.Unsaved.RecordedAsync(heldStage.Id).ConfigureAwait(true))?.Prepared.Destination;
+        var destination = !heldStaged ? null : (await Pipeline.Unsaved.RecordedAsync(held.Id).ConfigureAwait(true))?.Prepared.Destination;
         bool stillHeld;
         lock (gate) { stillHeld = pendingNeedsRetryChoice && pending?.Id == held.Id; }
         if (!stillHeld || CommitPending(force: true) is not { } commit) { return null; }
@@ -344,7 +342,7 @@ public sealed class CaptureCoordinator
     public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false, Destination? destination = null)
     {
         PendingCapture capture;
-        Staged? stagedJob;
+        bool wasStaged;
         bool terminating;
         lock (gate)
         {
@@ -355,8 +353,8 @@ public sealed class CaptureCoordinator
             pendingToastId = null;
             pendingNeedsRetryChoice = false;
             retryWarningShown = false;
-            stagedJob = staged is { } current && current.Id == capture.Id ? current : null;
-            staged = null;
+            wasStaged = stagedId == capture.Id;
+            stagedId = null;
             terminating = isTerminating;
         }
 
@@ -371,18 +369,18 @@ public sealed class CaptureCoordinator
                 // A note removed since the picker opened fails here and keeps the capture.
                 resolved = destination with { Url = Pipeline.Vault.NoteLocation(Pipeline.Vault.NoteId(destination.Url)).Url };
             }
-            else if (noteTitle is null && stagedJob is not null) { resolved = (await Pipeline.Unsaved.RecordedAsync(capture.Id).ConfigureAwait(false))?.Prepared.Destination; }
+            else if (noteTitle is null && wasStaged) { resolved = (await Pipeline.Unsaved.RecordedAsync(capture.Id).ConfigureAwait(false))?.Prepared.Destination; }
             else { resolved = null; }
             return Prepare(capture, noteTitle, resolved);
         });
         var task = Pipeline.Unsaved.Commit(capture.Id, preparation, job => CommitJob(job, null));
-        var monitor = ObserveCommitAsync(task, preparation, capture, stagedJob, noteTitle is not null || destination is not null, announce);
+        var monitor = ObserveCommitAsync(task, preparation, capture, wasStaged, noteTitle is not null || destination is not null, announce);
         lock (gate) { commitMonitor = monitor; }
         return task;
     }
 
     private async Task ObserveCommitAsync(Task<SavedCapture> task, Task<CaptureJob> preparation, PendingCapture capture,
-        Staged? stagedJob, bool explicitTarget, bool announce)
+        bool wasStaged, bool explicitTarget, bool announce)
     {
         try
         {
@@ -399,7 +397,7 @@ public sealed class CaptureCoordinator
         }
         catch (Exception error)
         {
-            if (explicitTarget && preparation.IsFaulted && stagedJob is not null)
+            if (explicitTarget && preparation.IsFaulted && wasStaged)
             {
                 // The capture is not lost: keep it pending for another note, or leave it to recovery if a newer one took its place.
                 bool held;
@@ -408,7 +406,7 @@ public sealed class CaptureCoordinator
                     held = pending is null;
                     if (held)
                     {
-                        staged = stagedJob;
+                        stagedId = capture.Id;
                         pending = capture;
                         pendingToastId = null;
                         pendingNeedsRetryChoice = true;

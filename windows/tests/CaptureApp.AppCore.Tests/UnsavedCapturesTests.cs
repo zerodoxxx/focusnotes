@@ -40,19 +40,26 @@ public sealed class UnsavedCapturesTests
     }
 
     [Fact]
-    public async Task AnEquivalentRetryReusesTheFailedCaptureId()
+    public async Task AnInFlightCommitIsNotARetryCandidate()
     {
         using var temp = new TempDirectory();
         using var pipeline = Open(temp);
         var ledger = pipeline.Unsaved;
-        // A matching commit still in flight is not a retry candidate.
         var gate = new TaskCompletionSource<CaptureJob>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queued = pipeline.PrepareText("queuedneedle", new CaptureSource());
         var queuedCommit = ledger.Commit(queued.Prepared.Capture.Id, gate.Task, job => pipeline.Commit(job));
         Assert.Null(await ledger.FindRetryAsync(job => job.Prepared.Capture.Content == CaptureContent.Text("queuedneedle")));
         gate.SetResult(queued);
         await queuedCommit;
-        Directory.Delete(pipeline.Journal.DirectoryPath);
+        Assert.Empty(pipeline.Journal.RecordPaths());
+    }
+
+    [Fact]
+    public async Task AnEquivalentRetryReusesTheFailedCaptureId()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = Open(temp);
+        var ledger = pipeline.Unsaved;
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         var failed = pipeline.PrepareText("retryneedle", new CaptureSource());
         await Assert.ThrowsAnyAsync<IOException>(() => ledger.Commit(failed.Prepared.Capture.Id, Task.FromResult(failed), job => pipeline.Commit(job)));
@@ -60,6 +67,8 @@ public sealed class UnsavedCapturesTests
 
         var retry = Assert.IsType<CaptureJob>(await ledger.FindRetryAsync(job => job.Prepared.Capture.Content == CaptureContent.Text("retryneedle")));
         Assert.Equal(failed.Prepared.Capture.Id, retry.Prepared.Capture.Id);
+        // The retry is claimed, so no second caller can take it.
+        Assert.Null(await ledger.FindRetryAsync(job => job.Prepared.Capture.Content == CaptureContent.Text("retryneedle")));
         await ledger.Commit(retry.Prepared.Capture.Id, Task.FromResult(retry), job => pipeline.Commit(job));
         await ledger.DrainAsync(job => pipeline.Commit(job), () => false);
         Assert.Equal(1, File.ReadAllText(pipeline.Vault.InboxUrl).Split("retryneedle").Length - 1);

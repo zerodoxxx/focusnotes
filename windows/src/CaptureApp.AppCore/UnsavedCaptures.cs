@@ -114,18 +114,18 @@ public sealed class UnsavedCaptures
     public Task WaitForCommitsAsync() => TryWait(Tail);
 
     /// Over failed captures, oldest first: discards each one <paramref name="superseded"/> accepts, then returns the
-    /// first one <paramref name="equivalent"/> accepts, so the caller can recommit it under its id.
+    /// first one <paramref name="equivalent"/> accepts, claimed so the caller alone recommits it under its id.
     public async Task<CaptureJob?> FindRetryAsync(Func<CaptureJob, bool> equivalent, Func<CaptureJob, bool>? superseded = null)
     {
         KeyValuePair<Guid, Task<CaptureJob>>[] kept;
         lock (gate) { kept = KeptJobs(); }
-        CaptureJob? retry = null;
+        KeyValuePair<Guid, Task<CaptureJob>>? retry = null;
         var discarded = new List<KeyValuePair<Guid, Task<CaptureJob>>>();
         foreach (var candidate in kept)
         {
             if (await TryResult(candidate.Value).ConfigureAwait(false) is not { } job) { continue; }
             if (superseded?.Invoke(job) == true) { discarded.Add(candidate); continue; }
-            if (equivalent(job)) { retry = job; break; }
+            if (equivalent(job)) { retry = candidate; break; }
         }
 
         // Remove the durable record first. If removal fails, the old job stays retryable.
@@ -135,7 +135,15 @@ public sealed class UnsavedCaptures
             lock (gate) { if (entries.GetValueOrDefault(id) is { } entry && entry.Job == job) { entries.Remove(id); } }
         }
 
-        return retry;
+        if (retry is not { Key: var retryId, Value: var retryJob }) { return null; }
+        // Claim it so a concurrent retry or the drain cannot commit it as well; the caller's Commit takes it over.
+        lock (gate)
+        {
+            if (entries.GetValueOrDefault(retryId) is not { Kept: true } entry || entry.Job != retryJob) { return null; }
+            entry.Kept = false;
+        }
+
+        return await retryJob.ConfigureAwait(false);
     }
 
     /// Keeps the recorded job for the quit drain, e.g. when a commit failed in preparation and a newer capture took its place.
@@ -162,12 +170,12 @@ public sealed class UnsavedCaptures
         }
     }
 
-    /// Every recorded store, failures swallowed.
+    /// Every recorded store; faults if any of them failed.
     public Task WhenRecorded()
     {
         Task[] stores;
         lock (gate) { stores = Stores(); }
-        return Task.WhenAll(stores.Select(TryWait));
+        return Task.WhenAll(stores);
     }
 
     /// At quit: waits for recorded stores and the commit tail, then retries each kept job in order unless <paramref name="stopped"/>.
