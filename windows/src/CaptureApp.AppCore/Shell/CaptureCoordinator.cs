@@ -81,7 +81,7 @@ public sealed class CaptureCoordinator
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
     public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
-    public Task? CommitTail { get { lock (gate) { return commitTail; } } }
+    internal Task? CommitTail { get { lock (gate) { return commitTail; } } }
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
     public async Task<int> StartAsync()
@@ -539,13 +539,23 @@ public sealed class CaptureCoordinator
         }
     }
 
-    /// Waits for an in-flight acquisition to hand its capture to the processing queue, so a session change cannot
-    /// overtake it (drainCaptures). Never call it from inside an acquisition: that would wait on itself.
-    public Task WaitForAcquisitionAsync() { Task? task; lock (gate) { task = acquisitionTask; } return TryWait(task); }
+    /// Settles in-flight captures (acquisition, processing, then commits) so each is saved in the session it was taken in.
+    /// Commit failures are reported by the commits themselves. Never call it from inside an acquisition: that would wait on itself.
+    public async Task SettleCapturesAsync()
+    {
+        await WaitForAcquisitionAsync().ConfigureAwait(false);
+        _ = CommitPending();
+        await WaitForProcessingAsync().ConfigureAwait(false);
+        _ = CommitPending();
+        await WaitForCommitsAsync().ConfigureAwait(false);
+    }
 
-    public Task WaitForProcessingAsync() { Task? tail; lock (gate) { tail = processingTail; } return TryWait(tail); }
+    /// Waits for an in-flight acquisition to hand its capture to the processing queue (drainCaptures).
+    internal Task WaitForAcquisitionAsync() { Task? task; lock (gate) { task = acquisitionTask; } return TryWait(task); }
 
-    public Task WaitForCommitsAsync() { Task? tail; lock (gate) { tail = commitTail; } return TryWait(tail); }
+    internal Task WaitForProcessingAsync() { Task? tail; lock (gate) { tail = processingTail; } return TryWait(tail); }
+
+    internal Task WaitForCommitsAsync() { Task? tail; lock (gate) { tail = commitTail; } return TryWait(tail); }
 
     // Notes and subheadings.
     public async Task<SavedCapture?> AddNoteAsync(string rawText, Destination? destination = null, bool pinOnSave = false,
@@ -555,11 +565,7 @@ public sealed class CaptureCoordinator
         Pipeline.Drafts.Store(rawText, pinOnSave, folder: folder);
         var text = CaptureFormat.NoteBody(rawText);
         if (string.IsNullOrWhiteSpace(text)) { return null; }
-        var pendingCommit = CommitPending();
-        await WaitForProcessingAsync().ConfigureAwait(false);
-        var processedCommit = CommitPending();
-        if (pendingCommit is not null) { await pendingCommit.ConfigureAwait(false); }
-        if (processedCommit is not null) { await processedCommit.ConfigureAwait(false); }
+        await SettleCapturesAsync().ConfigureAwait(false);
 
         Task<CaptureJob>? retry = null;
         KeyValuePair<Guid, Task<CaptureJob>>[] candidates;
@@ -633,9 +639,7 @@ public sealed class CaptureCoordinator
     {
         var text = CaptureFormat.CleanSubheading(rawText);
         if (text.Length == 0 || IsTerminating) { return null; }
-        _ = CommitPending();
-        await WaitForProcessingAsync().ConfigureAwait(false);
-        _ = CommitPending();
+        await SettleCapturesAsync().ConfigureAwait(false);
         // Retyping a subheading whose commit failed retries that capture and id, so the quit drain cannot also write it.
         // Only a failed job with the same text and destination matches; a queued or different one is left alone.
         Task<CaptureJob>? retry = null;
@@ -764,9 +768,25 @@ public sealed class CaptureCoordinator
     }
 
     // Sessions.
-    public Task<Session> StartSessionAsync(string name) => Task.Run(() => ActivateSession(Pipeline.StartSession(name)));
+    // Each session change settles in-flight captures first, so they land in the session they were taken in.
+    // Quit may begin while captures settle; the session is then left unchanged.
+    private async Task SettleBeforeSessionChangeAsync()
+    {
+        await SettleCapturesAsync().ConfigureAwait(false);
+        if (IsTerminating) { throw new OperationCanceledException("Quit began before the session change."); }
+    }
 
-    public Task<Session> StartFolderSessionAsync(string folder, string name) => Task.Run(() => ActivateSession(Pipeline.StartFolderSession(new NoteFolder(folder), name)));
+    public async Task<Session> StartSessionAsync(string name)
+    {
+        await SettleBeforeSessionChangeAsync().ConfigureAwait(false);
+        return await Task.Run(() => ActivateSession(Pipeline.StartSession(name))).ConfigureAwait(false);
+    }
+
+    public async Task<Session> StartFolderSessionAsync(string folder, string name)
+    {
+        await SettleBeforeSessionChangeAsync().ConfigureAwait(false);
+        return await Task.Run(() => ActivateSession(Pipeline.StartFolderSession(new NoteFolder(folder), name))).ConfigureAwait(false);
+    }
 
     public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
     {
@@ -775,9 +795,19 @@ public sealed class CaptureCoordinator
             string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
-    public Task<Session> ResumeSessionAsync(SessionCandidate candidate) => Task.Run(() => ActivateSession(Pipeline.ResumeSession(candidate)));
+    public async Task<Session> ResumeSessionAsync(SessionCandidate candidate)
+    {
+        await SettleBeforeSessionChangeAsync().ConfigureAwait(false);
+        return await Task.Run(() => ActivateSession(Pipeline.ResumeSession(candidate))).ConfigureAwait(false);
+    }
 
-    public Task<SessionRenameOutcome> RenameSessionAsync(SessionCandidate candidate, string newName) => Task.Run(() =>
+    public async Task<SessionRenameOutcome> RenameSessionAsync(SessionCandidate candidate, string newName)
+    {
+        await SettleBeforeSessionChangeAsync().ConfigureAwait(false);
+        return await RenameSessionNow(candidate, newName).ConfigureAwait(false);
+    }
+
+    private Task<SessionRenameOutcome> RenameSessionNow(SessionCandidate candidate, string newName) => Task.Run(() =>
     {
         try
         {
@@ -807,7 +837,13 @@ public sealed class CaptureCoordinator
         return session;
     }
 
-    public Task<int> EndSessionAsync(Session session) => Task.Run(() =>
+    public async Task<int> EndSessionAsync(Session session)
+    {
+        await SettleBeforeSessionChangeAsync().ConfigureAwait(false);
+        return await EndSessionNow(session).ConfigureAwait(false);
+    }
+
+    private Task<int> EndSessionNow(Session session) => Task.Run(() =>
     {
         Pipeline.EndSession();
         ActiveSession = null;

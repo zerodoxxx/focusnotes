@@ -197,17 +197,14 @@ internal sealed partial class AppController
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
-            await c.WaitForAcquisitionAsync();
-            _ = c.CommitPending();
-            await c.WaitForProcessingAsync();
-            _ = c.CommitPending();
+            await c.SettleCapturesAsync();
             if (!await ClosePanelsAsync()) { return; }
-            await c.WaitForCommitsAsync();
             if (c.IsTerminating) { return; }
             var session = await Task.Run(() => pipeline.Sessions.Current());
             if (session is not null)
             {
                 try { await c.EndSessionAsync(session); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { c.Report(error, Strings.CouldNotEndSession); }
                 return;
             }
@@ -215,16 +212,12 @@ internal sealed partial class AppController
             var suggestions = await c.SuggestionSnapshotAsync(true);
             PresentInput(Strings.SessionNamePlaceholder, suggestions: suggestions, onSubmit: name => c.Enqueue(async inner =>
             {
-                await inner.WaitForAcquisitionAsync();
-                _ = inner.CommitPending();
-                await inner.WaitForProcessingAsync();
-                _ = inner.CommitPending();
-                await inner.WaitForCommitsAsync();
                 try { await inner.StartSessionAsync(name); }
                 catch (SessionStoreException ambiguous) when (ambiguous.Kind == SessionStoreError.Ambiguous)
                 {
                     PresentSessionCandidates(ambiguous.Candidates);
                 }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { inner.Report(error, Strings.CouldNotStartSession); }
             }));
         });
@@ -249,12 +242,8 @@ internal sealed partial class AppController
             if (candidates.FirstOrDefault(c => c.NotePath == path) is not { } candidate) { return; }
             Coordinator.Enqueue(async c =>
             {
-                await c.WaitForAcquisitionAsync();
-                _ = c.CommitPending();
-                await c.WaitForProcessingAsync();
-                _ = c.CommitPending();
-                await c.WaitForCommitsAsync();
                 try { await c.ResumeSessionAsync(candidate); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error) { c.Report(error, Strings.CouldNotResumeSession); }
             });
         }, InputClosed, Title: Strings.MultipleSessionsTitle, Secondary: Strings.SessionPickerHint,
@@ -277,13 +266,9 @@ internal sealed partial class AppController
             InputClosed();
             Coordinator.Enqueue(async c =>
             {
-                await c.WaitForAcquisitionAsync();
-                _ = c.CommitPending();
-                await c.WaitForProcessingAsync();
-                _ = c.CommitPending();
-                await c.WaitForCommitsAsync();
                 if (c.IsTerminating) return;
                 try { await c.RenameSessionAsync(candidate, name); }
+                catch (OperationCanceledException) { } // Quit began first; the session is unchanged.
                 catch (Exception error)
                 {
                     c.Report(error, Strings.CouldNotRenameSession);
@@ -305,12 +290,8 @@ internal sealed partial class AppController
         if (!RequireConsent()) { return; }
         Coordinator.Enqueue(async c =>
         {
-            await c.WaitForAcquisitionAsync();
-            _ = c.CommitPending();
-            await c.WaitForProcessingAsync();
-            _ = c.CommitPending();
+            await c.SettleCapturesAsync();
             if (!await ClosePanelsAsync()) { return; }
-            await c.WaitForCommitsAsync();
             if (c.IsTerminating) { return; }
             Destination destination;
             try

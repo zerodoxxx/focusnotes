@@ -20,7 +20,6 @@ public static class Strings
     public const string CouldNotCaptureArea = "Couldn't capture area";
     public const string CouldNotJournal = "Couldn't journal capture";
     public const string CouldNotSaveCapture = "Couldn't save capture";
-    public const string CouldNotSavePending = "Couldn't save pending capture";
     public const string CouldNotSaveToNote = "Couldn't save to that note";
     public const string CouldNotSavePreviousCapture = "Couldn't save the previous capture";
     public const string PreviousCaptureNotSaved = "Couldn't save the previous capture · recovery will retry";
