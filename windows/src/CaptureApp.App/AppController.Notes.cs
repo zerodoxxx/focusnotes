@@ -189,7 +189,7 @@ internal sealed partial class AppController
                     error => dispatcher.BeginInvoke(() => c.Report(error, Strings.CouldNotKeepDraft)), folder: state.Folder);
                 if (blank) { state.ResetPinOnSave(pipeline.Drafts); RefreshDestination(); }
             },
-            ExistingTitleForText: text => pipeline.ExistingTitle(text, state.Intent(), zone),
+            ExistingTitleForText: text => pipeline.ExistingTitle(text, state.Intent()),
             OnSaveAsNew: text => c.Enqueue(async inner =>
             {
                 try { await Save(text, newNote: true); }

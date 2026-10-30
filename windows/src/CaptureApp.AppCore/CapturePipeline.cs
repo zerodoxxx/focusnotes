@@ -205,15 +205,15 @@ public sealed class CapturePipeline : IDisposable
         return saved;
     }
 
-    public Session? CurrentSession() => Sessions.Current();
+    public Session? CurrentSession() => Locked(() => Sessions.Current());
 
-    public Destination? SessionDestination() => Service.SessionDestination();
+    public Destination? SessionDestination() => Locked(() => Service.SessionDestination());
 
-    public Destination DefaultDestination() => Service.DefaultDestination();
+    public Destination DefaultDestination() => Locked(() => Service.DefaultDestination());
 
-    public Destination PickedDestination(NotePick note) => Service.PickedDestination(note);
+    public Destination PickedDestination(NotePick note) => Locked(() => Service.PickedDestination(note));
 
-    public string? ExistingTitle(string markdown, CaptureIntent intent, TimeZoneInfo timeZone) => Service.ExistingTitle(markdown, intent, timeZone);
+    public string? ExistingTitle(string markdown, CaptureIntent intent) => Service.ExistingTitle(markdown, intent, TimeZone);
 
     public Session StartSession(string name) => ChangeSession(() => Sessions.Start(name));
 
@@ -231,13 +231,15 @@ public sealed class CapturePipeline : IDisposable
         }
     }
 
-    private Session ChangeSession(Func<Session> change)
+    private Session ChangeSession(Func<Session> change) => Locked(change);
+
+    private T Locked<T>(Func<T> read)
     {
         lock (captureGate)
         {
             ThrowIfDisposed();
             RecoverPendingRename();
-            return change();
+            return read();
         }
     }
 

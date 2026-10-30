@@ -9,5 +9,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="CaptureApp.App.Tests" />
+    <InternalsVisibleTo Include="CaptureApp.AppCore.Tests" />
   </ItemGroup>
 </Project>
