@@ -25,12 +25,12 @@ public sealed class CapturePipeline : IDisposable
     private bool disposed;
 
     public Vault Vault { get; }
-    public SessionStore Sessions { get; }
-    public CaptureService Service { get; }
+    internal SessionStore Sessions { get; }
+    internal CaptureService Service { get; }
     public SearchIndex Index { get; }
     public VaultMonitor Monitor { get; }
-    public CaptureJournal Journal { get; }
-    public UnsavedCaptures Unsaved { get; }
+    internal CaptureJournal Journal { get; }
+    internal UnsavedCaptures Unsaved { get; }
     public NoteDraftStore Drafts { get; }
     public NotePinStore Pins { get; }
     public TimeZoneInfo TimeZone { get; }
@@ -205,6 +205,16 @@ public sealed class CapturePipeline : IDisposable
         return saved;
     }
 
+    public Session? CurrentSession() => Locked(() => Sessions.Current());
+
+    public Destination? SessionDestination() => Locked(() => Service.SessionDestination());
+
+    public Destination DefaultDestination() => Locked(() => Service.DefaultDestination());
+
+    public Destination PickedDestination(NotePick note) => Locked(() => Service.PickedDestination(note));
+
+    public string? ExistingTitle(string markdown, CaptureIntent intent) => Service.ExistingTitle(markdown, intent, TimeZone);
+
     public Session StartSession(string name) => ChangeSession(() => Sessions.Start(name));
 
     public Session StartFolderSession(NoteFolder folder, string name) => ChangeSession(() => Sessions.StartInFolder(folder, name));
@@ -221,13 +231,15 @@ public sealed class CapturePipeline : IDisposable
         }
     }
 
-    private Session ChangeSession(Func<Session> change)
+    private Session ChangeSession(Func<Session> change) => Locked(change);
+
+    private T Locked<T>(Func<T> read)
     {
         lock (captureGate)
         {
             ThrowIfDisposed();
             RecoverPendingRename();
-            return change();
+            return read();
         }
     }
 

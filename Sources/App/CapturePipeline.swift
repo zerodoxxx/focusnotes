@@ -32,18 +32,27 @@ struct PendingCapture: Sendable {
 
 struct CapturePipeline: Sendable {
     let vault: Vault
-    let sessions: SessionStore
-    let service: CaptureService
+    private let sessions: SessionStore
+    private let service: CaptureService
     let index: SearchIndex
     let semantic: SemanticIndexer
     let monitor: VaultMonitor
-    let journal: CaptureJournal
+    private let journal: CaptureJournal
     let drafts: NoteDraftStore
     let pins: NotePinStore
     let calendar: Calendar
     let logger: Logger
-    let renames: SessionRenameTransaction
+    private let renames: SessionRenameTransaction
     private let noteIDForPin: (@Sendable (URL) throws -> String)?
+
+    /// Self-check access to the hidden collaborators; app code uses the operations below.
+    struct SelfCheckAccess: Sendable {
+        let sessions: SessionStore
+        let service: CaptureService
+        let journal: CaptureJournal
+        let renames: SessionRenameTransaction
+    }
+    let selfCheck: SelfCheckAccess
 
     init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
          semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
@@ -63,6 +72,7 @@ struct CapturePipeline: Sendable {
         self.noteIDForPin = noteIDForPin
         renames = SessionRenameTransaction(vault: vault, sessions: sessions, journal: journal, pins: pins,
                                            index: index, semantic: semantic, logger: logger)
+        selfCheck = SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames)
     }
 
     @concurrent
@@ -124,6 +134,57 @@ struct CapturePipeline: Sendable {
 
     func recoverSessionIdentity() async throws {
         try await renames.recover(allowFileRename: false)
+    }
+
+    func currentSession() async -> Session? { await sessions.current() }
+
+    func startSession(name: String, in folder: NoteFolder) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.start(name: name, in: folder)
+    }
+
+    func startSession(name: String) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.start(name: name)
+    }
+
+    func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.resume(candidate)
+    }
+
+    func endSession() async throws {
+        try await recoverSessionIdentity()
+        try await sessions.end()
+    }
+
+    func renameSession(_ candidate: SessionCandidate, to name: String,
+                       followingCaptures: [CaptureJob]) async throws -> SessionRenameOutcome {
+        try await renames.rename(candidate, to: name, followingCaptures: followingCaptures)
+    }
+
+    func pick(for destination: Destination) -> NotePick { service.pick(for: destination) }
+
+    func sessionDestination() async throws -> Destination? { try await service.sessionDestination() }
+
+    func defaultDestination() async throws -> Destination { try await service.defaultDestination() }
+
+    func pickedDestination(noteID: String, title: String, kind: NoteKind) throws -> Destination {
+        try service.pickedDestination(noteID: noteID, title: title, kind: kind)
+    }
+
+    func existingTitle(forTypedNote markdown: String, intent: CaptureIntent) -> String? {
+        service.existingTitle(forTypedNote: markdown, intent: intent, calendar: calendar)
+    }
+
+    func stage(_ job: CaptureJob) async throws {
+        try await recoverSessionIdentity()
+        try await journal.store(job)
+    }
+
+    func unstage(id: UUID) async throws {
+        try await recoverSessionIdentity()
+        try await journal.remove(id: id)
     }
 
     func commit(_ originalJob: CaptureJob, pinOnSave: Bool? = nil,

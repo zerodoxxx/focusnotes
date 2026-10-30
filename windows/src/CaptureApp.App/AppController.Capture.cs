@@ -200,7 +200,7 @@ internal sealed partial class AppController
             await c.SettleCapturesAsync();
             if (!await ClosePanelsAsync()) { return; }
             if (c.IsTerminating) { return; }
-            var session = await Task.Run(() => pipeline.Sessions.Current());
+            var session = await Task.Run(() => pipeline.CurrentSession());
             if (session is not null)
             {
                 try { await c.EndSessionAsync(session); }
@@ -296,7 +296,7 @@ internal sealed partial class AppController
             Destination destination;
             try
             {
-                destination = await Task.Run(() => pipeline.Service.DefaultDestination());
+                destination = await Task.Run(() => pipeline.DefaultDestination());
             }
             catch (Exception error) { c.Report(error, Strings.CouldNotResolveDestination); return; }
             PresentInput(Strings.SubheadingPlaceholder, Strings.AddSubheadingTitle, Strings.InNote(destination.Title),

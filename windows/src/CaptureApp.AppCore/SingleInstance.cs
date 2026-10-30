@@ -1,9 +1,6 @@
 using System.IO.Pipes;
-using System.Runtime.CompilerServices;
 using System.Text;
 using CaptureApp.Core;
-
-[assembly: InternalsVisibleTo("CaptureApp.AppCore.Tests")]
 
 namespace CaptureApp.AppCore;
 

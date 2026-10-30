@@ -73,7 +73,7 @@ final class CaptureCommitQueue {
         }
         recoveryJobs[capture.id] = preparation
         recoveryPersistences[capture.id] = Task.detached(priority: .userInitiated) {
-            try await pipeline.journal.store(try await preparation.value)
+            try await pipeline.stage(try await preparation.value)
         }
     }
 
@@ -116,7 +116,7 @@ final class CaptureCommitQueue {
         }
         let persistence = Task.detached(priority: .userInitiated) {
             _ = try? await recoveryPersistence?.value
-            try await pipeline.journal.store(try await preparation.value)
+            try await pipeline.stage(try await preparation.value)
         }
         stagedJob = (capture.id, preparation, persistence)
         pending = capture
@@ -220,7 +220,7 @@ final class CaptureCommitQueue {
         // A changed route or Save as New Note replaces the earlier job for this draft; replay must not also append it.
         // Remove from the journal first; on failure the draft is kept and the old job stays retryable.
         for (key, id) in superseded {
-            try await pipeline.journal.remove(id: id)
+            try await pipeline.unstage(id: id)
             preparedJobs.removeValue(forKey: key)
         }
         let capture = Capture(id: UUID(), createdAt: Date(), content: .note(text), source: CaptureSource())
@@ -233,7 +233,7 @@ final class CaptureCommitQueue {
         let noteID = preparedNote.capture.id
         preparedJobs[noteID] = preparation
         let previous = commitTail
-        let outsideSessionName = outsideSession ? await pipeline.sessions.current()?.name : nil
+        let outsideSessionName = outsideSession ? await pipeline.currentSession()?.name : nil
         let created = preparedNote.createsNote == true
         let (task, generation) = enqueueCommit(preparation, after: previous, pinOnSave: pinOnSave) { saved, pinFailed in
             onNoteSaved(saved, pinFailed, created, outsideSessionName)
@@ -321,7 +321,7 @@ final class CaptureCommitQueue {
         for (id, preparation) in preparedJobs {
             do {
                 let job = try await preparation.value
-                try await pipeline.journal.store(job)
+                try await pipeline.stage(job)
                 _ = try await pipeline.commit(job) { [weak self] saved, pinFailed in
                     self?.host?.noteSaved(saved, pinFailed: pinFailed)
                 }
@@ -355,7 +355,7 @@ final class CaptureCommitQueue {
         let task = Task.detached(priority: .userInitiated) {
             let job = try await preparation.value
             for journal in journals { _ = try? await journal.value }
-            try await pipeline.journal.store(job)
+            try await pipeline.stage(job)
             _ = try? await previous?.value
             return try await pipeline.commit(job, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
         }
