@@ -238,7 +238,7 @@ public sealed class CapturePipeline : IDisposable
                     .Concat(preparedDestinations.Where(pair => SameUrl(pair.Value.Url, oldUrl)).Select(pair => pair.Key))
                     .Distinct().ToArray();
                 intent = new(plan, ids);
-                AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
+                DurableFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
                 afterIntent?.Invoke(plan);
             }, beforeReplace); }
             catch (Exception error)
@@ -300,7 +300,7 @@ public sealed class CapturePipeline : IDisposable
             {
                 CleanupRenameTemporary(intent.Plan);
                 intent = intent with { Plan = repaired };
-                AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
+                DurableFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
             });
         }
         catch (Exception error) when (error is VaultFileException { Kind: VaultFileError.Changed } or FileNotFoundException)

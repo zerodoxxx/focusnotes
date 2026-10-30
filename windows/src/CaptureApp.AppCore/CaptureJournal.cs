@@ -35,7 +35,7 @@ public sealed class CaptureJournal
         var completed = redirects.Keys.Where(id => !durableIds.Contains(id)).ToArray();
         foreach (var id in completed) redirects.Remove(id);
         if (completed.Length != 0)
-            AtomicJsonFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(redirects, JsonOptions));
+            DurableFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(redirects, JsonOptions));
     }
 
     public void Store(CaptureJob job)
@@ -47,11 +47,11 @@ public sealed class CaptureJournal
             var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
             if (job.Png is not null)
             {
-                AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
+                DurableFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
             }
 
             var record = new JournalRecord(job.Prepared, job.Png is not null, job.Ocr, job.NoteDraft, job.NoteOutsideSession, job.NoteFolder);
-            AtomicJsonFile.Write(Path.Combine(DirectoryPath, stem + ".json"), JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions));
+            DurableFile.Write(Path.Combine(DirectoryPath, stem + ".json"), JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions));
             logger.Debug($"Stored capture journal record {stem}.");
         }
     }
@@ -161,7 +161,7 @@ public sealed class CaptureJournal
         {
             var updated = new Dictionary<Guid, Destination>(redirects);
             foreach (var id in ids) updated[id] = destination;
-            AtomicJsonFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions));
+            DurableFile.Write(redirectsPath, JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions));
             foreach (var id in ids) redirects[id] = destination;
             foreach (var id in ids)
             {
@@ -204,8 +204,8 @@ public sealed class CaptureJournal
         lock (gate)
         {
             var stem = id.ToString("D").ToLowerInvariant();
-            AtomicJsonFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".json")));
-            AtomicJsonFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".png")));
+            DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".json")));
+            DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".png")));
             // Keep redirects for this instance: an older commit can still retry its prepared object
             // after a newer commit removed the journal record. Fresh startup prunes completed IDs.
         }

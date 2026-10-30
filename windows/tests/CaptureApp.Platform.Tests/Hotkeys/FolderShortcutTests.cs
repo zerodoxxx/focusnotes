@@ -89,6 +89,27 @@ public sealed class FolderShortcutStoreTests
             Assert.Equal(bytes, File.ReadAllBytes(path));
         }
     }
+
+    [Fact]
+    public async Task SaveWaitsForAScannerHoldingTheFile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows sharing semantics.");
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "folder-shortcuts.json");
+        var store = new FolderShortcutStore(path);
+        store.Save([Binding()]);
+        FolderShortcutBinding[] bindings = [Binding("Meetings", "Alt+Shift+F11")];
+        var scanner = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            await scanner.DisposeAsync();
+        }, TestContext.Current.CancellationToken);
+        try { store.Save(bindings); }
+        finally { await release; }
+
+        Assert.Equal(bindings, store.Load());
+    }
 }
 
 // Global OS registrations must share xUnit's class-level serialization with the existing registrar checks.

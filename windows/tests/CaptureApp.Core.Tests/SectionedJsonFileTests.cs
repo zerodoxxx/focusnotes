@@ -98,4 +98,22 @@ public sealed class SectionedJsonFileTests : IDisposable
 
         Assert.Equal(before, File.ReadAllText(SettingsPath));
     }
+
+    [Fact]
+    public async Task WriteSectionWaitsForAScannerHoldingSettings()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows sharing semantics.");
+        SectionedJsonFile.WriteSection(SettingsPath, "theme", JsonValue.Create("dark"));
+        var scanner = new FileStream(SettingsPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(300, TestContext.Current.CancellationToken);
+            await scanner.DisposeAsync();
+        }, TestContext.Current.CancellationToken);
+        try { SectionedJsonFile.WriteSection(SettingsPath, "setup", new JsonObject { ["version"] = 1 }); }
+        finally { await release; }
+
+        Assert.Equal("dark", (string?)SectionedJsonFile.ReadSection(SettingsPath, "theme"));
+        Assert.Equal(1, (int?)SectionedJsonFile.ReadSection(SettingsPath, "setup")!["version"]);
+    }
 }
