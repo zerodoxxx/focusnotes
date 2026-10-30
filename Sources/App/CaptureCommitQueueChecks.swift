@@ -132,7 +132,8 @@ private func checkRetypedSubheadingSavesOnce() async throws {
         await queue.drainForQuit()
         queue.close()
         let note = try String(contentsOf: noteURL, encoding: .utf8)
-        guard note.components(separatedBy: "## Queue heading\n").count - 1 == 1 else {
+        guard note.components(separatedBy: "## Queue heading\n").count - 1 == 1,
+              try await pipeline.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: a retyped failed subheading was not written exactly once")
         }
     }

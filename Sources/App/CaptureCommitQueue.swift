@@ -290,9 +290,7 @@ final class CaptureCommitQueue {
     /// Commits earlier captures, runs `beforeWaiting` (false stops here), then waits for every
     /// commit queued so far. Each commit reports its own failure; none fails the caller.
     func settleEarlierCaptures(beforeWaiting: @MainActor () async -> Bool) async -> Bool {
-        let pendingCommit = commitPending()
-        await processingTail?.value
-        let processedCommit = commitPending()
+        let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard await beforeWaiting() else { return false }
         let tail = commitTail
         _ = try? await pendingCommit?.value
@@ -307,9 +305,7 @@ final class CaptureCommitQueue {
 
     /// Commits the pending and processing captures; the caller awaits acquisition first.
     func drain() async {
-        _ = commitPending()
-        await processingTail?.value
-        _ = commitPending()
+        _ = await flushEarlierCaptures()
         await waitForCommits()
     }
 
@@ -341,12 +337,17 @@ final class CaptureCommitQueue {
     /// Earlier captures save first, but their commits report their own failures; one
     /// must not fail a typed note or subheading.
     private func commitEarlierCaptures(waitingForThem: Bool) async {
-        let pendingCommit = commitPending()
-        await processingTail?.value
-        let processedCommit = commitPending()
+        let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard waitingForThem else { return }
         _ = try? await pendingCommit?.value
         _ = try? await processedCommit?.value
+    }
+
+    /// Commits the pending capture, waits for processing, then commits what processing staged.
+    private func flushEarlierCaptures() async -> (Task<SavedCapture, Error>?, Task<SavedCapture, Error>?) {
+        let pendingCommit = commitPending()
+        await processingTail?.value
+        return (pendingCommit, commitPending())
     }
 
     /// The one commit chain. Journal before waiting for earlier writes, so even queued work is
