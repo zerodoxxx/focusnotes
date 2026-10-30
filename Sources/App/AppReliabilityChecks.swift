@@ -393,7 +393,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
         if checkpoint == "cleanup-error" {
             let intentURL = state.appendingPathComponent("session-rename.json")
             do {
-                _ = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [], beforeInstall: { _ in
+                _ = try await pipeline.renames.rename(candidate, to: "Daily sync", followingCaptures: [], beforeInstall: { _ in
                     try Data("{invalid JSON".utf8).write(to: intentURL, options: .atomic)
                     throw RenameCheckError.originalFailure
                 })
@@ -412,7 +412,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
                                          source: CaptureSource(appName: "Rename check", windowTitle: nil), subtitle: "check")
             let saved = try await reopened.commit(try await reopened.prepare(capture, noteTitle: nil))
             let corrupt = try FileManager.default.contentsOfDirectory(atPath: quarantined.deletingLastPathComponent().path)
-            guard try await reopened.journal.pendingSessionRename() == nil,
+            guard try await reopened.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: intentURL.path),
                   corrupt.filter({ $0.hasPrefix("session-rename") }).count == 2,
                   saved.destination.url == oldURL,
@@ -423,13 +423,13 @@ private func checkSessionRenameCrashBoundaries() async throws {
             continue
         }
         if checkpoint == "caught-after-swap" {
-            let outcome = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [], afterSwap: {
+            let outcome = try await pipeline.renames.rename(candidate, to: "Daily sync", followingCaptures: [], afterSwap: {
                 throw SessionRenameInterruption.afterSwap
             })
             let pending = try FileManager.default.contentsOfDirectory(atPath: targetURL.deletingLastPathComponent().path)
             guard !outcome.identityUpdatePending, outcome.session.notePath == destination.notePath,
                   await pipeline.sessions.current()?.notePath == destination.notePath,
-                  try await pipeline.journal.pendingSessionRename() == nil,
+                  try await pipeline.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: oldURL.path),
                   try String(contentsOf: targetURL, encoding: .utf8) == "# Daily sync\n" + body,
                   !pending.contains(where: { $0.hasPrefix(".session-") }) else {
@@ -438,7 +438,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
         } else if checkpoint == "caught-recovery-error" {
             let unrelated = Data("# Other owner\nkeep every byte\n".utf8)
             do {
-                _ = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [], afterSwap: {
+                _ = try await pipeline.renames.rename(candidate, to: "Daily sync", followingCaptures: [], afterSwap: {
                     try unrelated.write(to: targetURL, options: .atomic)
                     throw SessionRenameInterruption.afterSwap
                 })
@@ -448,14 +448,14 @@ private func checkSessionRenameCrashBoundaries() async throws {
             let temporaries = try FileManager.default.contentsOfDirectory(at: oldURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
                 .filter { $0.lastPathComponent.hasPrefix(".session-") }
             let renamedBytes = "# Daily sync\n" + body
-            guard try await pipeline.journal.pendingSessionRename() == nil,
+            guard try await pipeline.renames.pending() == nil,
                   try String(contentsOf: oldURL, encoding: .utf8) == renamedBytes,
                   temporaries.count == 1, try String(contentsOf: temporaries[0], encoding: .utf8) == "# Standup\n" + body,
                   try Data(contentsOf: targetURL) == unrelated else {
                 throw SelfTestFailure("Failed swap recovery kept a blocking intent or lost the original backup or unrelated target")
             }
             let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
-            guard try await reopened.journal.pendingSessionRename() == nil,
+            guard try await reopened.renames.pending() == nil,
                   try Data(contentsOf: targetURL) == unrelated,
                   try String(contentsOf: oldURL, encoding: .utf8) == renamedBytes,
                   try String(contentsOf: temporaries[0], encoding: .utf8) == "# Standup\n" + body else {
@@ -467,18 +467,17 @@ private func checkSessionRenameCrashBoundaries() async throws {
             let stateFile = state.appendingPathComponent("session.json")
             try? FileManager.default.removeItem(at: stateFile)
             try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
-            let outcome = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [])
+            let outcome = try await pipeline.renames.rename(candidate, to: "Daily sync", followingCaptures: [])
             guard outcome.identityUpdatePending, outcome.session.notePath == destination.notePath,
                   !FileManager.default.fileExists(atPath: oldURL.path),
                   try String(contentsOf: targetURL, encoding: .utf8) == "# Daily sync\n" + body,
-                  try await pipeline.journal.pendingSessionRename() != nil else {
+                  try await pipeline.renames.pending() != nil else {
                 throw SelfTestFailure("A committed rename with failed state persistence was reported as a failure")
             }
             try FileManager.default.removeItem(at: stateFile)
         } else {
-            let intent = try await pipeline.journal.beginSessionRename(oldPath: source.notePath, session: destination,
-                                                                      vault: pipeline.vault, preparedJobs: [])
-            let recorder = await pipeline.journal.installationRecorder(for: intent)
+            let intent = try await pipeline.renames.begin(oldPath: source.notePath, session: destination, followingCaptures: [])
+            let recorder = await pipeline.renames.installationRecorder(for: intent)
             if checkpoint == "after-swap" || checkpoint == "after-swap-conflict" {
                 do {
                     _ = try await pipeline.sessions.rename(candidate, to: "Daily sync", beforeInstall: recorder,
@@ -495,7 +494,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
                     try await pipeline.recoverSessionIdentity()
                     throw SelfTestFailure("Capture preparation bypassed an unfinished swap")
                 } catch SessionRenameRecoveryError.changedFile {}
-                guard try await pipeline.journal.pendingSessionRename() != nil else {
+                guard try await pipeline.renames.pending() != nil else {
                     throw SelfTestFailure("Capture preparation abandoned an unfinished swap")
                 }
             } else if checkpoint != "after-swap-conflict" && checkpoint != "pre-install-conflict" {
@@ -516,7 +515,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
             let before = try temporaries()
             let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
             let original = Data(("# Standup\n" + body).utf8)
-            guard try await reopened.journal.pendingSessionRename() == nil,
+            guard try await reopened.renames.pending() == nil,
                   try Data(contentsOf: targetURL) == unrelated,
                   try Data(contentsOf: oldURL) == oldBytes,
                   try temporaries() == before,
@@ -529,7 +528,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
             let unrelated = "# Other owner\nkeep every byte\n"
             try Data(unrelated.utf8).write(to: targetURL, options: .atomic)
             let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
-            guard try await reopened.journal.pendingSessionRename() == nil,
+            guard try await reopened.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: oldURL.path),
                   try String(contentsOf: targetURL, encoding: .utf8) == unrelated else {
                 throw SelfTestFailure("Abandoned recovery changed the unrelated target or retained its intent")
@@ -544,8 +543,8 @@ private func checkSessionRenameCrashBoundaries() async throws {
               !FileManager.default.fileExists(atPath: oldURL.path),
               await reopened.sessions.current()?.notePath == destination.notePath,
               await again.sessions.current()?.notePath == destination.notePath,
-              try await reopened.journal.pendingSessionRename() == nil,
-              try await again.journal.pendingSessionRename() == nil else {
+              try await reopened.renames.pending() == nil,
+              try await again.renames.pending() == nil else {
             throw SelfTestFailure("Checkpoint recovery lost bytes, left an orphan, or was not idempotent")
         }
     }
@@ -569,21 +568,20 @@ private func checkSessionRenameAbandonment() async throws {
         let recovered: CapturePipeline
         if scenario == "editor-replacement" {
             do {
-                _ = try await pipeline.renameSession(candidate, to: "Renamed", preparedJobs: [], afterSwap: {
+                _ = try await pipeline.renames.rename(candidate, to: "Renamed", followingCaptures: [], afterSwap: {
                     try edited.write(to: oldURL, options: .atomic)
                 })
                 throw SelfTestFailure("Rename hid the original post-swap failure")
             } catch let error as POSIXError where error.code == .EAGAIN {}
-            guard try await pipeline.journal.pendingSessionRename() == nil,
+            guard try await pipeline.renames.pending() == nil,
                   try Data(contentsOf: oldURL) == edited,
                   !FileManager.default.fileExists(atPath: targetURL.path) else {
                 throw SelfTestFailure("Failed rename retained its intent or changed the editor's bytes")
             }
             recovered = pipeline
         } else {
-            let intent = try await pipeline.journal.beginSessionRename(oldPath: session.notePath, session: destination,
-                                                                      vault: pipeline.vault, preparedJobs: [])
-            let recorder = await pipeline.journal.installationRecorder(for: intent)
+            let intent = try await pipeline.renames.begin(oldPath: session.notePath, session: destination, followingCaptures: [])
+            let recorder = await pipeline.renames.installationRecorder(for: intent)
             do {
                 _ = try await pipeline.sessions.rename(candidate, to: "Renamed", beforeInstall: recorder,
                                                        afterSwap: { throw SessionRenameInterruption.afterSwap })
@@ -592,7 +590,7 @@ private func checkSessionRenameAbandonment() async throws {
             try FileManager.default.removeItem(at: oldURL)
             if scenario == "unknown-target" { try edited.write(to: targetURL) }
             recovered = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
-            guard try await recovered.journal.pendingSessionRename() == nil,
+            guard try await recovered.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: oldURL.path) else {
                 throw SelfTestFailure("Missing-source recovery retained its intent or recreated the source")
             }
@@ -619,7 +617,7 @@ private func checkSessionRenameAbandonment() async throws {
                 throw SelfTestFailure("Capture after abandoning rollback failed or lost the retained original")
             }
             let reopened = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
-            guard try await reopened.journal.pendingSessionRename() == nil else {
+            guard try await reopened.renames.pending() == nil else {
                 throw SelfTestFailure("Abandoned rollback blocked the next startup")
             }
         }
@@ -678,7 +676,7 @@ private func checkSessionRenameIdentity() async throws {
     // An unrelated malformed job must not block an otherwise valid rename.
     let corrupt = state.appendingPathComponent("unsaved/unrelated.json")
     try Data("{invalid".utf8).write(to: corrupt)
-    let outcome = try await pipeline.renameSession(candidate, to: "Daily sync", preparedJobs: [job])
+    let outcome = try await pipeline.renames.rename(candidate, to: "Daily sync", followingCaptures: [job])
     let newPath = "Sessions/archive/Daily sync.md"
     guard !outcome.identityUpdatePending, outcome.session.notePath == newPath,
           pipeline.pins.isPinned(newPath), !pipeline.pins.isPinned(original.notePath),
@@ -720,12 +718,11 @@ private func checkSessionRenameIdentity() async throws {
                                                                                    title: recoverySession.name, kind: .session)), png: nil, ocr: nil)
     try await pipeline.journal.store(recoveryJob)
     let planned = try await pipeline.sessions.renameDestination(recoveryCandidate, to: "Recovered")
-    let intent = try await pipeline.journal.beginSessionRename(oldPath: recoverySession.notePath, session: planned,
-                                                              vault: pipeline.vault, preparedJobs: [recoveryJob])
-    let recorder = await pipeline.journal.installationRecorder(for: intent)
+    let intent = try await pipeline.renames.begin(oldPath: recoverySession.notePath, session: planned, followingCaptures: [recoveryJob])
+    let recorder = await pipeline.renames.installationRecorder(for: intent)
     _ = try await pipeline.sessions.rename(recoveryCandidate, to: "Recovered", beforeInstall: recorder)
     let reopened = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
-    guard try await reopened.journal.pendingSessionRename() == nil,
+    guard try await reopened.renames.pending() == nil,
           reopened.pins.isPinned(planned.notePath), !reopened.pins.isPinned(recoverySession.notePath),
           await reopened.sessions.current()?.notePath == planned.notePath,
           !FileManager.default.fileExists(atPath: state.appendingPathComponent("capture-destinations.json").path) else {
@@ -742,8 +739,7 @@ private func checkSessionRenameIdentity() async throws {
     let before = try await reopened.sessions.start(name: "archive/Before install")
     let beforeCandidate = SessionCandidate(name: before.name, notePath: before.notePath, modifiedAt: .distantPast)
     let beforeTarget = try await reopened.sessions.renameDestination(beforeCandidate, to: "After install")
-    _ = try await reopened.journal.beginSessionRename(oldPath: before.notePath, session: beforeTarget,
-                                                     vault: reopened.vault, preparedJobs: [])
+    _ = try await reopened.renames.begin(oldPath: before.notePath, session: beforeTarget, followingCaptures: [])
     // A rollback swap (or a harmless touch) updates inode timestamps. Its
     // unchanged bytes still prove that this is the recorded original note.
     try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)],
@@ -760,9 +756,9 @@ private func checkSessionRenameIdentity() async throws {
                                                        destination: Destination(url: vaultRoot.appendingPathComponent(repeated.notePath),
                                                                                 title: repeated.name, kind: .session)), png: nil, ocr: nil)
     let repeatedA = SessionCandidate(name: repeated.name, notePath: repeated.notePath, modifiedAt: .distantPast)
-    let firstRename = try await finished.renameSession(repeatedA, to: "Repeated B", preparedJobs: [unstaged])
+    let firstRename = try await finished.renames.rename(repeatedA, to: "Repeated B", followingCaptures: [unstaged])
     let repeatedB = SessionCandidate(name: firstRename.session.name, notePath: firstRename.session.notePath, modifiedAt: .distantPast)
-    let secondRename = try await finished.renameSession(repeatedB, to: "Repeated C", preparedJobs: [unstaged])
+    let secondRename = try await finished.renames.rename(repeatedB, to: "Repeated C", followingCaptures: [unstaged])
     let repeatedSaved = try await finished.commit(unstaged)
     guard repeatedSaved.destination.url == vaultRoot.appendingPathComponent(secondRename.session.notePath),
           !FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent(repeated.notePath).path),
@@ -777,7 +773,7 @@ private func checkSessionRenameIdentity() async throws {
     try FileManager.default.moveItem(at: finished.pins.url, to: pinBackup)
     try FileManager.default.createDirectory(at: finished.pins.url, withIntermediateDirectories: false)
     let pendingCandidate = SessionCandidate(name: secondRename.session.name, notePath: secondRename.session.notePath, modifiedAt: .distantPast)
-    let pendingOutcome = try await finished.renameSession(pendingCandidate, to: "Waiting metadata", preparedJobs: [])
+    let pendingOutcome = try await finished.renames.rename(pendingCandidate, to: "Waiting metadata", followingCaptures: [])
     guard pendingOutcome.identityUpdatePending,
           await finished.sessions.current()?.notePath == pendingOutcome.session.notePath else {
         throw SelfTestFailure("A metadata failure did not retain the installed session identity and recovery intent")
@@ -814,8 +810,7 @@ private func checkSessionRenameIdentity() async throws {
     let changed = try await finished.sessions.start(name: "archive/Changed source")
     let changedCandidate = SessionCandidate(name: changed.name, notePath: changed.notePath, modifiedAt: .distantPast)
     let changedTarget = try await finished.sessions.renameDestination(changedCandidate, to: "Must not move")
-    _ = try await finished.journal.beginSessionRename(oldPath: changed.notePath, session: changedTarget,
-                                                     vault: finished.vault, preparedJobs: [])
+    _ = try await finished.renames.begin(oldPath: changed.notePath, session: changedTarget, followingCaptures: [])
     let changedURL = vaultRoot.appendingPathComponent(changed.notePath)
     let writer = try FileHandle(forWritingTo: changedURL)
     try writer.seekToEnd()
@@ -823,7 +818,7 @@ private func checkSessionRenameIdentity() async throws {
     try writer.close()
     let edited = try Data(contentsOf: changedURL)
     let afterDrift = try await CapturePipeline.open(vaultRoot: vaultRoot, stateDirectory: state, calendar: .current)
-    guard try await afterDrift.journal.pendingSessionRename() == nil,
+    guard try await afterDrift.renames.pending() == nil,
           !FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent(changedTarget.notePath).path),
           try Data(contentsOf: changedURL) == edited else {
         throw SelfTestFailure("Abandoned rename recovery retained its intent or altered the edited source")
