@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using CaptureApp.Core;
 
 namespace CaptureApp.AppCore;
 
@@ -96,6 +97,6 @@ public sealed class NotePinStore
     private void Write(IEnumerable<string> paths)
     {
         var sorted = paths.Order(StringComparer.Ordinal).ToArray();
-        AtomicJsonFile.Write(Url, JsonSerializer.SerializeToUtf8Bytes(sorted, JsonOptions));
+        DurableFile.Write(Url, JsonSerializer.SerializeToUtf8Bytes(sorted, JsonOptions));
     }
 }

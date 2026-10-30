@@ -21,7 +21,6 @@ public sealed class CapturePipeline : IDisposable
 {
     private sealed record RenameIntent(SessionRenamePlan Plan, Guid[] CaptureIds);
     private readonly object captureGate = new();
-    private readonly Dictionary<Guid, Destination> preparedDestinations = [];
     private string RenameIntentPath => Path.Combine(StateDirectory, "session-rename.json");
     private readonly TimeProvider clock;
     private readonly AppLog logger;
@@ -33,6 +32,7 @@ public sealed class CapturePipeline : IDisposable
     public SearchIndex Index { get; }
     public VaultMonitor Monitor { get; }
     public CaptureJournal Journal { get; }
+    public UnsavedCaptures Unsaved { get; }
     public NoteDraftStore Drafts { get; }
     public NotePinStore Pins { get; }
     public TimeZoneInfo TimeZone { get; }
@@ -56,6 +56,7 @@ public sealed class CapturePipeline : IDisposable
         ModelsDirectory = modelsDirectory;
         this.clock = clock;
         logger = new(stateDirectory, "pipeline");
+        Unsaved = new(this);
     }
 
     public static CapturePipeline Open(string vaultRoot, string stateDirectory, TimeZoneInfo? timeZone = null,
@@ -134,7 +135,7 @@ public sealed class CapturePipeline : IDisposable
             ThrowIfDisposed();
             RecoverPendingRename();
             var job = Journal.Resolve(prepare());
-            preparedDestinations[job.Prepared.Capture.Id] = job.Prepared.Destination;
+            Unsaved.Prepared(job.Prepared.Capture.Id, job.Prepared.Destination);
             return job;
         }
     }
@@ -142,6 +143,12 @@ public sealed class CapturePipeline : IDisposable
     public void Stage(CaptureJob job)
     {
         lock (captureGate) { ThrowIfDisposed(); RecoverPendingRename(); Journal.Store(job); }
+    }
+
+    /// Removes a journal record through the same gate as <see cref="Stage"/>.
+    internal void Discard(Guid id)
+    {
+        lock (captureGate) { ThrowIfDisposed(); RecoverPendingRename(); Journal.Remove(id); }
     }
 
     /// <param name="onNoteSaved">Called for typed notes with whether the pin intent failed (the Mac's showNoteSaveFeedback).</param>
@@ -191,7 +198,7 @@ public sealed class CapturePipeline : IDisposable
         }
 
         Journal.Remove(saved.CaptureId);
-        preparedDestinations.Remove(saved.CaptureId);
+        Unsaved.Saved(saved.CaptureId);
         if (isNote) { onNoteSaved?.Invoke(saved, pinFailed); }
         return saved;
     }
@@ -235,10 +242,10 @@ public sealed class CapturePipeline : IDisposable
             {
                 var oldUrl = Vault.ManagedUrl(plan.OldPath);
                 var ids = Journal.CaptureIdsTargeting(oldUrl)
-                    .Concat(preparedDestinations.Where(pair => SameUrl(pair.Value.Url, oldUrl)).Select(pair => pair.Key))
+                    .Concat(Unsaved.PreparedTargeting(prepared => SameUrl(prepared.Url, oldUrl)))
                     .Distinct().ToArray();
                 intent = new(plan, ids);
-                AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
+                DurableFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
                 afterIntent?.Invoke(plan);
             }, beforeReplace); }
             catch (Exception error)
@@ -300,7 +307,7 @@ public sealed class CapturePipeline : IDisposable
             {
                 CleanupRenameTemporary(intent.Plan);
                 intent = intent with { Plan = repaired };
-                AtomicJsonFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
+                DurableFile.Write(RenameIntentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
             });
         }
         catch (Exception error) when (error is VaultFileException { Kind: VaultFileError.Changed } or FileNotFoundException)
@@ -360,10 +367,7 @@ public sealed class CapturePipeline : IDisposable
         var target = intent.Plan.Target;
         var destination = new Destination(Vault.ManagedUrl(target.NotePath), target.Name, NoteKind.Session);
         Journal.Relocate(intent.CaptureIds, destination);
-        foreach (var id in intent.CaptureIds)
-        {
-            if (preparedDestinations.ContainsKey(id)) preparedDestinations[id] = destination;
-        }
+        Unsaved.Relocate(intent.CaptureIds, destination);
         Pins.Move(intent.Plan.OldPath, target.NotePath);
         CleanupRenameTemporary(intent.Plan);
         try { Index.Sync(); }

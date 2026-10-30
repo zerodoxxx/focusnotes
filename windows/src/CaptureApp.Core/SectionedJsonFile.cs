@@ -7,7 +7,7 @@ namespace CaptureApp.Core;
 
 /// A JSON object file whose top-level sections belong to different components (settings.json).
 /// Every change is a read-modify-write of one section under a process-wide lock per path, written
-/// through a GUID temp file, so a writer can never drop another section. A corrupt file is moved to
+/// through DurableFile, so a writer can never drop another section. A corrupt file is moved to
 /// a sibling corrupt directory (like the capture journal) and the file starts empty.
 public static class SectionedJsonFile
 {
@@ -116,24 +116,6 @@ public static class SectionedJsonFile
 
     private static void Write(string fullPath, JsonObject root)
     {
-        var directory = Path.GetDirectoryName(fullPath)!;
-        Directory.CreateDirectory(directory);
-        var temporary = Path.Combine(directory, "." + Path.GetFileName(fullPath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                       4096, FileOptions.WriteThrough))
-            {
-                stream.Write(new UTF8Encoding(false).GetBytes(root.ToJsonString(WriteOptions)));
-                stream.Flush(true);
-            }
-
-            File.Move(temporary, fullPath, true);
-        }
-        finally
-        {
-            try { File.Delete(temporary); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
-        }
+        DurableFile.Write(fullPath, new UTF8Encoding(false).GetBytes(root.ToJsonString(WriteOptions)));
     }
 }

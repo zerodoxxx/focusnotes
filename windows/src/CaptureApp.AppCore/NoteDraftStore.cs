@@ -299,7 +299,7 @@ public sealed class NoteDraftStore : IDisposable
     private void Write(NoteDraftSnapshot draft)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(draft, JsonOptions);
-        AtomicJsonFile.Write(Url, bytes);
+        DurableFile.Write(Url, bytes);
         RemoveFile(LegacyUrl);
     }
 

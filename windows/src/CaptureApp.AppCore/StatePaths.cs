@@ -42,7 +42,7 @@ public static class StatePaths
             catch (FileNotFoundException)
             {
                 legacy = new(configured, canonical);
-                AtomicJsonFile.Write(marker, JsonSerializer.SerializeToUtf8Bytes(legacy));
+                DurableFile.Write(marker, JsonSerializer.SerializeToUtf8Bytes(legacy));
             }
             catch (JsonException error)
             {
@@ -61,7 +61,7 @@ public static class StatePaths
                 // Remember its canonical identity once the original location becomes accessible again.
                 if (legacy.CanonicalRoot is null && canonical is not null)
                 {
-                    AtomicJsonFile.Write(marker, JsonSerializer.SerializeToUtf8Bytes(legacy with { CanonicalRoot = canonical }));
+                    DurableFile.Write(marker, JsonSerializer.SerializeToUtf8Bytes(legacy with { CanonicalRoot = canonical }));
                 }
                 return state;
             }
