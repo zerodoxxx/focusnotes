@@ -1315,6 +1315,7 @@ private func checkBlockedTitlePickerKeepsRetryWarning() async throws {
             try? FileManager.default.removeItem(at: pipeline.drafts.url)
         }
         panel?.dismiss(animated: false)
+        controller.hideToastForChecks()
         try? FileManager.default.removeItem(at: root)
     }
     let opened = ContinuousClock.now.advanced(by: .seconds(3))
