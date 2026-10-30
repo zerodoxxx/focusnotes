@@ -98,7 +98,10 @@ public final class ToastController {
         ])
         expiryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(max(0, toast.duration)))
-            guard !Task.isCancelled, let self, self.generation == token else { return }
+            guard !Task.isCancelled else { return }
+            // A freed controller can't dismiss its toast, so the expired panel closes itself.
+            guard let self else { panel.dismiss(); return }
+            guard self.generation == token else { return }
             self.dismiss(expire: true)
         }
     }
