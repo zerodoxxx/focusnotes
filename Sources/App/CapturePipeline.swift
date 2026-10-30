@@ -52,7 +52,7 @@ struct CapturePipeline: Sendable {
         let journal: CaptureJournal
         let renames: SessionRenameTransaction
     }
-    var selfCheck: SelfCheckAccess { SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames) }
+    let selfCheck: SelfCheckAccess
 
     init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
          semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
@@ -72,6 +72,7 @@ struct CapturePipeline: Sendable {
         self.noteIDForPin = noteIDForPin
         renames = SessionRenameTransaction(vault: vault, sessions: sessions, journal: journal, pins: pins,
                                            index: index, semantic: semantic, logger: logger)
+        selfCheck = SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames)
     }
 
     @concurrent
@@ -137,13 +138,25 @@ struct CapturePipeline: Sendable {
 
     func currentSession() async -> Session? { await sessions.current() }
 
-    func startSession(name: String, in folder: NoteFolder) async throws -> Session { try await sessions.start(name: name, in: folder) }
+    func startSession(name: String, in folder: NoteFolder) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.start(name: name, in: folder)
+    }
 
-    func startSession(name: String) async throws -> Session { try await sessions.start(name: name) }
+    func startSession(name: String) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.start(name: name)
+    }
 
-    func resumeSession(_ candidate: SessionCandidate) async throws -> Session { try await sessions.resume(candidate) }
+    func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
+        try await recoverSessionIdentity()
+        return try await sessions.resume(candidate)
+    }
 
-    func endSession() async throws { try await sessions.end() }
+    func endSession() async throws {
+        try await recoverSessionIdentity()
+        try await sessions.end()
+    }
 
     func renameSession(_ candidate: SessionCandidate, to name: String,
                        followingCaptures: [CaptureJob]) async throws -> SessionRenameOutcome {
@@ -160,13 +173,19 @@ struct CapturePipeline: Sendable {
         try service.pickedDestination(noteID: noteID, title: title, kind: kind)
     }
 
-    func existingTitle(forTypedNote markdown: String, intent: CaptureIntent, calendar: Calendar) -> String? {
+    func existingTitle(forTypedNote markdown: String, intent: CaptureIntent) -> String? {
         service.existingTitle(forTypedNote: markdown, intent: intent, calendar: calendar)
     }
 
-    func stage(_ job: CaptureJob) async throws { try await journal.store(job) }
+    func stage(_ job: CaptureJob) async throws {
+        try await recoverSessionIdentity()
+        try await journal.store(job)
+    }
 
-    func unstage(id: UUID) async throws { try await journal.remove(id: id) }
+    func unstage(id: UUID) async throws {
+        try await recoverSessionIdentity()
+        try await journal.remove(id: id)
+    }
 
     func commit(_ originalJob: CaptureJob, pinOnSave: Bool? = nil,
                 onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {

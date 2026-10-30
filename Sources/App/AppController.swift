@@ -362,7 +362,6 @@ final class AppController: NSObject, NSMenuDelegate {
     @discardableResult
     func startFolderSession(name: String, in folder: NoteFolder) async throws -> Session {
         guard !NoteTitle.cleanTitle(name).isEmpty else { throw NotePathNameError.emptyPath }
-        try await pipeline.recoverSessionIdentity()
         let session = try await pipeline.startSession(name: name, in: folder)
         return try await activateSession(session)
     }
@@ -745,13 +744,11 @@ final class AppController: NSObject, NSMenuDelegate {
 
     @discardableResult
     func startSession(name: String) async throws -> Session {
-        try await pipeline.recoverSessionIdentity()
         let session = try await pipeline.startSession(name: name)
         return try await activateSession(session)
     }
 
     private func resumeSession(_ candidate: SessionCandidate) async throws -> Session {
-        try await pipeline.recoverSessionIdentity()
         let session = try await pipeline.resumeSession(candidate)
         return try await activateSession(session)
     }
@@ -849,7 +846,6 @@ final class AppController: NSObject, NSMenuDelegate {
 
     @discardableResult
     func endSession(_ session: Session) async throws -> Int? {
-        try await pipeline.recoverSessionIdentity()
         try await pipeline.endSession()
         activeSession = nil
         refreshStatus()
@@ -1006,7 +1002,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     existingTitleForText: { text in
-                        pipeline.existingTitle(forTypedNote: text, intent: state.intent(), calendar: calendar)
+                        pipeline.existingTitle(forTypedNote: text, intent: state.intent())
                     },
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
