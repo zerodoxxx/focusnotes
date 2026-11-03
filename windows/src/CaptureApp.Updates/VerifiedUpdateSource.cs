@@ -29,16 +29,20 @@ public sealed class VerifiedUpdateSource(
 
         var location = await locator.LocateAsync(channel, CancellationToken.None).ConfigureAwait(false);
         var indexUri = location.For($"releases.{channel}.json");
-        var index = await fetcher.GetBytesAsync(indexUri, CancellationToken.None).ConfigureAwait(false);
-        string? signature = null;
+        // Fetch index and signature concurrently.
+        var indexTask = fetcher.GetBytesAsync(indexUri, CancellationToken.None);
+        var signatureTask = GetSignatureAsync(location.For($"releases.{channel}.json.sig"));
         try
         {
-            signature = Encoding.UTF8.GetString(await fetcher.GetBytesAsync(location.For($"releases.{channel}.json.sig"), CancellationToken.None).ConfigureAwait(false));
+            await Task.WhenAll(indexTask, signatureTask).ConfigureAwait(false);
         }
-        catch (UpdateHttpException error) when (error.StatusCode == 404)
+        catch when (indexTask.IsFaulted)
         {
-            // Reported below as a missing signature.
+            await indexTask.ConfigureAwait(false); // The index's error wins over the signature's.
         }
+
+        var index = await indexTask.ConfigureAwait(false);
+        var signature = await signatureTask.ConfigureAwait(false);
 
         IndexSignature.Verify(index, signature, channel, trusted);
         VelopackAssetFeed feed;
@@ -53,6 +57,18 @@ public sealed class VerifiedUpdateSource(
 
         current = downloadSource(location.BaseUri);
         return feed;
+    }
+
+    private async Task<string?> GetSignatureAsync(Uri uri)
+    {
+        try
+        {
+            return Encoding.UTF8.GetString(await fetcher.GetBytesAsync(uri, CancellationToken.None).ConfigureAwait(false));
+        }
+        catch (UpdateHttpException error) when (error.StatusCode == 404)
+        {
+            return null; // Reported by Verify as a missing signature.
+        }
     }
 
     public Task DownloadReleaseEntry(IVelopackLogger logger, VelopackAsset releaseEntry, string localFile, Action<int> progress, CancellationToken cancelToken) =>
