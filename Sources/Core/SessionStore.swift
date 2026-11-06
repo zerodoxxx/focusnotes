@@ -115,7 +115,7 @@ public actor SessionStore {
     public func start(name: String, in folder: NoteFolder) throws -> Session {
         let cleaned = NoteTitle.cleanTitle(name)
         guard !cleaned.isEmpty else { throw NotePathNameError.emptyPath }
-        guard !name.contains("/"), !name.contains("\\"), !name.contains("\0"),
+        guard !NoteTitle.containsSeparatorOrNull(name),
               !cleaned.hasPrefix("."), !cleaned.hasPrefix("~") else {
             throw NotePathNameError.invalidComponent
         }
@@ -208,13 +208,13 @@ public actor SessionStore {
 
     public func renameDestination(_ candidate: SessionCandidate, to rawName: String) throws -> Session {
         try vault.prepare()
-        guard !rawName.contains("/"), !rawName.contains("\\"), !rawName.contains("\0") else {
+        guard !NoteTitle.containsSeparatorOrNull(rawName) else {
             throw SessionStoreError.invalidRename
         }
         let title = NoteTitle.cleanTitle(rawName)
-        guard !title.isEmpty, title != ".", title != ".." else { throw SessionStoreError.invalidRename }
+        guard !title.isEmpty, !NoteTitle.isDotComponent(title) else { throw SessionStoreError.invalidRename }
         let stem = NoteTitle.fileStem(for: title)
-        guard !stem.hasPrefix("~$") else { throw SessionStoreError.invalidRename }
+        guard !NoteTitle.isOwnerFileName(stem) else { throw SessionStoreError.invalidRename }
         try requireSession(at: candidate.notePath)
         let directory = (candidate.notePath as NSString).deletingLastPathComponent
         do {

@@ -28,12 +28,9 @@ public struct TypedNote: Sendable {
         do {
             resolvedName = try NoteTitle.resolvedPathName(for: extractedName, normalizingWhitespace: false)
             parseError = nil
-        } catch let error as NotePathNameError {
-            resolvedName = nil
-            parseError = error
         } catch {
             resolvedName = nil
-            parseError = .invalidComponent
+            parseError = error
         }
         let isFolderQualified = resolvedName.map {
             $0.scope == .home || $0.components.count > 1
@@ -44,7 +41,7 @@ public struct TypedNote: Sendable {
         rawName = extractedName
         pathName = resolvedName
         pathNameError = resolvedName == nil ? parseError : nil
-        title = Self.boundedTitle(isFolderQualified ? NoteTitle.cleanTitle(rawLeaf) : extractedName)
+        title = NoteTitle.displayTitle(isFolderQualified ? NoteTitle.cleanTitle(rawLeaf) : extractedName)
 
         // Only the physical first line is eligible. Lists, quotes and code are
         // meaningful body content even when their text becomes the note title.
@@ -81,15 +78,5 @@ public struct TypedNote: Sendable {
 
     private static func replace(_ pattern: String, in text: String, with replacement: String) -> String {
         text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
-    }
-
-    private static func boundedTitle(_ title: String) -> String {
-        guard title.count > 60 else { return title }
-        let end = title.index(title.startIndex, offsetBy: 60)
-        var prefix = String(title[..<end])
-        if !title[end].isWhitespace, let boundary = prefix.lastIndex(of: " ") {
-            prefix = String(prefix[..<boundary])
-        }
-        return prefix.trimmingCharacters(in: .whitespaces) + "…"
     }
 }
