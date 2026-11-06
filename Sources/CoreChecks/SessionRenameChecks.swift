@@ -38,12 +38,13 @@ func checkSessionRename() async throws {
     }
     let conflict = vault.root.appendingPathComponent("Sessions/archive/Occupied.MD")
     try checkWrite("do not replace", to: conflict)
-    for name in ["occupied", "daily sync"] {
-        do {
-            _ = try await store.rename(selected, to: name)
-            throw CheckFailure.failed("case-insensitive collision was accepted")
-        } catch SessionStoreError.renameConflict where name == "occupied" {}
-        catch SessionStoreError.caseOnlyRename where name == "daily sync" {}
+    try await expectRejection("case-insensitive collision must be a rename conflict",
+                              matching: { if case SessionStoreError.renameConflict = $0 { return true }; return false }) {
+        _ = try await store.rename(selected, to: "occupied")
+    }
+    try await expectRejection("case-only rename must be rejected",
+                              matching: { if case SessionStoreError.caseOnlyRename = $0 { return true }; return false }) {
+        _ = try await store.rename(selected, to: "daily sync")
     }
     let conflictBytes = try checkRead(conflict)
     let afterCollision = try Data(contentsOf: target)

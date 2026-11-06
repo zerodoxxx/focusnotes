@@ -60,14 +60,15 @@ func checkSessionStore() async throws {
     let explicitCleanedResume = try await store.start(name: "A/B")
     try require(explicitCleanedResume.notePath == cleaned.notePath && explicitCleanedResume.resumed == true,
                 "a folder-qualified session name must resume the exact nested note")
-    for name in ["TODO/", "Read https://x.com", "a//b", "pros / cons"] {
+    for (name, stem) in [("TODO/", "TODO-"), ("Read https://x.com", "Read https---x.com"), ("a//b", "a--b"), ("pros / cons", "pros - cons")] {
         let flat = try await store.start(name: name)
-        let expected = "Sessions/\(NoteTitle.fileStem(for: NoteTitle.cleanTitle(name))).md"
+        let expected = "Sessions/\(stem).md"
         try require(flat.notePath == expected && !flat.notePath.dropFirst("Sessions/".count).contains("/"),
                     "invalid or whitespace-qualified session name \(name.debugDescription) must stay flat, got \(flat.notePath)")
     }
     let beforeInvalidPaths = await store.current()
-    for name in ["/outside", " /outside", "science/../escape", "science/\0name", "science/~$draft"] {
+    for (name, flatStem) in [("/outside", "-outside"), (" /outside", "-outside"), ("science/../escape", "science-..-escape"),
+                             ("science/\0name", "science--name"), ("science/~$draft", "science-~$draft")] {
         do {
             _ = try await store.start(name: name)
             throw CheckFailure.failed("unsafe or HOME-relative session path unexpectedly started: \(name.debugDescription)")
@@ -77,8 +78,7 @@ func checkSessionStore() async throws {
         } catch is CheckFailure {
             throw CheckFailure.failed("unsafe or HOME-relative session path was accepted: \(name.debugDescription)")
         }
-        let flatName = NoteTitle.fileStem(for: NoteTitle.cleanTitle(name))
-        try require(!FileManager.default.fileExists(atPath: vault.sessionsURL.appendingPathComponent("\(flatName).md").path),
+        try require(!FileManager.default.fileExists(atPath: vault.sessionsURL.appendingPathComponent("\(flatStem).md").path),
                     "unsafe or HOME-relative session path must not create a flat note: \(name.debugDescription)")
     }
     let afterInvalidPaths = await store.current()
@@ -281,11 +281,9 @@ private func checkSessionStartRejectsLinkedDirectory(calendar: Calendar, now: Da
     try fm.createSymbolicLink(at: vault.sessionsURL, withDestinationURL: outsideSessions)
     let store = SessionStore(stateDirectory: base.appendingPathComponent("State", isDirectory: true),
                              vault: vault, calendar: calendar, now: { now })
-    do {
+    try await expectRejection("starting a session must reject a linked Sessions directory", matching: isPOSIX(.ENOTDIR)) {
         _ = try await store.start(name: "Escaped Session")
-        throw CheckFailure.failed("starting a session must reject a linked Sessions directory")
-    } catch is CheckFailure { throw CheckFailure.failed("session start unexpectedly accepted a linked Sessions directory") }
-    catch {}
+    }
     let active = await store.current()
     let outsideNames = try fm.contentsOfDirectory(atPath: outsideSessions.path)
     try require(active == nil, "a failed linked-directory session start must not claim an active session")
