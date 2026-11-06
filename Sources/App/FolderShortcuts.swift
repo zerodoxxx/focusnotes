@@ -33,11 +33,18 @@ struct FolderShortcut: Codable, Equatable, Sendable, Identifiable {
 
 struct FolderShortcutValidationError: LocalizedError {
     let message: String
+    /// Why the value was rejected, for diagnostics. The message is the text users see.
+    let cause: (any Error)?
+    init(message: String, cause: (any Error)? = nil) {
+        self.message = message
+        self.cause = cause
+    }
     var errorDescription: String? { message }
 }
 
 struct FolderShortcutStore {
     static let maximumBindings = 20
+    private static let envelopeVersion = 1
     let url: URL
 
     private struct Envelope: Codable {
@@ -48,11 +55,9 @@ struct FolderShortcutStore {
     init(url: URL) { self.url = url }
 
     func load() throws -> [FolderShortcut] {
-        let data: Data
-        do { data = try Data(contentsOf: url) }
-        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return [] }
+        guard let data = try StateFile.read(url) else { return [] }
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        guard envelope.version == 1 else {
+        guard envelope.version == Self.envelopeVersion else {
             throw FolderShortcutValidationError(message: "Unsupported folder shortcut settings version.")
         }
         try Self.validate(envelope.bindings)
@@ -63,13 +68,11 @@ struct FolderShortcutStore {
         try Self.validate(bindings)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(Envelope(version: 1, bindings: bindings))
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        try StateFile.writeJSON(Envelope(version: Self.envelopeVersion, bindings: bindings), to: url, encoder: encoder, createDirectory: true)
     }
 
     static func validate(_ bindings: [FolderShortcut]) throws {
-        func reject(_ message: String) throws { throw FolderShortcutValidationError(message: message) }
+        func reject(_ message: String, cause: (any Error)? = nil) throws { throw FolderShortcutValidationError(message: message, cause: cause) }
         guard bindings.count <= maximumBindings else { try reject("You can add up to \(maximumBindings) folder shortcuts."); return }
         let builtIns: Set<Hotkey> = [.captureSelection, .captureRegion, .captureSelectionOutsideSession,
             .captureRegionOutsideSession, .search, .toggleSession, .writeNote, .writeNoteOutsideSession, .addSubheading, .openLibrary]
@@ -92,7 +95,7 @@ struct FolderShortcutStore {
             let folder: NoteFolder
             do { folder = try NoteFolder(rawValue: binding.folder) }
             catch {
-                try reject("Enter a nonempty relative folder path without a leading slash, traversal (..), or hidden names.")
+                try reject("Enter a nonempty relative folder path without a leading slash, traversal (..), or hidden names.", cause: error)
                 return
             }
             guard !binding.folder.isEmpty, folder.rawValue == binding.folder else {

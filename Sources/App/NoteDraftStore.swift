@@ -1,5 +1,6 @@
 import Foundation
 import Core
+import os
 
 struct NoteDraftSnapshot: Codable, Sendable {
     var text: String
@@ -10,6 +11,7 @@ struct NoteDraftSnapshot: Codable, Sendable {
 /// Text and pin intent share one atomic record. The lock also protects compare-and-clear
 /// when a journal replay finishes while the main actor is accepting edits.
 final class NoteDraftStore: @unchecked Sendable {
+    private static let logger = Logger(subsystem: AppInfo.bundleIdentifier, category: "drafts")
     private let lock = NSLock()
     /// Every draft mutation, including delayed editor writes, passes through this queue.
     /// A synchronous flush/clear is therefore ordered after an in-flight write.
@@ -85,18 +87,16 @@ final class NoteDraftStore: @unchecked Sendable {
     /// writes first, then waits behind any write already in progress, so stale text cannot
     /// land after this snapshot. A failure keeps the latest snapshot pending for retry.
     func flushScheduledStore(_ text: String, pinOnSave: Bool? = nil, folder: NoteFolder? = nil) throws {
-        try mutationLock.withLock {
-            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, folder: folder)
-            try persistenceQueue.sync {
-                try writeSnapshot(pending)
-                clearPendingWrite(ifCurrent: generation)
-            }
-        }
+        try writeNow(text, pinOnSave: pinOnSave, folder: folder, keepFailureHandler: true)
     }
 
     func store(_ text: String, pinOnSave: Bool? = nil, folder: NoteFolder? = nil) throws {
+        try writeNow(text, pinOnSave: pinOnSave, folder: folder, keepFailureHandler: false)
+    }
+
+    private func writeNow(_ text: String, pinOnSave: Bool?, folder: NoteFolder?, keepFailureHandler: Bool) throws {
         try mutationLock.withLock {
-            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, folder: folder, keepFailureHandler: false)
+            let (generation, pending) = replacePendingWrite(text: text, pinOnSave: pinOnSave, folder: folder, keepFailureHandler: keepFailureHandler)
             try persistenceQueue.sync {
                 try writeSnapshot(pending)
                 clearPendingWrite(ifCurrent: generation)
@@ -127,7 +127,7 @@ final class NoteDraftStore: @unchecked Sendable {
                 if let pending { try writeSnapshot(pending) }
                 try lock.withLock {
                     let draft = try read()
-                    if draft.folder == folder, CaptureFormat.noteBody(draft.text) == CaptureFormat.noteBody(text) { try remove() }
+                    if Self.matches(draft, text: text, folder: folder) { try remove() }
                 }
                 clearPendingWrite(ifCurrent: generation)
             }
@@ -142,13 +142,19 @@ final class NoteDraftStore: @unchecked Sendable {
                 if let pending { try writeSnapshot(pending) }
                 try lock.withLock {
                     let draft = try read()
-                    let matches = draft.folder == folder && CaptureFormat.noteBody(draft.text) == CaptureFormat.noteBody(text)
+                    let matches = Self.matches(draft, text: text, folder: folder)
                     applyPin(pinOnSave ?? (matches && draft.pinOnSave))
                     if matches { try remove() }
                 }
                 clearPendingWrite(ifCurrent: generation)
             }
         }
+    }
+
+    private static func matches(_ draft: NoteDraftSnapshot, text: String, folder: NoteFolder?) -> Bool {
+        let draftBody = CaptureFormat.noteBody(draft.text)
+        let body = CaptureFormat.noteBody(text)
+        return draft.folder == folder && draftBody == body
     }
 
     private func persistScheduledWrite(generation: UInt64) {
@@ -166,7 +172,11 @@ final class NoteDraftStore: @unchecked Sendable {
                 firstPendingAt = DispatchTime.now()
                 return pendingWrite?.onFailure
             }
-            handler?(error)
+            if let handler {
+                handler(error)
+            } else {
+                Self.logger.error("Draft autosave failed (\(AppErrorLog.summary(error), privacy: .public))")
+            }
         }
     }
 
@@ -216,24 +226,27 @@ final class NoteDraftStore: @unchecked Sendable {
         }
     }
     private func read() throws -> NoteDraftSnapshot {
-        do { return try JSONDecoder().decode(NoteDraftSnapshot.self, from: Data(contentsOf: url)) }
-        catch is DecodingError {
-            // A corrupt record must not block the editor or fail saves; keep it aside for inspection.
-            let aside = url.deletingPathExtension().appendingPathExtension("corrupt.json")
-            try? FileManager.default.removeItem(at: aside)
-            try? FileManager.default.moveItem(at: url, to: aside)
-            return NoteDraftSnapshot(text: "", pinOnSave: false)
-        }
-        catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+        guard let data = try StateFile.read(url) else {
             do { return NoteDraftSnapshot(text: try String(contentsOf: legacyURL, encoding: .utf8), pinOnSave: false) }
             catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
                 return NoteDraftSnapshot(text: "", pinOnSave: false)
             }
         }
+        do { return try JSONDecoder().decode(NoteDraftSnapshot.self, from: data) }
+        catch is DecodingError {
+            // A corrupt record must not block the editor or fail saves; keep it aside for inspection.
+            let aside = url.deletingPathExtension().appendingPathExtension("corrupt.json")
+            do {
+                try removeFile(aside)
+                try FileManager.default.moveItem(at: url, to: aside)
+            } catch {
+                Self.logger.error("Corrupt draft could not be moved aside (\(AppErrorLog.summary(error), privacy: .public))")
+            }
+            return NoteDraftSnapshot(text: "", pinOnSave: false)
+        }
     }
     private func write(_ draft: NoteDraftSnapshot) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(draft).write(to: url, options: .atomic)
+        try StateFile.writeJSON(draft, to: url, createDirectory: true)
         try removeFile(legacyURL)
     }
     private func remove() throws { try removeFile(legacyURL); try removeFile(url) }
