@@ -46,7 +46,7 @@ func checkMarkdownStyler() throws {
     try require((try attrs("strike")[.strikethroughStyle] as? Int) == NSUnderlineStyle.single.rawValue, "Strike range")
     try require((try attrs("- A")[.foregroundColor] as? NSColor) == OverlayTheme.secondaryColor, "Bullet marker range")
     try require((try attrs("- A")[.font] as? NSFont) == OverlayTheme.editorBulletFont && OverlayTheme.editorBulletFont.pointSize == OverlayTheme.editorFont.pointSize,
-               "Bullet glyph must use the body font size at semibold weight")
+                "Bullet glyph must use the body font size at semibold weight")
     try require((try attrs("1. ")[.foregroundColor] as? NSColor) == OverlayTheme.secondaryColor, "Numbered marker range")
     try require((try attrs("+ ")[.foregroundColor] as? NSColor) == OverlayTheme.secondaryColor, "Plus marker range")
     try require((try attrs("A long")[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0 > 0, "Hanging list indent")
@@ -64,14 +64,14 @@ func checkMarkdownStyler() throws {
         let preview = task[MarkdownStyler.previewParagraph] as? NSParagraphStyle
         try require(indentation > 0 && preview != nil, "Nested task checkbox style: \(token)")
         try require(abs((preview?.firstLineHeadIndent ?? -1) - checkboxTextIndent) < 0.001,
-                   "Nested task first-line indent must not count visible Markdown spaces twice: \(token)")
+                    "Nested task first-line indent must not count visible Markdown spaces twice: \(token)")
         try require(abs((preview?.headIndent ?? -1) - indentation - checkboxTextIndent) < 0.001,
-                   "Wrapped nested task lines must align after the checkbox and list indentation: \(token)")
+                    "Wrapped nested task lines must align after the checkbox and list indentation: \(token)")
     }
     let nestedBulletIndent = (try attrs("Nested bullet")[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
     let rootBulletIndent = (try attrs("A long")[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
     try require(nestedBulletIndent > rootBulletIndent,
-               "Nested bullet hanging indent must retain its existing marker spacing")
+                "Nested bullet hanging indent must retain its existing marker spacing")
     try require((try attrs("> ")[.foregroundColor] as? NSColor) == OverlayTheme.tertiaryColor, "Quote marker")
     try require((try attrs("Keep")[.paragraphStyle] as? NSParagraphStyle)?.headIndent == OverlayTheme.editorQuoteIndent, "Quote indent")
     try require((try attrs("link")[.foregroundColor] as? NSColor) == OverlayTheme.editorLinkColor, "Link text range")
@@ -82,7 +82,7 @@ func checkMarkdownStyler() throws {
     try require(try attrs("let message")[MarkdownStyler.fencedCodeBlock] as? Bool == true, "Code block decoration")
     let closing = source.range(of: "```", options: .backwards)
     try require(result.attribute(MarkdownStyler.fencedCodeBlock, at: closing.location, effectiveRange: nil) as? Bool == true,
-               "Closing fence must receive the full-width block decoration")
+                "Closing fence must receive the full-width block decoration")
     try require(try attrs("let message")[.backgroundColor] == nil, "Block fill must not also draw behind individual glyphs")
     for (name, alpha, white) in [(NSAppearance.Name.aqua, CGFloat(0.05), CGFloat(0)), (.darkAqua, CGFloat(0.09), CGFloat(1))] {
         guard let appearance = NSAppearance(named: name) else { throw GalleryError("Missing code-fill appearance") }
@@ -90,7 +90,7 @@ func checkMarkdownStyler() throws {
         appearance.performAsCurrentDrawingAppearance { resolved = OverlayTheme.codeBackground.usingColorSpace(.deviceRGB) }
         guard let color = resolved else { throw GalleryError("Code color did not resolve") }
         try require(abs(color.alphaComponent - alpha) < 0.001 && abs(color.redComponent - white) < 0.001,
-                   "Code background must resolve its tint/opacity for \(name)")
+                    "Code background must resolve its tint/opacity for \(name)")
     }
     try require((try attrs("**plain code**")[.font] as? NSFont) == OverlayTheme.editorCodeFont, "No emphasis inside fenced code")
     try require((try attrs("**plain code**")[.foregroundColor] as? NSColor) == OverlayTheme.textColor, "Code punctuation must retain body color")
@@ -101,13 +101,13 @@ func checkMarkdownStyler() throws {
     for index in interior.location..<NSMaxRange(interior) {
         let attributes = fencedStorage.attributes(at: index, effectiveRange: nil)
         try require((attributes[.font] as? NSFont) == OverlayTheme.editorCodeFont
-                   && (attributes[.foregroundColor] as? NSColor) == OverlayTheme.textColor
-                   && attributes[.strikethroughStyle] == nil
-                   && attributes[MarkdownStyler.inlineCode] == nil
-                   && attributes[MarkdownStyler.element] == nil
-                   && attributes[MarkdownStyler.syntax] == nil
-                   && attributes[MarkdownStyler.fencedCodeBlock] as? Bool == true,
-                   "No inline or heading styling inside fences")
+                    && (attributes[.foregroundColor] as? NSColor) == OverlayTheme.textColor
+                    && attributes[.strikethroughStyle] == nil
+                    && attributes[MarkdownStyler.inlineCode] == nil
+                    && attributes[MarkdownStyler.element] == nil
+                    && attributes[MarkdownStyler.syntax] == nil
+                    && attributes[MarkdownStyler.fencedCodeBlock] as? Bool == true,
+                    "No inline or heading styling inside fences")
     }
     let large = String(repeating: editorSample + "\n", count: 50)
     let largeSource = large as NSString
@@ -171,25 +171,25 @@ func checkMarkdownStyler() throws {
     let unicodeDocument = "😀 heading\n# **outside**\nplain\n```swift\nprint(\"**code**\")\n```\n# after\n"
     let openedFence = try incrementallyEdit(unicodeDocument, token: "plain", replacement: "```\nplain")
     try require(openedFence.1.length < (openedFence.0.string as NSString).length,
-               "Opening a fence should restyle only through the first unchanged fence boundary")
+                "Opening a fence should restyle only through the first unchanged fence boundary")
     let reopened = openedFence.0.string as NSString
     try require(openedFence.0.attribute(MarkdownStyler.fencedCodeBlock, at: reopened.range(of: "# **outside**").location, effectiveRange: nil) as? Bool != true,
-               "Text before an inserted fence must keep its Markdown styling")
+                "Text before an inserted fence must keep its Markdown styling")
     try require(openedFence.0.attribute(MarkdownStyler.fencedCodeBlock, at: reopened.range(of: "# after").location, effectiveRange: nil) as? Bool != true,
-               "A later unchanged closing fence must end the inserted code block")
+                "A later unchanged closing fence must end the inserted code block")
 
     let removedCloser = try incrementallyEdit(unicodeDocument, token: "```\n# after", replacement: "not-a-fence\n# after")
     let afterRemovedCloser = (removedCloser.0.string as NSString).range(of: "# after")
     try require(removedCloser.0.attribute(MarkdownStyler.fencedCodeBlock, at: afterRemovedCloser.location, effectiveRange: nil) as? Bool == true,
-               "Removing a closing fence must propagate code styling through the suffix")
+                "Removing a closing fence must propagate code styling through the suffix")
     try require(NSMaxRange(removedCloser.1) == removedCloser.0.length,
-               "An unmatched opening fence must rescan to end-of-document")
+                "An unmatched opening fence must rescan to end-of-document")
 
     let addedCloser = try incrementallyEdit("😀 title\n```swift\n**code**\n# still code\n# after\n",
                                             token: "**code**\n", replacement: "**code**\n```\n")
     let afterAddedCloser = (addedCloser.0.string as NSString).range(of: "# still code")
     try require(addedCloser.0.attribute(MarkdownStyler.fencedCodeBlock, at: afterAddedCloser.location, effectiveRange: nil) as? Bool != true,
-               "An inserted closing fence must restore Markdown styling below it")
+                "An inserted closing fence must restore Markdown styling below it")
 
     let offsetDocument = "😀 lead\nplain text\n# Heading **bold**\n[link](https://example.org) and ~~strike~~\n- [ ] task\n"
     _ = try incrementallyEdit(offsetDocument, token: "lead", replacement: "a much longer lead")
@@ -210,7 +210,7 @@ func checkMarkdownStyler() throws {
     let lastLink = editedSource.range(of: "[link]", options: .backwards)
     let lastLinkElement = heavyStorage.attribute(MarkdownStyler.element, at: lastLink.location, effectiveRange: nil) as? MarkdownStyler.Element
     try require(lastLinkElement?.range.location == lastLink.location,
-               "Large Markdown suffix rebasing must keep the final link's UTF-16 range aligned")
+                "Large Markdown suffix rebasing must keep the final link's UTF-16 range aligned")
 
     let headInserted = try incrementallyEdit(heavyDocument, token: "prefix", replacement: "a much longer prefix")
     let headDeleted = try incrementallyEdit(headInserted.0.string, token: "a much longer prefix", replacement: "prefix")
