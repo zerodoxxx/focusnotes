@@ -346,6 +346,19 @@ extension AppController {
         try Data("{not json".utf8).write(to: pins.url)
         guard NotePinStore(stateDirectory: pinState).paths().isEmpty, try reloadedPins.toggle("d.md"),
               NotePinStore(stateDirectory: pinState).paths() == ["d.md"] else { throw SelfTestFailure("Pin store did not recover from a corrupt file") }
+        try JSONEncoder().encode(["keep.md"]).write(to: pins.url)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: pins.url.path)
+        let enforcesPermissions = getuid() != 0
+        var unreadableWriteAccepted = false
+        if enforcesPermissions {
+            do { _ = try pins.toggle("x.md"); unreadableWriteAccepted = true } catch {}
+            do { try pins.set("y.md", pinned: true); unreadableWriteAccepted = true } catch {}
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: pins.url.path)
+        if enforcesPermissions {
+            guard !unreadableWriteAccepted else { throw SelfTestFailure("Pin store must not overwrite an unreadable pin file") }
+            guard try JSONDecoder().decode([String].self, from: Data(contentsOf: pins.url)) == ["keep.md"] else { throw SelfTestFailure("Pin store erased pins after a failed read") }
+        }
         _ = await controller.beginTermination().value
         return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     }
