@@ -714,7 +714,6 @@ private func checkNoteOverlays() async throws {
     try checkCardButtonState(in: regrowPanel.contentView!, open: nil, context: "Running Actions closes card")
     editor.dismiss()
     try await settle()
-    // Browse builds at most browseMaxRows rows, pinned first.
     let many = (0..<500).map { BrowseItem(id: "n\($0)", title: "Note \($0)", detail: "Note", symbolName: "doc.text", isPinned: $0 == 250) }
     let browse = OverlayPreview.noteEditor(overlay: .browse(items: many))
     let rowViews = views(named: "BrowseRowView", in: browse)
@@ -1069,7 +1068,6 @@ private func checkCardDesign() throws {
     try require(descendants(pinnedMenu).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Remove from Pinned" },
                 "Pinned notes must offer Remove from Pinned")
     try require(rows.count == 6 && rows.allSatisfy { abs($0.frame.height - 32) < 0.01 }, "Actions rows are 32pt")
-    // Save as New Note is enabled only when the text names an existing note; a disabled row refuses a press.
     let saveRow = rows.first { $0.accessibilityLabel() == "Save as New Note" }
     try require(saveRow?.isAccessibilityEnabled() == false && saveRow?.accessibilityPerformPress() == false,
                 "Save as New Note must be disabled when the text names no note")
@@ -1117,7 +1115,6 @@ private func checkCardDesign() throws {
 @MainActor
 private func checkPanelMoving() async throws {
     func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 0.01 }
-    // Fractions -> clamped frame.
     let big = NSRect(x: 0, y: 25, width: 1440, height: 875)
     let size = NSSize(width: 500, height: 200)
     let mid = OverlayPreview.panelFrame(topCenter: CGPoint(x: 0.5, y: 0.78), size: size, in: big)
@@ -1135,7 +1132,6 @@ private func checkPanelMoving() async throws {
     }
     let tooBig = OverlayPreview.panelFrame(topCenter: CGPoint(x: 0.5, y: 0.5), size: NSSize(width: 2000, height: 900), in: small)
     try require(near(tooBig.minX, small.minX) && near(tooBig.maxY, small.maxY), "A frame larger than the screen keeps its top-left")
-    // Resize clamp: top fixed and centred until the frame would leave the screen.
     let free = OverlayPreview.resizedFrame(NSRect(x: 400, y: 400, width: 500, height: 200), to: NSSize(width: 560, height: 300), in: big)
     try require(near(free.maxY, 600) && near(free.midX, 650), "An unconstrained resize keeps the top edge and centre")
     let nearBottom = OverlayPreview.resizedFrame(NSRect(x: 400, y: 60, width: 500, height: 200), to: NSSize(width: 500, height: 500), in: big)
@@ -1143,7 +1139,6 @@ private func checkPanelMoving() async throws {
     let nearEdge = OverlayPreview.resizedFrame(NSRect(x: 10, y: 400, width: 400, height: 200), to: NSSize(width: 600, height: 200), in: big)
     try require(near(nearEdge.minX, big.minX) && near(nearEdge.maxY, 600), "Growing near the left edge must shift right only")
 
-    // Drag handles: bands yes; text, buttons and open cards no.
     let rest = OverlayPreview.noteEditor(text: "one\ntwo")
     rest.layoutSubtreeIfNeeded()
     let width = rest.bounds.width, height = rest.bounds.height
@@ -1166,7 +1161,6 @@ private func checkPanelMoving() async throws {
                 && OverlayPreview.isDragHandle(in: withCard, at: NSPoint(x: 10, y: OverlayPreview.noteRect(in: withCard).maxY - 10)),
                 "The bands stay handles while a card is open")
 
-    // Only the note editor's panel is movable.
     try require(OverlayPanel(interactive: true, size: .zero, movable: true).isMovable && !OverlayPanel(interactive: true, size: .zero).isMovable
                 && !OverlayPanel(interactive: false, size: .zero).isMovable, "Only the note editor panel is movable")
 
@@ -1221,12 +1215,10 @@ private func checkCaretStates() async throws {
     }
     try require(tight[1].minY - tight[0].minY > 15, "Different lines must give different carets")
 
-    // Title: leading blank lines must not hide the first real line.
     let late = OverlayPreview.noteEditor(text: String(repeating: "\n", count: 2_100) + "Late title")
     try require(descendants(late).compactMap { $0 as? NSTextField }.contains { $0.font == OverlayTheme.quickTitleFont && $0.stringValue == "Late title" },
                 "A draft starting with thousands of blank lines must still be titled")
 
-    // An empty line inside an open fence uses the code font.
     let fenced = OverlayPreview.noteEditor(text: "```\ncode\n", selection: NSRange(location: 9, length: 0))
     fenced.layoutSubtreeIfNeeded()
     try require(OverlayPreview.caretRect(in: fenced).map { abs($0.height - 14.85) < 0.5 } == true,
@@ -1331,7 +1323,6 @@ private func checkFloatingCards() async throws {
             try require(panel.frame == noteFrame && OverlayPreview.noteFrame(in: panel) == noteFrame && OverlayPreview.noteRect(in: root) == noteRect,
                         "Card close must immediately shrink the window to exactly the unchanged note")
         }
-        // Swapping between differently sized cards keeps the note at the same rect.
         try key(40, modifiers: .command); try key(35, modifiers: .command)
         try require(OverlayPreview.noteFrame(in: panel) == noteFrame, "Swapping cards must not move or resize the note")
         try key(53)
