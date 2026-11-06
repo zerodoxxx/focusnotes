@@ -1,5 +1,5 @@
 import AppKit
-import OverlayKit
+@_spi(Checks) import OverlayKit
 
 let editorSample = """
 ## Working notes
@@ -20,11 +20,11 @@ func checkMarkdownStyler() throws {
     let text = editorSample + "\n# One\n### Three\n#### Four\n####### Deep\n__strong__ _emphasis_\n1. Numbered\n+ Plus\n  - [ ] Nested task\n    - [x] Deeper task\n  - Nested bullet\nhttps://example.org\n😀 **unicode**"
     let source = text as NSString
     let result = NSMutableAttributedString(string: text, attributes: MarkdownStyler.baseAttributes)
-    let spans = MarkdownStyler.styles(text)
+    let spans = MarkdownStyler.scan(text, from: 0, startingFence: .outside).spans
     for span in spans {
         guard span.range.location >= 0, NSMaxRange(span.range) <= source.length else { throw GalleryError("Styler produced invalid UTF-16 range") }
-        result.addAttributes(span.attributes, range: span.range)
     }
+    MarkdownStyler.restyle(result, editedRange: nil, baseAttributes: MarkdownStyler.baseAttributes)
     func attrs(_ token: String) throws -> [NSAttributedString.Key: Any] {
         let range = source.range(of: token)
         guard range.location != NSNotFound else { throw GalleryError("Missing style fixture: \(token)") }
@@ -96,10 +96,9 @@ func checkMarkdownStyler() throws {
     try expect((try attrs("**plain code**")[.font] as? NSFont) == OverlayTheme.editorCodeFont, "No emphasis inside fenced code")
     try expect((try attrs("**plain code**")[.foregroundColor] as? NSColor) == OverlayTheme.textColor, "Code punctuation must retain body color")
     let fenceText = "```\n# heading **bold** *italic* [link](https://example.com) ~~strike~~\n```"
-    let fenceStyles = MarkdownStyler.styles(fenceText)
     let interior = (fenceText as NSString).range(of: "# heading **bold** *italic* [link](https://example.com) ~~strike~~")
     let fencedStorage = NSMutableAttributedString(string: fenceText, attributes: MarkdownStyler.baseAttributes)
-    for span in fenceStyles { fencedStorage.addAttributes(span.attributes, range: span.range) }
+    MarkdownStyler.restyle(fencedStorage, editedRange: nil, baseAttributes: MarkdownStyler.baseAttributes)
     for index in interior.location..<NSMaxRange(interior) {
         let attributes = fencedStorage.attributes(at: index, effectiveRange: nil)
         try expect((attributes[.font] as? NSFont) == OverlayTheme.editorCodeFont
@@ -114,17 +113,18 @@ func checkMarkdownStyler() throws {
     let large = String(repeating: editorSample + "\n", count: 50)
     let largeSource = large as NSString
     let paragraph = largeSource.paragraphRange(for: NSRange(location: largeSource.range(of: "Reviewed").location, length: 1))
-    let start = ContinuousClock.now
-    for _ in 0..<10 { _ = MarkdownStyler.styles(String(large.prefix(20_000))) }
-    let elapsed = start.duration(to: .now)
-    let limited = MarkdownStyler.styles(large, in: paragraph)
-    try expect(!limited.isEmpty && limited.allSatisfy { NSIntersectionRange($0.range, paragraph) == $0.range }, "Large document paragraph cap")
-
     func fullyStyled(_ value: String) -> NSMutableAttributedString {
         let storage = NSMutableAttributedString(string: value, attributes: MarkdownStyler.baseAttributes)
-        for span in MarkdownStyler.styles(value) { storage.addAttributes(span.attributes, range: span.range) }
+        MarkdownStyler.restyle(storage, editedRange: nil, baseAttributes: MarkdownStyler.baseAttributes)
         return storage
     }
+    let start = ContinuousClock.now
+    for _ in 0..<10 { _ = fullyStyled(String(large.prefix(20_000))) }
+    let elapsed = start.duration(to: .now)
+    let limited = MarkdownStyler.restyle(fullyStyled(large), editedRange: NSRange(location: largeSource.range(of: "Reviewed").location, length: 1),
+                                         baseAttributes: MarkdownStyler.baseAttributes)
+    try expect(limited == paragraph, "Large document paragraph cap")
+
     func sameAttribute(_ lhs: Any?, _ rhs: Any?) -> Bool {
         let left: Any
         let right: Any
@@ -153,40 +153,20 @@ func checkMarkdownStyler() throws {
         let value = storage.string
         let source = value as NSString
         let changed = NSRange(location: oldRange.location, length: (replacement as NSString).length)
-        let probe = min(changed.location, max(0, source.length - 1))
-        let paragraph = source.paragraphRange(for: NSRange(location: probe, length: min(max(1, changed.length), source.length - probe)))
+        let paragraph = MarkdownStyler.paragraphRange(around: changed, in: source)
         MarkdownStyler.rebaseElementRanges(in: storage, after: NSMaxRange(paragraph),
                                            by: changed.length - oldRange.length)
-        let start = paragraph.location
-        let incoming = start > 0
-            ? storage.attribute(MarkdownStyler.fenceStateAfter, at: start - 1, effectiveRange: nil) as? MarkdownStyler.FenceState ?? .outside
-            : .outside
-        let minimumEnd = max(NSMaxRange(paragraph), NSMaxRange(changed))
-        let scan = MarkdownStyler.scan(value, from: start, startingFence: incoming) { line, state in
-            guard NSMaxRange(line) >= minimumEnd, line.location < source.length,
-                  let oldState = storage.attribute(MarkdownStyler.fenceStateAfter, at: line.location,
-                                                   effectiveRange: nil) as? MarkdownStyler.FenceState else { return false }
-            return state == oldState
-        }
-        storage.setAttributes(MarkdownStyler.baseAttributes, range: scan.processedRange)
-        for span in scan.spans { storage.addAttributes(span.attributes, range: span.range) }
+        let processed = MarkdownStyler.restyle(storage, editedRange: changed, baseAttributes: MarkdownStyler.baseAttributes)
         let editElapsed = editStart.duration(to: .now)
         let expected = fullyStyled(value)
-        let attributes: [NSAttributedString.Key] = [
-            .font, .foregroundColor, .paragraphStyle, .strikethroughStyle,
-            MarkdownStyler.syntax, MarkdownStyler.element, MarkdownStyler.bullet,
-            MarkdownStyler.task, MarkdownStyler.taskIndent, MarkdownStyler.quote,
-            MarkdownStyler.rawParagraph, MarkdownStyler.previewParagraph,
-            MarkdownStyler.fencedCodeBlock, MarkdownStyler.inlineCode, MarkdownStyler.fenceStateAfter
-        ]
         guard storage.length == expected.length else { throw GalleryError("Incremental style changed UTF-16 length") }
         for index in 0..<storage.length {
-            for key in attributes where !sameAttribute(storage.attribute(key, at: index, effectiveRange: nil),
+            for key in MarkdownStyler.styledKeys where !sameAttribute(storage.attribute(key, at: index, effectiveRange: nil),
                                                         expected.attribute(key, at: index, effectiveRange: nil)) {
                 throw GalleryError("Incremental Markdown styling differed at UTF-16 offset \(index), attribute \(key)")
             }
         }
-        return (storage, scan.processedRange, editElapsed)
+        return (storage, processed, editElapsed)
     }
 
     let unicodeDocument = "😀 heading\n# **outside**\nplain\n```swift\nprint(\"**code**\")\n```\n# after\n"
