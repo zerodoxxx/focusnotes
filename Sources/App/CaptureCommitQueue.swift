@@ -53,6 +53,7 @@ final class CaptureCommitQueue {
     func close() { isClosed = true }
     func hasPreparedJobForChecks(_ id: UUID) -> Bool { preparedJobs[id] != nil }
     var commitTailForChecks: Task<SavedCapture, Error>? { commitTail }
+    func isPending(_ id: UUID) -> Bool { pending?.id == id }
 
     /// Every job the queue may still write, for redirecting a session rename.
     func knownJobs() async -> [CaptureJob] {
@@ -60,7 +61,8 @@ final class CaptureCommitQueue {
         var tasks = Array(preparedJobs.values) + Array(recoveryJobs.values)
         if let stagedJob { tasks.append(stagedJob.preparation) }
         for task in tasks {
-            if let job = try? await task.value { knownJobs.append(job) }
+            do { knownJobs.append(try await task.value) }
+            catch { logger.error("Capture preparation failed (\(AppErrorLog.summary(error), privacy: .public))") }
         }
         return knownJobs
     }

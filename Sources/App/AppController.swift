@@ -322,7 +322,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 enqueue { controller in
                     await controller.drainCaptures()
                     guard await controller.closePanels() else { return }
-                    await controller.waitForCommits()
+                    await controller.captures.waitForCommits()
                     guard !controller.isTerminating else { return }
                     let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                         .filter { Self.sessionPath($0.path, isIn: folder) }
@@ -334,7 +334,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             guard !NoteTitle.cleanTitle(name).isEmpty else { return }
                             controller?.enqueue(runsDuringQuit: true) { controller in
                                 _ = controller.captures.commitPending()
-                                await controller.waitForCommits()
+                                await controller.captures.waitForCommits()
                                 do {
                                     if let selected = suggestions.first(where: { "/" + $0.path == name }),
                                        Self.sessionPath(selected.path, isIn: folder) {
@@ -481,8 +481,6 @@ final class AppController: NSObject, NSMenuDelegate {
         showToast(warning)
     }
 
-    private func waitForCommits() async { await captures.waitForCommits() }
-
     /// A selection capture can send ⌘C after closing panels, and a panel shown meanwhile would
     /// take it. Queued UI calls this after its last other await, right before presenting.
     /// Returns false once quitting.
@@ -499,8 +497,11 @@ final class AppController: NSObject, NSMenuDelegate {
         await captures.drain()
     }
 
+    /// Quit waits at most this long for pending saves.
+    static let quitDrainBudget: Duration = .seconds(5)
+
     /// Keep the main actor running while acquisitions and journaled writes drain.
-    func beginTermination(timeout: Duration = .seconds(5)) -> Task<Bool, Never> {
+    func beginTermination(timeout: Duration = AppController.quitDrainBudget) -> Task<Bool, Never> {
         if let shutdownTask { return shutdownTask }
         // A failed final draft write must leave the app and its services usable for retry.
         editor?.dismiss()
@@ -560,14 +561,14 @@ final class AppController: NSObject, NSMenuDelegate {
         toast.dismiss(expire: false)
         enqueue { controller in
             guard await controller.closePanels() else { controller.settleBlockedPicker(id); return }
-            guard controller.captures.pending?.id == id else { return }
+            guard controller.captures.isPending(id) else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
-            guard await controller.waitForAcquisition(), controller.captures.pending?.id == id else { return }
+            guard await controller.waitForAcquisition(), controller.captures.isPending(id) else { return }
             // A picked suggestion names one exact note. Title routing only matches root notes, so a nested
             // or HOME note must be saved by destination, not by its title.
             controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, suggestionValue: { $0.path },
                                     onAccept: { [weak controller] text in
-                guard let controller, controller.captures.pending?.id == id else { return }
+                guard let controller, controller.captures.isPending(id) else { return }
                 guard let picked = suggestions.first(where: { $0.path == text }) else {
                     _ = controller.captures.commitPending(noteTitle: text, announce: true)
                     return
@@ -584,7 +585,7 @@ final class AppController: NSObject, NSMenuDelegate {
     /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
     /// any other capture saves to its default destination.
     private func settleUnchosenCapture(_ id: UUID, announce: Bool, retryTitle: String = "Choose where to save") {
-        guard captures.pending?.id == id else { return }
+        guard captures.isPending(id) else { return }
         if captures.needsRetryChoice, let capture = captures.pending {
             showRetryChoice(capture: capture, title: retryTitle)
         } else {
@@ -604,7 +605,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
             guard await controller.closePanels() else { controller.settleBlockedPicker(capture.id); return }
-            guard await controller.waitForAcquisition(), controller.captures.pending?.id == capture.id else { return }
+            guard await controller.waitForAcquisition(), controller.captures.isPending(capture.id) else { return }
             let suggestions = candidates.map { candidate in
                 let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
                 return Suggestion(title: candidate.title,
@@ -625,18 +626,18 @@ final class AppController: NSObject, NSMenuDelegate {
             }, onSubmit: { [weak controller] urlString in
                 guard let controller else { return }
                 controller.inputClosed()
-                guard controller.captures.pending?.id == capture.id,
+                guard controller.captures.isPending(capture.id),
                       let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
                 controller.enqueue { controller in
                     // An explicit choice saves even if the editor can't close; the save shows no panel.
                     await controller.closePanels()
-                    guard controller.captures.pending?.id == capture.id else { return }
+                    guard controller.captures.isPending(capture.id) else { return }
                     _ = controller.captures.commitPending(pick: controller.pipeline.pick(for: candidate), announce: true)
                 }
             }, onCancel: { [weak controller] in
                 guard let controller else { return }
                 controller.inputClosed()
-                guard controller.captures.pending?.id == capture.id else { return }
+                guard controller.captures.isPending(capture.id) else { return }
                 controller.showRetryChoice(capture: capture, title: "Choose where to save")
             })
         }
@@ -717,7 +718,7 @@ final class AppController: NSObject, NSMenuDelegate {
         enqueue { controller in
             await controller.drainCaptures()
             guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
+            await controller.captures.waitForCommits()
             guard !controller.isTerminating else { return }
             if let session = await controller.pipeline.currentSession() {
                 do { _ = try await controller.endSession(session) }
@@ -728,7 +729,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 controller.presentInput(placeholder: "Session name", suggestions: suggestions, onSubmit: { [weak controller] name in
                     controller?.enqueue(runsDuringQuit: true) { controller in
                         _ = controller.captures.commitPending()
-                        await controller.waitForCommits()
+                        await controller.captures.waitForCommits()
                         do { _ = try await controller.startSession(name: name) }
                         catch SessionStoreError.ambiguous(let candidates) {
                             if controller.isTerminating { controller.logger.warning("Session name was ambiguous during quit; not started") }
@@ -809,7 +810,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
             self.enqueue(runsDuringQuit: true) { controller in
                 _ = controller.captures.commitPending()
-                await controller.waitForCommits()
+                await controller.captures.waitForCommits()
                 do { _ = try await controller.resumeSession(candidate) }
                 catch { controller.report(error, title: "Couldn't resume session") }
             }
@@ -1046,7 +1047,7 @@ final class AppController: NSObject, NSMenuDelegate {
         enqueue { controller in
             await controller.drainCaptures()
             guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
+            await controller.captures.waitForCommits()
             guard !controller.isTerminating else { return }
             let destination: Destination
             do {
@@ -1079,7 +1080,7 @@ final class AppController: NSObject, NSMenuDelegate {
         enqueue { controller in
             await controller.drainCaptures()
             guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
+            await controller.captures.waitForCommits()
             guard await controller.waitForAcquisition() else { return }
             let pipeline = controller.pipeline
             if !pipeline.monitor.isRunning {
@@ -1545,7 +1546,7 @@ final class AppController: NSObject, NSMenuDelegate {
 extension AppController: CaptureQueueHost {
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async {
         let session = await pipeline.currentSession()
-        guard presentsUI, captures.pending?.id == capture.id, !isTerminating else { return }
+        guard presentsUI, captures.isPending(capture.id), !isTerminating else { return }
         if outsideSession {
             showTitlePicker(for: capture.id)
             if let previousNotice { showPreviousCaptureNotice(previousNotice) }
