@@ -53,12 +53,10 @@ public enum NotePathNameError: Error, Sendable, Equatable {
 }
 
 public enum NoteTitle {
-    /// Trims the title and collapses every run of whitespace to a single space.
     public static func cleanTitle(_ title: String) -> String {
         title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
-    /// Comparison key for matching note titles.
     public static func matchKey(_ title: String) -> String {
         cleanTitle(title)
             .folding(
@@ -68,7 +66,6 @@ public enum NoteTitle {
             .lowercased()
     }
 
-    /// Shortens a title for display, preferring to cut at the last word boundary.
     static func displayTitle(_ title: String) -> String {
         guard title.count > NotePathName.displayTitleLength else { return title }
         let end = title.index(title.startIndex, offsetBy: NotePathName.displayTitleLength)

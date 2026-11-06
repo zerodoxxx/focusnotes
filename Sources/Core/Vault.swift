@@ -530,7 +530,6 @@ public struct Vault: Sendable {
         return managed.url
     }
 
-    /// Vault-relative path of a URL inside the vault, or nil when it is outside.
     public func relativePath(of url: URL) -> String? {
         let rootComponents = root.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         let components = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents

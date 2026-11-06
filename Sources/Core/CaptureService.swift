@@ -135,7 +135,6 @@ public actor CaptureService {
         return try typedNote(capture, markdown: markdown, newNote: intent.newNote, folder: intent.folder, calendar: calendar)
     }
 
-    /// The active session's note, or nil without a session.
     public func sessionDestination() async throws -> Destination? {
         guard let active = await sessions.current() else { return nil }
         return try Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: vault)

@@ -135,7 +135,6 @@ public final class VaultWatcher: @unchecked Sendable {
         }
     }
 
-    // FSEvents is intentionally limited to the vault root.
     private var stream: FSEventStreamRef?
     private var streamGeneration = 0
     private var fallbackTimer: DispatchSourceTimer?
@@ -262,8 +261,7 @@ public final class VaultWatcher: @unchecked Sendable {
         performOnQueue { self.stopOnQueue() }
     }
 
-    /// Reloads the cached exact-path snapshot after a local registration. The
-    /// registry cache generation avoids rescanning paths on ordinary commits.
+    /// The registry cache generation avoids rescanning paths on ordinary commits.
     public func refreshExternalRoots() {
         performOnQueue {
             guard self.stream != nil else { return }
