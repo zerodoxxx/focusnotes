@@ -8,9 +8,11 @@ internal sealed class ForegroundTracker : IDisposable
 {
     private const uint EventSystemForeground = 3;
     private const uint WinEventOutOfContext = 0;
+    // Must be declared before ShellClasses: static initializers run in textual order and ShellClasses spreads it.
+    private static readonly string[] DesktopClasses = ["Progman", "WorkerW"];
     private static readonly string[] ShellClasses =
     [
-        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland", "Progman", "WorkerW"
+        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland", .. DesktopClasses
     ];
 
     private readonly WinEventCallback callback;
@@ -23,8 +25,6 @@ internal sealed class ForegroundTracker : IDisposable
         hook = SetWinEventHook(EventSystemForeground, EventSystemForeground, 0, callback, 0, 0, WinEventOutOfContext);
         if (hook == 0) { log?.Invoke("The foreground window hook could not be installed; tray Capture Selection has no target."); }
     }
-
-    private static readonly string[] DesktopClasses = ["Progman", "WorkerW"];
 
     /// Track: remember it. Keep: ignore (our own windows and the tray windows the menu opens). Clear: the user went to the desktop.
     public static Decision Decide(uint processId, uint ownProcessId, string? className)

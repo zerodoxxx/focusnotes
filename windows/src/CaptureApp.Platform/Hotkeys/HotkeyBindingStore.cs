@@ -139,7 +139,7 @@ public sealed class HotkeyBindingStore
             var shortcuts = existing as JsonObject ?? new JsonObject();
             foreach (var (action, chord) in bindings)
             {
-                shortcuts[action.ToString()] = chord.DisplayString;
+                shortcuts[HotkeyActionNames.Of(action)] = chord.DisplayString;
             }
 
             return shortcuts;
@@ -161,4 +161,10 @@ public sealed class HotkeyBindingStore
         Save(bindings);
         return availability with { Action = action };
     }
+}
+
+/// <summary>The persisted name of a built-in action in settings (shortcuts keys and disabled-shortcut entries).</summary>
+internal static class HotkeyActionNames
+{
+    internal static string Of(HotkeyAction action) => action.ToString();
 }

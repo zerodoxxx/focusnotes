@@ -11,6 +11,7 @@ public sealed record FolderShortcutBinding(Guid Id, KeyChord Shortcut, FolderSho
 public sealed class FolderShortcutStore(string path)
 {
     public const int MaximumBindings = 20;
+    private const int EnvelopeVersion = 1;
     private readonly string fullPath = Path.GetFullPath(path);
     private sealed record SavedBinding(Guid Id, string Shortcut, FolderShortcutAction Action, string Folder);
     private sealed record Envelope(int Version, SavedBinding[] Bindings);
@@ -24,7 +25,7 @@ public sealed class FolderShortcutStore(string path)
         try
         {
             var envelope = JsonSerializer.Deserialize<Envelope>(bytes);
-            if (envelope is null || envelope.Version != 1 || envelope.Bindings is null)
+            if (envelope is null || envelope.Version != EnvelopeVersion || envelope.Bindings is null)
                 throw new InvalidDataException("Unsupported or invalid folder shortcut settings. The file was left unchanged.");
             var bindings = envelope.Bindings.Select(binding => binding is null
                 ? throw new InvalidDataException("Invalid folder shortcut entry.")
@@ -41,7 +42,7 @@ public sealed class FolderShortcutStore(string path)
     public void Save(IReadOnlyList<FolderShortcutBinding> bindings)
     {
         Validate(bindings);
-        var envelope = new Envelope(1, bindings.Select(binding => new SavedBinding(binding.Id,
+        var envelope = new Envelope(EnvelopeVersion, bindings.Select(binding => new SavedBinding(binding.Id,
             binding.Shortcut.DisplayString, binding.Action, binding.Folder)).ToArray());
         var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, new JsonSerializerOptions { WriteIndented = true });
         DurableFile.Write(fullPath, bytes);
@@ -66,7 +67,7 @@ public sealed class FolderShortcutStore(string path)
                 || chord.VirtualKey is < 1 or > 255 or 0x1B or 0x10 or 0x11 or 0x12 or 0x5B or 0x5C or >= 0xA0 and <= 0xA5)
                 throw new InvalidDataException("Choose a key with Ctrl or Alt. Escape and modifier keys cannot be used.");
             if (!chords.Add(chord)) { throw new InvalidDataException("This combination is already used by another folder shortcut."); }
-            if (builtIns is not null && builtIns.Any(pair => pair.Value == chord && disabledBuiltIns?.Contains(pair.Key.ToString()) != true))
+            if (builtIns is not null && builtIns.Any(pair => pair.Value == chord && disabledBuiltIns?.Contains(HotkeyActionNames.Of(pair.Key)) != true))
                 throw new InvalidDataException("This combination is already used by a built-in shortcut.");
             ValidateFolder(binding);
         }
