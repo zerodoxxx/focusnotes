@@ -389,16 +389,9 @@ public final class VaultWatcher: @unchecked Sendable {
                                   context: "loading the external note registry", notify: true)
             replaceRegistryFileWatchAfterChange()
             return
-        } catch let error as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            reportRegistryFailure(error, fingerprint: fingerprint,
-                                  context: "loading the external note registry", notify: true)
-            replaceRegistryFileWatchAfterChange()
-            return
         } catch {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            let typedError = ExternalNoteRegistryError.unreadableRegistry
-            Self.logger.error("Unexpected error loading the external note registry: \(String(describing: error), privacy: .public)")
+            let typedError = registryError(from: error, context: "loading the external note registry")
+            let fingerprint = registryFingerprint(context: "loading the external note registry")
             reportRegistryFailure(typedError, fingerprint: fingerprint,
                                   context: "loading the external note registry", notify: true)
             replaceRegistryFileWatchAfterChange()
@@ -424,17 +417,12 @@ public final class VaultWatcher: @unchecked Sendable {
         let locations: [VaultNoteLocation]
         do {
             locations = try vault.externalNoteLocations(snapshot: snapshot)
-        } catch let error as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            _ = reportRegistryFailure(error, fingerprint: fingerprint,
-                                      context: "building the registered external-note snapshot", notify: false)
-            return (true, error, false)
         } catch {
-            Self.logger.error("Unexpected error building the external-note snapshot: \(String(describing: error), privacy: .public)")
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            _ = reportRegistryFailure(.unreadableRegistry, fingerprint: fingerprint,
+            let typedError = registryError(from: error, context: "building the external-note snapshot")
+            let fingerprint = registryFingerprint(context: "building the registered external-note snapshot")
+            _ = reportRegistryFailure(typedError, fingerprint: fingerprint,
                                       context: "building the registered external-note snapshot", notify: false)
-            return (true, .unreadableRegistry, false)
+            return (true, typedError, false)
         }
 
         registryGeneration = generation
@@ -471,14 +459,14 @@ public final class VaultWatcher: @unchecked Sendable {
                 }
                 shouldReload = true
             } catch let registryError as ExternalNoteRegistryError {
-                let after = try? vault.externalRegistryFingerprint()
+                let after = registryFingerprint(context: "loading the external note registry")
                 if before == after {
                     registryFingerprint = after ?? nil
                     throw StableRegistryFailure(registryError: registryError, fingerprint: after ?? nil)
                 }
                 shouldReload = true
             } catch {
-                let after = try? vault.externalRegistryFingerprint()
+                let after = registryFingerprint(context: "loading the external note registry")
                 if before == after { throw error }
                 shouldReload = true
             }
@@ -747,12 +735,13 @@ public final class VaultWatcher: @unchecked Sendable {
             do {
                 guard try vault.externalRegistrySnapshot() != nil else { return false }
             } catch let registryError as ExternalNoteRegistryError {
-                reportRegistryFailure(registryError, fingerprint: try? vault.externalRegistryFingerprint(),
+                let fingerprint = registryFingerprint(context: "checking registry watch availability")
+                reportRegistryFailure(registryError, fingerprint: fingerprint,
                                       context: "checking registry watch availability", notify: true)
                 return false
             } catch {
-                Self.logger.error("Unexpected error checking registry watch availability: \(String(describing: error), privacy: .private)")
-                reportRegistryFailure(.unreadableRegistry, fingerprint: nil,
+                let typedError = registryError(from: error, context: "checking registry watch availability")
+                reportRegistryFailure(typedError, fingerprint: nil,
                                       context: "checking registry watch availability", notify: true)
                 return false
             }
@@ -865,6 +854,23 @@ public final class VaultWatcher: @unchecked Sendable {
         clearExternalWatchesOnQueue()
         lastRegistryError = (fingerprint, error)
         return true
+    }
+
+    /// Callers treat an unreadable fingerprint as unknown, so a failed read is logged
+    /// here rather than discarded.
+    private func registryFingerprint(context: String) -> ExternalNoteRegistry.Fingerprint? {
+        do {
+            return try vault.externalRegistryFingerprint()
+        } catch {
+            Self.logger.error("Could not read the external note registry fingerprint while \(context, privacy: .public): \(String(describing: error), privacy: .private)")
+            return nil
+        }
+    }
+
+    private func registryError(from error: Error, context: String) -> ExternalNoteRegistryError {
+        if let typedError = error as? ExternalNoteRegistryError { return typedError }
+        Self.logger.error("Unexpected error \(context, privacy: .public): \(String(describing: error), privacy: .private)")
+        return .unreadableRegistry
     }
 
     @discardableResult
@@ -1069,7 +1075,7 @@ public final class VaultWatcher: @unchecked Sendable {
         do {
             currentFingerprint = try vault.externalRegistryFingerprint()
         } catch let registryError as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
+            let fingerprint = registryFingerprint(context: "checking its fingerprint")
             if reportRegistryFailure(registryError, fingerprint: fingerprint,
                                      context: "checking its fingerprint", notify: false) {
                 reportedError = registryError
@@ -1078,10 +1084,10 @@ public final class VaultWatcher: @unchecked Sendable {
             replaceRegistryFileWatchAfterChange()
             return
         } catch {
-            Self.logger.error("Unexpected error checking the external registry fingerprint: \(String(describing: error), privacy: .public)")
-            if reportRegistryFailure(.unreadableRegistry, fingerprint: nil,
+            let typedError = registryError(from: error, context: "checking the external registry fingerprint")
+            if reportRegistryFailure(typedError, fingerprint: nil,
                                      context: "checking its fingerprint", notify: false) {
-                reportedError = .unreadableRegistry
+                reportedError = typedError
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
@@ -1105,20 +1111,12 @@ public final class VaultWatcher: @unchecked Sendable {
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
-        } catch let registryError as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            if reportRegistryFailure(registryError, fingerprint: fingerprint,
-                                     context: "reloading after a registry change", notify: false) {
-                reportedError = registryError
-                needsFullSync = true
-            }
-            replaceRegistryFileWatchAfterChange()
         } catch {
-            Self.logger.error("Unexpected error reloading the external registry: \(String(describing: error), privacy: .public)")
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            if reportRegistryFailure(.unreadableRegistry, fingerprint: fingerprint,
+            let typedError = registryError(from: error, context: "reloading the external registry")
+            let fingerprint = registryFingerprint(context: "reloading after a registry change")
+            if reportRegistryFailure(typedError, fingerprint: fingerprint,
                                      context: "reloading after a registry change", notify: false) {
-                reportedError = .unreadableRegistry
+                reportedError = typedError
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
