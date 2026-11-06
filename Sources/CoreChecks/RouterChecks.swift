@@ -10,7 +10,7 @@ func checkRouter() throws {
     try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
     let vault = Vault(root: root, homeDirectoryURL: home)
     try vault.prepare()
-    // Foo.md has a title that differs from its file name; a filename collision still appends.
+    // A filename collision still appends.
     try checkWrite("# Something Else\n", to: root.appendingPathComponent("Foo.md"))
     try checkWrite("# Bar\n", to: root.appendingPathComponent("Bar.md"))
     let nestedDirectory = root.appendingPathComponent("Science/Math", isDirectory: true)

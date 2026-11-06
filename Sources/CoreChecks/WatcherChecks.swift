@@ -435,8 +435,7 @@ private func checkBoundedExternalWatcher() throws {
     try require(recorder.changes().count == offset,
                 "unrelated HOME activity must not force a full vault sync")
 
-    // Simulate a second process atomically adding one exact path to the
-    // registry. The registry-parent vnode must invalidate the in-memory map.
+    // The registry-parent vnode must invalidate the in-memory map.
     offset = recorder.changes().count
     try Data(
         #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Late/Folder/Late.md","Projects/Research/Science/Deep.md"]}"#.utf8

@@ -24,13 +24,11 @@ func checkNoteWriter() async throws {
         source: CaptureSource(appName: "Safari")
     )
 
-    // A missing file is created with its header, one blank line, then the block.
     let newNote = root.appendingPathComponent("New.md")
     try await writer.append(capture, to: newNote, title: "New")
     let newText = try checkRead(newNote)
     try require(newText == "# New\n\n" + block, "new file bytes were \(newText.debugDescription)")
 
-    // Existing files always end with exactly one blank line before the new block.
     let separatorCases: [(name: String, before: String, expected: String)] = [
         ("no trailing newline", "# N\n\nold", "# N\n\nold\n\n" + block),
         ("one trailing newline", "# N\n\nold\n", "# N\n\nold\n\n" + block),
@@ -45,7 +43,6 @@ func checkNoteWriter() async throws {
         try require(after == item.expected, "\(item.name): got \(after.debugDescription)")
     }
 
-    // Appending never changes the bytes already in the file.
     let keepURL = root.appendingPathComponent("Keep.md")
     try checkWrite("# Keep\n\nexisting \u{00E9} text\n", to: keepURL)
     let beforeBytes = try Data(contentsOf: keepURL)
@@ -53,7 +50,6 @@ func checkNoteWriter() async throws {
     let afterBytes = try Data(contentsOf: keepURL)
     try require(afterBytes.starts(with: beforeBytes), "append changed existing bytes")
 
-    // Independent writers race both exclusive creation and append offsets.
     let concurrentURL = root.appendingPathComponent("Concurrent.md")
     let ids = (0..<50).map { _ in UUID() }
     let writers = ids.map { _ in NoteWriter(vault: vault, calendar: calendar) }
@@ -76,7 +72,6 @@ func checkNoteWriter() async throws {
         try require(count == 1, "marker \(checkCaptureMarker(id)) appeared \(count) times")
     }
 
-    // Images are written under assets/ with a timestamped name.
     let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     let assetPath = try await writer.saveImage(png: png, createdAt: when)
     try require(
@@ -456,7 +451,7 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
     let replayed = try Data(contentsOf: url)
     try require(replayed == saved, "warm appends/replay must leave the note's bytes unchanged")
 
-    // Same inode, same size and restored mtime: ctime must still invalidate source state.
+    // ctime must still invalidate source state.
     var beforeEdit = stat()
     try require(stat(url.path, &beforeEdit) == 0, "could not read the cache invalidation fixture's timestamps")
     let edited = String(decoding: saved, as: UTF8.self).replacingOccurrences(of: "### Safari\n", with: "### Chrome\n")
@@ -499,8 +494,6 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
 }
 
 private func checkCachedSourceParsing(vault: Vault, calendar: Calendar, capture: Capture) async throws {
-    // Compare one persistent writer against fresh full-scan writers after every
-    // append, including open fences, legacy grouping and headings inside notes.
     let cached = vault.root.appendingPathComponent("Source cached.md")
     let fresh = vault.root.appendingPathComponent("Source fresh.md")
     let legacy = "# Source\n\n### 2026-10-13 14:30 · Safari\n<!-- capture:\(UUID().uuidString.lowercased()) -->\n\nlegacy\n"
@@ -611,7 +604,6 @@ private func checkSourceGrouping(vault: Vault, calendar: Calendar, capture: Capt
     try await writer.appendIfMissing(repeatCapture, to: destination)
     let retried = try checkRead(note)
     try require(retried == repeated, "heading-less retry must not duplicate a capture")
-    // Heading-like lines in fenced code must not force another heading.
     let handle = try FileHandle(forWritingTo: note)
     try handle.seekToEnd(); try handle.write(contentsOf: Data("\n```markdown\n## code heading\n```\n".utf8)); try handle.close()
     repeatCapture.id = UUID()
@@ -646,7 +638,6 @@ private func checkSourceGrouping(vault: Vault, calendar: Calendar, capture: Capt
     let recovered = NoteParser.parse(contents: damagedAfter, notePath: damaged.lastPathComponent, titleFallback: "", calendar: calendar)
     try require(damagedAfter.hasPrefix(metadataFragment) && recovered.blocks.filter { $0.captureID == capture.id && $0.body == "Hello" }.count == 1,
                 "interrupted metadata must retain its bytes and recover one complete capture")
-    // Independent writers must decide under the same lock.
     let concurrent = vault.root.appendingPathComponent("Grouped concurrent.md")
     try await withThrowingTaskGroup(of: Void.self) { group in
         for _ in 0..<20 {

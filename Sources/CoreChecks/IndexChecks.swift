@@ -172,7 +172,6 @@ func checkSearchIndex() async throws {
         let staleMtime = try await index.assetsMissingText()
         try require(staleMtime == [imagePath], "changed asset mtime alone should invalidate OCR")
         try await index.setImageText(assetPath: imagePath, text: "persistedocr", fingerprint: SearchIndex.imageFingerprint(try Data(contentsOf: vault.root.appendingPathComponent(imagePath))))
-        // Invalid paths cannot access files outside the vault.
         try await expectRejection("setImageText should reject paths outside the vault", matching: isPOSIX(.EPERM)) {
             try await index.setImageText(assetPath: "../outside.png", text: "bad", fingerprint: SearchIndex.imageFingerprint(Data()))
         }
@@ -501,7 +500,6 @@ private func checkOCRFingerprintRace() async throws {
     _ = try await checkIndexOperation("OCR race initial store \(path)") {
         try await index.setImageText(assetPath: path, text: "originalocr", fingerprint: originalFingerprint)
     }
-    // Replace during OCR, even preserving the old size and modification time.
     try replacement.write(to: url, options: .atomic)
     try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
     guard let replacementSnapshot = try vault.fileSnapshot(relativePath: path) else {

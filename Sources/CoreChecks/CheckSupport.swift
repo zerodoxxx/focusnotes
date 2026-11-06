@@ -15,7 +15,7 @@ func checkDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int
     return checkCalendar().date(from: components)!
 }
 
-/// Fresh, empty directory under the system temp folder. Callers remove it with `defer`.
+/// Callers remove it with `defer`.
 func checkMakeDirectory(_ label: String) throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("corechecks-\(label)-\(UUID().uuidString)", isDirectory: true)
@@ -23,7 +23,6 @@ func checkMakeDirectory(_ label: String) throws -> URL {
     return url
 }
 
-/// Cleanup failures are reported on stderr so a leaked temp folder is visible without failing the check.
 func checkRemoveDirectory(_ url: URL) {
     do {
         try FileManager.default.removeItem(at: url)
@@ -32,7 +31,6 @@ func checkRemoveDirectory(_ url: URL) {
     }
 }
 
-/// Writes UTF-8 text, creating parent folders as needed.
 func checkWrite(_ text: String, to url: URL) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data(text.utf8).write(to: url)
