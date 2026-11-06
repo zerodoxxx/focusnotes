@@ -123,7 +123,6 @@ final class SemanticModelsMenu {
             throw ModelInstallError.missingBundledResource("Resources")
         }
         let created = ModelInstaller(modelsDirectory: semantic.modelsDirectory, bundledResources: resources)
-        created.recoverInterruptedCommit()
         installer = created
         return created
     }

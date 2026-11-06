@@ -20,7 +20,6 @@ public actor ModelInstaller {
 
     private static let extractionHeadroom: Int64 = 300_000_000
     private static let maxNetworkRetries = 3
-    private static let extractDirectoryName = ".runtime-extract"
 
     private let modelsDirectory: URL
     private let bundledResources: URL
@@ -32,6 +31,7 @@ public actor ModelInstaller {
     /// True for the whole of `install()`, so `remove()` and a second install cannot touch the same files.
     private var installing = false
 
+    /// Heals an interrupted commit before anything reads the models directory.
     public init(modelsDirectory: URL, bundledResources: URL, manifest: ModelManifest = .current,
                 transport: any ModelTransport = URLSessionTransport(),
                 freeSpace: @escaping @Sendable (URL) throws -> Int64 = ModelInstaller.volumeFreeSpace,
@@ -42,11 +42,12 @@ public actor ModelInstaller {
         self.transport = transport
         self.freeSpace = freeSpace
         self.tarExecutable = tarExecutable
+        removeStaleBackups(in: modelsDirectory.deletingLastPathComponent())
     }
 
     /// Sibling of the models directory where downloads accumulate until they verify.
     public nonisolated var stagingDirectory: URL {
-        modelsDirectory.deletingLastPathComponent().appendingPathComponent("models.download", isDirectory: true)
+        modelsDirectory.deletingLastPathComponent().appendingPathComponent(StagingLayout.downloadDirectoryName, isDirectory: true)
     }
 
     /// True when an earlier download left files behind that the next `install` call can resume.
@@ -156,7 +157,7 @@ public actor ModelInstaller {
         if runtimeInstalled {
             stalePartNames.append("runtime.tgz")
             try? fm.removeItem(at: archive)
-            try? fm.removeItem(at: staging.appendingPathComponent(Self.extractDirectoryName, isDirectory: true))
+            try? fm.removeItem(at: staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true))
             completed += runtime.size
         } else if try hashMatches(archive, runtime.sha256) {
             stalePartNames.append("runtime.tgz")
@@ -294,10 +295,16 @@ public actor ModelInstaller {
         try checkCancellation()
         let fm = FileManager.default
         let runtime = manifest.runtime
-        let extractDirectory = staging.appendingPathComponent(Self.extractDirectoryName, isDirectory: true)
+        let extractDirectory = staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true)
         try? fm.removeItem(at: extractDirectory)
         try fm.createDirectory(at: extractDirectory, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: extractDirectory) }
+        defer {
+            do {
+                try fm.removeItem(at: extractDirectory)
+            } catch {
+                logger.notice("Could not remove \(extractDirectory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
 
         let members: [(member: String, digest: String, installedName: String)] = [
             (runtime.dylibMember, runtime.dylibSHA256, manifest.dylibName),
@@ -337,7 +344,11 @@ public actor ModelInstaller {
             }
             guard try FileDigest.sha256Hex(of: extracted) == entry.digest else {
                 try? fm.removeItem(at: extractDirectory)
-                try? fm.removeItem(at: archive)
+                do {
+                    try fm.removeItem(at: archive)
+                } catch {
+                    logger.notice("Could not remove \(archive.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
                 throw ModelInstallError.checksumMismatch(file: entry.member)
             }
             try checkCancellation()
@@ -357,7 +368,7 @@ public actor ModelInstaller {
         var backup: URL?
         if fm.fileExists(atPath: modelsDirectory.path) {
             try checkCancellation()
-            let old = parent.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+            let old = parent.appendingPathComponent(StagingLayout.newBackupName(), isDirectory: true)
             try fm.moveItem(at: modelsDirectory, to: old)
             backup = old
         }
@@ -366,18 +377,21 @@ public actor ModelInstaller {
             try fm.moveItem(at: staging, to: modelsDirectory)
         } catch {
             if let backup {
-                try? fm.moveItem(at: backup, to: modelsDirectory)
+                do {
+                    try fm.moveItem(at: backup, to: modelsDirectory)
+                } catch {
+                    logger.error("Could not restore \(backup.path, privacy: .public) after a failed commit: \(error.localizedDescription, privacy: .public)")
+                }
             }
             throw error
         }
         if let backup {
-            try? fm.removeItem(at: backup)
+            do {
+                try fm.removeItem(at: backup)
+            } catch {
+                logger.error("Could not remove \(backup.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
-    }
-
-    /// Heals an interrupted commit. Safe to call on every launch, before anything reads the models directory.
-    public nonisolated func recoverInterruptedCommit() {
-        removeStaleBackups(in: modelsDirectory.deletingLastPathComponent())
     }
 
     /// Removes `models.old-*` directories left behind by an interrupted commit. Only this installer creates them.
@@ -386,7 +400,7 @@ public actor ModelInstaller {
     private nonisolated func removeStaleBackups(in parent: URL) {
         let fm = FileManager.default
         let names = (try? fm.contentsOfDirectory(atPath: parent.path)) ?? []
-        var backups: [(url: URL, created: Date)] = names.filter { $0.hasPrefix("models.old-") }.map { name in
+        var backups: [(url: URL, created: Date)] = names.filter { StagingLayout.isBackup($0) }.map { name in
             let url = parent.appendingPathComponent(name, isDirectory: true)
             let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             return (url, created)
@@ -441,7 +455,7 @@ public actor ModelInstaller {
     }
 
     private func partURL(_ name: String) -> URL {
-        stagingDirectory.appendingPathComponent(name + ".part")
+        stagingDirectory.appendingPathComponent(StagingLayout.partName(for: name))
     }
 
     private func discardPartialFile(for name: String) {
@@ -468,6 +482,31 @@ public actor ModelInstaller {
             try fm.removeItem(at: destination)
         }
         try fm.moveItem(at: source, to: destination)
+    }
+}
+
+/// Names the installer writes beside the models directory. They are persisted on disk, so a rename
+/// would leave an interrupted download or commit that the new code can no longer find.
+private enum StagingLayout {
+    static let downloadDirectoryName = "models.download"
+    static let extractDirectoryName = ".runtime-extract"
+    static let backupPrefix = "models.old-"
+    static let partExtension = "part"
+
+    static func newBackupName() -> String {
+        backupPrefix + UUID().uuidString
+    }
+
+    static func isBackup(_ name: String) -> Bool {
+        name.hasPrefix(backupPrefix)
+    }
+
+    static func partName(for name: String) -> String {
+        name + "." + partExtension
+    }
+
+    static func isPart(_ url: URL) -> Bool {
+        url.pathExtension == partExtension
     }
 }
 
@@ -502,7 +541,7 @@ private func containsPartialFiles(in root: URL) -> Bool {
     guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
         return false
     }
-    for case let url as URL in enumerator where url.pathExtension == "part" {
+    for case let url as URL in enumerator where StagingLayout.isPart(url) {
         return true
     }
     return false

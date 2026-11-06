@@ -487,6 +487,22 @@ func caseReplaceExisting(_ root: URL, _ fixture: Fixture) async throws {
     try expectFinalLayout(root, fixture)
 }
 
+func caseRecoversInterruptedCommit(_ root: URL, _ fixture: Fixture) async throws {
+    let interrupted = root.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+    try writeFile(interrupted.appendingPathComponent("keep.txt"), Data("new".utf8))
+    _ = makeInstaller(root: root, fixture: fixture, transport: FakeTransport(served: fixture.served))
+    try expect(exists(modelsDirectory(root).appendingPathComponent("keep.txt")), "init did not restore the interrupted commit")
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("models.old-") }
+    try expect(leftovers.isEmpty, "backup directories left after init: \(leftovers)")
+
+    let stale = root.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+    try writeFile(stale.appendingPathComponent("stale.txt"), Data("stale".utf8))
+    _ = makeInstaller(root: root, fixture: fixture, transport: FakeTransport(served: fixture.served))
+    let remaining = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("models.old-") }
+    try expect(remaining.isEmpty, "backup directories left after second init: \(remaining)")
+    try expect(exists(modelsDirectory(root).appendingPathComponent("keep.txt")), "keep.txt lost on second init")
+}
+
 func caseMissingBundledLicense(_ root: URL, _ fixture: Fixture) async throws {
     let resources = root.appendingPathComponent("resources", isDirectory: true)
     try writeFile(resources.appendingPathComponent("bundled-model-license.txt"), fixture.bytes(for: "model-LICENSE.txt"))
@@ -611,6 +627,7 @@ func runAllCases(_ fixture: Fixture) async -> Bool {
         ("disk space", caseDiskSpace),
         ("reuse valid model file", caseReuseValidFile),
         ("replace existing models directory", caseReplaceExisting),
+        ("interrupted commit recovered on init", caseRecoversInterruptedCommit),
         ("missing bundled license", caseMissingBundledLicense),
         ("remove()", caseRemove),
         ("insecure URL rejected", caseInsecureURL),
