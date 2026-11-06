@@ -117,7 +117,7 @@ internal sealed class ShortcutsPanel : StackPanel
             controller.RegisterHotkeys();
             message.Text = "Shortcuts reset to the defaults.";
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (SettingsFailures.IsSaveError(error))
         {
             controller.ReportSaveFailure(error);
             message.Text = error is InvalidDataException ? error.Message : Strings.CouldNotSaveSettings;
