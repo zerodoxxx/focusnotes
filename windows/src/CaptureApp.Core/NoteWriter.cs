@@ -79,13 +79,6 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
         }
     }
 
-    public static bool SourceGroupingMatchesFullParser(string contents, string source, TimeZoneInfo zone)
-    {
-        var state = new NoteParser.SourceHeadingState();
-        state.Consume(contents, zone);
-        return state.NeedsHeading(source, zone) == NoteParser.NeedsSourceHeading(source, contents, zone);
-    }
-
     public void Append(Capture capture, string note, string title) => AppendCore(capture, new(note, title, NoteKind.Note), false, false);
     public void AppendIfMissing(Capture capture, Destination destination, byte[]? png = null, bool noteMarkerIsIdentity = false)
     {

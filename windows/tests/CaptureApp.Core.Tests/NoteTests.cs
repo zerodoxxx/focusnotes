@@ -25,10 +25,10 @@ public sealed class NoteTests
         e.Writer.AppendIfMissing(note, d);
         Assert.Equal(saved, CheckVault.Read(d.Url));
         e.Writer.AppendIfMissing(CheckVault.Capture("second capture") with { Source = source }, d);
-        Assert.Equal(1, Count(CheckVault.Read(d.Url), "### System Design\n"));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(d.Url), "### System Design\n"));
         e.Writer.AppendIfMissing(CheckVault.Capture("## Typed heading\nbody", CaptureContentKind.Note), d);
         e.Writer.AppendIfMissing(CheckVault.Capture("third capture") with { Source = source }, d);
-        Assert.Equal(2, Count(CheckVault.Read(d.Url), "### System Design\n"));
+        Assert.Equal(2, CheckVault.Count(CheckVault.Read(d.Url), "### System Design\n"));
         var block = NoteParser.Parse(CheckVault.Read(d.Url), "Inbox.md", "", CheckVault.Zone).Blocks.Single(b => b.CaptureId == id);
         Assert.Equal(BlockKind.Note, block.Kind);
         Assert.Equal(CheckVault.Now, block.CreatedAt);
@@ -193,7 +193,7 @@ public sealed class NoteTests
         Assert.Equal(prepared.Destination.Url, collision.Destination.Url);
         Assert.NotEqual(true, collision.CreatesNote);
         Assert.True(collision.NoteMarkerIsIdentity);
-        Assert.Equal(1, Count(collided, "<!-- note:" + collision.Capture.Id));
+        Assert.Equal(1, CheckVault.Count(collided, "<!-- note:" + collision.Capture.Id));
         e.Service.Save(JsonSerializer.Deserialize<PreparedCapture>(JsonSerializer.Serialize(collision))!);
         Assert.Equal(collided, CheckVault.Read(prepared.Destination.Url));
         var legacy = JsonSerializer.Deserialize<PreparedCapture>(json.Replace(",\"noteMarkerIsIdentity\":true", "", StringComparison.Ordinal))!;
@@ -222,6 +222,4 @@ public sealed class NoteTests
         var explicitTarget = new Destination(e.Vault.InboxUrl, "Inbox", NoteKind.Inbox);
         Assert.Equal(explicitTarget, e.Service.PrepareNote(original, CheckVault.Zone, explicitTarget).Destination);
     }
-
-    private static int Count(string text, string part) => text.Split(part, StringSplitOptions.None).Length - 1;
 }
