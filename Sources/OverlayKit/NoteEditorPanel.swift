@@ -893,7 +893,6 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     }
     private func layoutText() {
         let inset = OverlayTheme.quickTextInset
-        // Ends exactly at the top of the bottom band.
         let height = max(textHeight, noteSurface.bounds.height - bandsHeight)
         scroll.frame = NSRect(x: inset, y: OverlayTheme.quickTopBandHeight, width: currentWidth - inset * 2, height: height)
         textView.setFrameSize(NSSize(width: scroll.contentSize.width, height: max(textHeight, documentHeight)))

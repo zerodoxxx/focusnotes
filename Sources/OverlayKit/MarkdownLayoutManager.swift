@@ -490,7 +490,6 @@ final class MarkdownLayoutManager: NSLayoutManager {
                                       in: NSRange(location: 0, length: storage.length))
                 let glyphs = visibleGlyphs(for: code)
                 guard glyphs.length > 0 else { return }
-                // A wrapped span gets a separate rounded fill per visual line.
                 enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, fragmentGlyphs, _ in
                     let run = NSIntersectionRange(glyphs, fragmentGlyphs)
                     let bounds = self.boundingRect(forGlyphRange: run, in: container)

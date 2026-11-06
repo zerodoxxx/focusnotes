@@ -287,7 +287,6 @@ final class NoteActionMenuView: NoteCardView {
         var divider = 0
         for (index, row) in rows.enumerated() {
             if index > 0, visible[index].group != visible[index - 1].group {
-                // Separators are inset like the filter field, measured from the card's edges.
                 let inset = OverlayTheme.cardFieldInset
                 dividers[divider].frame = NSRect(x: inset, y: y + OverlayTheme.menuGroupMargin,
                                                  width: rowsContainer.bounds.width - inset * 2, height: OverlayTheme.borderWidth)

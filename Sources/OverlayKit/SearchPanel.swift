@@ -162,7 +162,6 @@ final class SearchPanelView: OverlaySurface {
                 row.icon.image = model.kind == .image ? thumbnails[rowIndex] : row.icon.image
                 row.onClick = { [weak self] in
                     self?.onSelect?(rowIndex)
-                    // Single clicks select; double clicks perform the primary action.
                     if NSApp.currentEvent?.clickCount == 2 { self?.onPrimary?(rowIndex) }
                 }
                 document.addSubview(row)
@@ -173,7 +172,6 @@ final class SearchPanelView: OverlaySurface {
         }
         if rowModels.isEmpty { listHeight = OverlayTheme.noResultsHeight }
         else {
-            // Count rows across sections; include headers only for visible sections.
             var remaining = OverlayTheme.maxResults
             listHeight = 0
             for section in renderedSections where remaining > 0 {

@@ -159,7 +159,6 @@ func noteShortcutAction(for event: NSEvent) -> NoteActionID? {
 }
 
 extension NSEvent {
-    /// Modifiers that matter for shortcuts: Caps Lock, numeric pad and function flags are ignored.
     var shortcutFlags: NSEvent.ModifierFlags {
         modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
     }

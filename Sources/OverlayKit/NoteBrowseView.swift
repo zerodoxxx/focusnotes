@@ -160,7 +160,6 @@ final class NoteBrowseView: NoteCardView {
                 recent.append(item)
             }
         }
-        // Stable pinned-first order with bounded storage and at most browseMaxRows visible rows.
         shown = Array((pinned + recent).prefix(OverlayTheme.browseMaxRows))
         let pinnedCount = shown.prefix { $0.isPinned }.count, recentCount = shown.count - pinnedCount
         rows.forEach { $0.removeFromSuperview() }
