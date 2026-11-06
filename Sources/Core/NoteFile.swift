@@ -156,7 +156,7 @@ enum NoteFile {
     private static func managedNoteMetadata(in parent: Int32, name: String) throws -> VaultFileSnapshot? {
         let descriptor = openat(parent, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         if descriptor < 0 {
-            if errno == EACCES || errno == ELOOP || errno == ENOENT || errno == ENOTDIR || errno == EPERM {
+            if isAbsentErrno(errno) {
                 return nil
             }
             throw posixError()
@@ -172,7 +172,7 @@ enum NoteFile {
 
         var current = stat()
         guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0 else {
-            if errno == EACCES || errno == ELOOP || errno == ENOENT || errno == ENOTDIR || errno == EPERM {
+            if isAbsentErrno(errno) {
                 return nil
             }
             throw posixError()
@@ -542,7 +542,7 @@ enum NoteFile {
                 names.contains { $0 != location.name && $0.caseInsensitiveCompare(newName) == .orderedSame }
             }
             guard !collides(try listManagedDirectoryNames(in: root, relativePath: directory)) else { throw POSIXError(.EEXIST) }
-            let temporaryName = ".session-\(UUID().uuidString).pending"
+            let temporaryName = sessionTemporaryName(UUID())
             let temporary = FileLocation(directories: location.directories, name: temporaryName)
             let temporaryDescriptor = openat(location.parentDescriptor, temporaryName,
                                              O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -602,8 +602,7 @@ enum NoteFile {
     static func removeSessionTemporary(in root: VaultDirectoryAnchor, relativePath: String,
                                        identities: [ManagedFileIdentity]) throws {
         let location = try openLocation(root: root, relativePath: relativePath)
-        guard location.name.hasPrefix(".session-"), location.name.hasSuffix(".pending"),
-              UUID(uuidString: String(location.name.dropFirst(9).dropLast(8))) != nil else { throw POSIXError(.EPERM) }
+        guard sessionTemporaryID(location.name) != nil else { throw POSIXError(.EPERM) }
         let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if descriptor < 0, errno == ENOENT { return }
         guard descriptor >= 0 else { throw posixError() }
@@ -980,6 +979,29 @@ enum NoteFile {
     }
 
     private static func posixError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+
+    /// Entries that vanish or become unreadable mid-scan are skipped so one stale
+    /// entry does not fail the whole listing.
+    static func isAbsentErrno(_ code: Int32) -> Bool {
+        code == EACCES || code == ELOOP || code == ENOENT || code == ENOTDIR || code == EPERM
+    }
+
+    static func isAbsent(_ error: POSIXError) -> Bool {
+        isAbsentErrno(error.code.rawValue)
+    }
+
+    static let sessionTemporaryPrefix = ".session-"
+    static let sessionTemporarySuffix = ".pending"
+
+    static func sessionTemporaryName(_ id: UUID) -> String {
+        sessionTemporaryPrefix + id.uuidString + sessionTemporarySuffix
+    }
+
+    static func sessionTemporaryID(_ name: String) -> UUID? {
+        guard name.hasPrefix(sessionTemporaryPrefix), name.hasSuffix(sessionTemporarySuffix) else { return nil }
+        let middle = name.dropFirst(sessionTemporaryPrefix.count).dropLast(sessionTemporarySuffix.count)
+        return UUID(uuidString: String(middle))
+    }
 
     /// Writes the header of an empty note this call created and holds locked. A failed write
     /// removes the note again so a retry writes the full header; otherwise a cut-off header
