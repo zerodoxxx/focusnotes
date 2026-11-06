@@ -129,6 +129,7 @@ func checkExternalNoteRegistry() async throws {
     try await checkDirectHomeWatcherFiltering(base: base, now: now, calendar: calendar)
     try await checkExternalRegistryCorruptionPreserved(base: base, now: now, calendar: calendar)
     try checkTamperedExternalRegistryPathsRejected(base: base)
+    try checkExternalRegistryGenerationRule(base: base)
     try checkExternalDirectorySymlinkRejected(base: base)
     try await checkExternalRegistrySymlinkRejected(base: base, now: now, calendar: calendar)
     print("External note registry checks passed (persistence, scoped indexing, watcher refresh, and path safety).")
@@ -428,6 +429,43 @@ private func checkExternalRegistryCorruptionPreserved(base: URL, now: Date, cale
         try require(!FileManager.default.fileExists(atPath: destination.path),
                     "a failed registry read must stop the external note write before append")
     }
+}
+
+private func checkExternalRegistryGenerationRule(base: URL) throws {
+    let directory = base.appendingPathComponent("GenerationRule", isDirectory: true)
+    let registryURL = directory.appendingPathComponent("State/external-notes.json")
+    try FileManager.default.createDirectory(at: registryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let firstPath = "Desktop/Generation/One.md"
+    let secondPath = "Desktop/Generation/Two.md"
+    let thirdPath = "Desktop/Generation/Three.md"
+
+    let first = ExternalNoteRegistry(url: registryURL)
+    let initial = try first.snapshot()
+
+    let writer = ExternalNoteRegistry(url: registryURL)
+    try writer.register(firstPath)
+    first.invalidateCache()
+    let afterOtherWriter = try first.snapshot()
+    try require(afterOtherWriter.generation != initial.generation,
+                "a reload after another registry instance changes paths should advance the generation")
+    try require(afterOtherWriter.paths.contains(firstPath),
+                "a reload after another registry instance should include the registered path")
+
+    let reloader = ExternalNoteRegistry(url: registryURL)
+    try reloader.register(secondPath)
+    let registered = try reloader.snapshot()
+    reloader.invalidateCache()
+    let reloaded = try reloader.snapshot()
+    try require(reloaded.generation == registered.generation,
+                "a reload with unchanged paths should keep the generation")
+
+    let cold = ExternalNoteRegistry(url: registryURL)
+    let coldSnapshot = try cold.snapshot()
+    try writer.register(thirdPath)
+    cold.invalidateCache()
+    let coldReloaded = try cold.snapshot()
+    try require(coldReloaded.generation != coldSnapshot.generation,
+                "a cold reload after another registry instance changes paths should advance the generation")
 }
 
 private func checkTamperedExternalRegistryPathsRejected(base: URL) throws {

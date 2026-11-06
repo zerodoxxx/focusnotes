@@ -56,10 +56,14 @@ public final class OwnedFileDescriptor: @unchecked Sendable {
 
 /// Persists only HOME-relative notes explicitly selected by the user.
 /// It intentionally does not discover or scan arbitrary files under HOME.
-final class ExternalNoteRegistry: @unchecked Sendable {
-    struct Snapshot: Sendable, Equatable {
-        let generation: UInt64
-        let paths: [String]
+@_spi(Checks)
+public final class ExternalNoteRegistry: @unchecked Sendable {
+    @_spi(Checks)
+    public struct Snapshot: Sendable, Equatable {
+        @_spi(Checks)
+        public let generation: UInt64
+        @_spi(Checks)
+        public let paths: [String]
     }
 
     struct WatchDescriptors: Sendable {
@@ -79,8 +83,11 @@ final class ExternalNoteRegistry: @unchecked Sendable {
         let changedNanoseconds: Int64
     }
 
+    private static let currentVersion = 1
+    private static let maximumRegistryBytes = 8 * 1024 * 1024
+
     private struct Store: Codable {
-        var version = 1
+        var version = ExternalNoteRegistry.currentVersion
         var paths: [String] = []
     }
 
@@ -92,7 +99,8 @@ final class ExternalNoteRegistry: @unchecked Sendable {
     private var cacheIsValid = false
     private var cacheRevision: UInt64 = 0
 
-    init(url: URL) {
+    @_spi(Checks)
+    public init(url: URL) {
         let standardized = url.standardizedFileURL
         anchor = VaultDirectoryAnchor(url: standardized.deletingLastPathComponent())
         name = standardized.lastPathComponent
@@ -106,7 +114,8 @@ final class ExternalNoteRegistry: @unchecked Sendable {
     /// Returns a validated in-memory path set. Watchers can compare generations
     /// and invalidate after an event from another process without rereading on
     /// every filesystem event.
-    func snapshot() throws -> Snapshot {
+    @_spi(Checks)
+    public func snapshot() throws -> Snapshot {
         while true {
             cacheLock.lock()
             if cacheIsValid, let cachedSnapshot {
@@ -137,7 +146,7 @@ final class ExternalNoteRegistry: @unchecked Sendable {
                 cacheLock.unlock()
                 continue
             }
-            let generation = generation(afterLoading: paths, comparedTo: previous)
+            let generation = Self.nextGeneration(after: previous, paths: paths, firstGeneration: 0)
             let loaded = Snapshot(generation: generation, paths: paths)
             cachedSnapshot = loaded
             cacheIsValid = true
@@ -147,7 +156,8 @@ final class ExternalNoteRegistry: @unchecked Sendable {
     }
 
     /// Marks the snapshot stale after an external registry-file or parent event.
-    func invalidateCache() {
+    @_spi(Checks)
+    public func invalidateCache() {
         cacheLock.lock()
         cacheIsValid = false
         cacheRevision &+= 1
@@ -224,7 +234,8 @@ final class ExternalNoteRegistry: @unchecked Sendable {
     }
 
     /// Idempotently records a validated HOME-relative Markdown path.
-    func register(_ path: String) throws {
+    @_spi(Checks)
+    public func register(_ path: String) throws {
         guard Self.isSafeRelativeMarkdownPath(path) else {
             throw CocoaError(.fileWriteInvalidFileName)
         }
@@ -270,7 +281,7 @@ final class ExternalNoteRegistry: @unchecked Sendable {
         defer { close(descriptor) }
 
         let initial = try Self.validateRegularFile(descriptor)
-        guard initial.st_size <= 8 * 1024 * 1024 else { throw POSIXError(.EFBIG) }
+        guard initial.st_size <= Int64(Self.maximumRegistryBytes) else { throw POSIXError(.EFBIG) }
         var bytes = Data()
         bytes.reserveCapacity(Int(initial.st_size))
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
@@ -282,7 +293,7 @@ final class ExternalNoteRegistry: @unchecked Sendable {
             }
             if count == 0 { break }
             bytes.append(contentsOf: chunk.prefix(count))
-            guard bytes.count <= 8 * 1024 * 1024 else { throw POSIXError(.EFBIG) }
+            guard bytes.count <= Self.maximumRegistryBytes else { throw POSIXError(.EFBIG) }
         }
         let final = try Self.validateRegularFile(descriptor)
         guard initial.st_dev == final.st_dev, initial.st_ino == final.st_ino,
@@ -292,8 +303,8 @@ final class ExternalNoteRegistry: @unchecked Sendable {
 
         do {
             let decoded = try JSONDecoder().decode(Store.self, from: bytes)
-            guard decoded.version == 1 else { throw ExternalNoteRegistryError.unsupportedVersion(decoded.version) }
-            return Store(version: 1, paths: Array(Set(decoded.paths.filter(Self.isSafeRelativeMarkdownPath))).sorted())
+            guard decoded.version == Self.currentVersion else { throw ExternalNoteRegistryError.unsupportedVersion(decoded.version) }
+            return Store(version: Self.currentVersion, paths: Array(Set(decoded.paths.filter(Self.isSafeRelativeMarkdownPath))).sorted())
         } catch is DecodingError {
             throw ExternalNoteRegistryError.malformedRegistry
         }
@@ -301,16 +312,14 @@ final class ExternalNoteRegistry: @unchecked Sendable {
 
     private func updateCache(paths: [String], addedPath: Bool) {
         cacheLock.lock()
-        let changed = cachedSnapshot.map { $0.paths != paths } ?? false
-        let generation = cachedSnapshot.map { $0.generation &+ (changed ? 1 : 0) } ?? (addedPath ? 1 : 0)
+        let generation = Self.nextGeneration(after: cachedSnapshot, paths: paths, firstGeneration: addedPath ? 1 : 0)
         cachedSnapshot = Snapshot(generation: generation, paths: paths)
         cacheIsValid = true
         cacheLock.unlock()
     }
 
-    private func generation(afterLoading paths: [String], comparedTo previous: Snapshot?) -> UInt64 {
-        guard let previous else { return 0 }
-        return previous.generation &+ (previous.paths == paths ? 0 : 1)
+    private static func nextGeneration(after previous: Snapshot?, paths: [String], firstGeneration: UInt64) -> UInt64 {
+        previous.map { $0.generation &+ ($0.paths == paths ? 0 : 1) } ?? firstGeneration
     }
 
     private func writeStore(_ store: Store, in root: Int32) throws {
@@ -371,13 +380,13 @@ final class ExternalNoteRegistry: @unchecked Sendable {
               URL(fileURLWithPath: path).pathExtension.lowercased() == "md" else { return false }
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         return !components.isEmpty && components.allSatisfy { component in
-            !component.isEmpty && component != "." && component != ".." &&
+            !component.isEmpty && !NoteTitle.isDotComponent(String(component)) &&
                 !component.contains("\\") && !component.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
         }
     }
 
     private static func isSafeFileName(_ name: String) -> Bool {
-        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
+        !name.isEmpty && !NoteTitle.isDotComponent(name) && !name.contains("/") && !name.contains("\0")
     }
 
     private static func posixError() -> POSIXError {
