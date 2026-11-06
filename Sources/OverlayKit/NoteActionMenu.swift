@@ -167,8 +167,7 @@ private final class ActionRowView: NoteCardRowView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = isSelected ? OverlayTheme.menuSelectedFill.cgColor : nil
         }
-        // The row sits menuRowInset inside the card; content insets are measured from the card's edges.
-        let inset = OverlayTheme.menuContentInset - OverlayTheme.menuRowInset
+        let inset = OverlayTheme.menuRowContentInset
         let size = OverlayTheme.menuIconSize
         icon.frame = NSRect(x: inset, y: (bounds.height - size) / 2, width: size, height: size)
         let keysWidth = keys.desiredWidth

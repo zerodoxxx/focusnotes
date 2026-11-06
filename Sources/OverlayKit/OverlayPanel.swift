@@ -7,6 +7,8 @@ import QuartzCore
 @MainActor
 public final class OverlayPanel: NSPanel, NSWindowDelegate {
     private let interactive: Bool
+    private let appearDuration: TimeInterval
+    private let disappearDuration: TimeInterval
     /// Only the note editor lets the user drag it; it then remembers where it was left.
     private let userMovable: Bool
     /// Explicitly retained across focus and Space changes; only the quick-note editor opts in.
@@ -38,6 +40,8 @@ public final class OverlayPanel: NSPanel, NSWindowDelegate {
 
     public init(interactive: Bool, size: NSSize, movable: Bool = false) {
         self.interactive = interactive
+        appearDuration = interactive ? OverlayTheme.panelAppear : OverlayTheme.toastAppear
+        disappearDuration = interactive ? OverlayTheme.panelDisappear : OverlayTheme.toastDisappear
         self.userMovable = movable
         super.init(contentRect: NSRect(origin: .zero, size: size),
                    styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
@@ -81,7 +85,7 @@ public final class OverlayPanel: NSPanel, NSWindowDelegate {
             NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(environmentChanged),
                 name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         }
-        let duration = interactive ? OverlayTheme.panelAppear : OverlayTheme.toastAppear
+        let duration = appearDuration
         let target = frame
         let moveToast = !interactive && !OverlayTheme.reduceMotion
         if !OverlayTheme.reduceMotion, interactive, let layer = content.layer {
@@ -123,7 +127,7 @@ public final class OverlayPanel: NSPanel, NSWindowDelegate {
         guard animated, !interactive else { finishDismissal(); return true }
         opacityTask?.cancel()
         resizeTask?.cancel(); resizeTask = nil
-        let duration = interactive ? OverlayTheme.panelDisappear : OverlayTheme.toastDisappear
+        let duration = disappearDuration
         let initial = alphaValue
         opacityTask = motion(duration: duration, curve: OverlayTheme.easeIn, step: { [weak self] progress in
             self?.alphaValue = initial * (1 - progress)
@@ -145,7 +149,7 @@ public final class OverlayPanel: NSPanel, NSWindowDelegate {
             guard !closing else { return }
             if let text = firstResponder as? NSTextView, text.hasMarkedText() { super.sendEvent(event); return }
             if onKey?(event) == true { return }
-            if event.keyCode == 53 { dismiss(); return }
+            if event.keyCode == OverlayKeyCode.escape { dismiss(); return }
         }
         if isSticky && [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type), !isKeyWindow { makeKey() }
         super.sendEvent(event)
