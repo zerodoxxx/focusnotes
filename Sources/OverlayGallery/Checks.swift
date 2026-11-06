@@ -2,11 +2,6 @@ import AppKit
 @_spi(Checks) import OverlayKit
 
 @MainActor
-private func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
-    guard try condition() else { throw GalleryError(message) }
-}
-
-@MainActor
 private func currentPanel() throws -> OverlayPanel {
     try autoreleasepool {
         let panels = NSApp.windows.compactMap { $0 as? OverlayPanel }.filter { $0.isVisible && $0.canBecomeKey }
@@ -34,13 +29,8 @@ private func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [], isRepeat
 }
 
 @MainActor
-private func descendants(_ view: NSView) -> [NSView] {
-    [view] + view.subviews.flatMap(descendants)
-}
-
-@MainActor
 private func checkCardButtonState(in root: NSView, open: String?, context: String) throws {
-    let buttons = descendants(root).filter { String(describing: type(of: $0)) == "ChromeButton" }
+    let buttons = chromeButtons(in: root)
     try require(buttons.count == 5, "\(context): chrome buttons missing")
     for button in buttons {
         let on = button.accessibilityLabel() == open
@@ -483,8 +473,12 @@ private func checkNoteEditorBehavior() async throws {
     let imePanel = try currentPanel()
     imePanel.appearance = NSAppearance(named: .darkAqua)
     imePanel.contentView?.viewDidChangeEffectiveAppearance()
-    try require(!ime.hasMarkedText() || (ime.textStorage?.attribute(.font, at: 2, effectiveRange: nil) as? NSFont) != OverlayTheme.editorStrongFont,
-                "Appearance callback must defer styling while text is marked")
+    if ime.hasMarkedText() {
+        try require((ime.textStorage?.attribute(.font, at: 2, effectiveRange: nil) as? NSFont) != OverlayTheme.editorStrongFont,
+                    "Appearance callback must defer styling while text is marked")
+    } else {
+        print("SKIP: appearance change ended the marked range; deferred IME styling not observable")
+    }
     try await settle()
     // AppKit can end a synthetic marked range during an appearance change.
     try require(ime.string == "**marked**" && editor.isVisible, "Appearance change must preserve IME text")
@@ -536,7 +530,8 @@ private func checkNoteEditorBehavior() async throws {
     let tallPanel = try currentPanel()
     let tallScroll = tallPanel.contentView.map(descendants)?.compactMap { $0 as? NSScrollView }.first
     try require(tallScroll?.hasVerticalScroller == true, "Long note must scroll at maximum height")
-    let fractionCap = min((tallPanel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900, 10_000) * OverlayTheme.quickMaxHeightFraction
+    guard let visibleHeight = (tallPanel.screen ?? NSScreen.main)?.visibleFrame.height else { throw GalleryError("Tall note panel has no screen") }
+    let fractionCap = visibleHeight * OverlayTheme.quickMaxHeightFraction
     // AppKit rounds window frames to whole points, so allow up to one point over the cap.
     try require(tallPanel.frame.height <= max(fractionCap, floorHeight) + 1
                 && tallPanel.frame.height <= OverlayTheme.quickMaxHeight,
@@ -575,7 +570,7 @@ private func checkNoteOverlays() async throws {
     }
     func named(_ name: String) throws -> NSView? {
         guard let root = try currentPanel().contentView else { return nil }
-        return descendants(root).first { String(describing: type(of: $0)) == name }
+        return views(named: name, in: root).first
     }
     func assertCardInside(_ message: String) throws {
         let panel = try currentPanel()
@@ -585,7 +580,7 @@ private func checkNoteOverlays() async throws {
     func chromeButtonsClearOfCard() throws -> Bool {
         guard let content = try currentPanel().contentView, let card = try named("NoteActionMenuView") ?? named("NoteBrowseView") else { return false }
         let cardFrame = content.convert(card.bounds, from: card)
-        return descendants(content).filter { String(describing: type(of: $0)) == "ChromeButton" }
+        return chromeButtons(in: content)
             .allSatisfy { !content.convert($0.bounds, from: $0).intersects(cardFrame) }
     }
     func textView() throws -> NSTextView {
@@ -645,13 +640,13 @@ private func checkNoteOverlays() async throws {
                 && abs(browseFrame.minY - (OverlayTheme.quickTopBandHeight + OverlayTheme.cardTopGap)) < 0.5, "Browse card must anchor top-right under the band")
     try require(content.bounds.insetBy(dx: -0.5, dy: -0.5).contains(browseFrame)
                 && panel.frame.height >= browseFrame.maxY + OverlayTheme.cardEdgeMargin - 0.5, "Window must fit the Browse overflow")
-    try require(descendants(content).filter { String(describing: type(of: $0)) == "BrowseRowView" }.count == items.count, "Browse rows")
+    try require(views(named: "BrowseRowView", in: content).count == items.count, "Browse rows")
     let scrolls = descendants(content).compactMap { $0 as? NSScrollView }
     try require(scrolls.contains { !$0.isHidden && $0.documentView is NSTextView }, "The note must stay visible behind the Browse card")
-    let cardHints = descendants(browseCard).filter { String(describing: type(of: $0)) == "KeycapView" }
+    let cardHints = views(named: "KeycapView", in: browseCard)
     let cardCaptions = cardHints.flatMap { descendants($0).compactMap { $0 as? NSTextField }.map(\.stringValue) }
-    let noteHints = descendants(content).filter { view in
-        String(describing: type(of: view)) == "KeycapView" && !cardHints.contains(where: { $0 === view }) && !view.isHidden
+    let noteHints = views(named: "KeycapView", in: content).filter { view in
+        !cardHints.contains(where: { $0 === view }) && !view.isHidden
     }
     let noteCaptions = noteHints.flatMap { descendants($0).compactMap { $0 as? NSTextField }.map(\.stringValue) }
     try require(cardCaptions.contains("Write here") && cardCaptions.contains("Open") && cardCaptions.contains("Reveal") && !cardCaptions.contains("Back"),
@@ -737,10 +732,9 @@ private func checkNoteOverlays() async throws {
     // Browse builds at most browseMaxRows rows, pinned first.
     let many = (0..<500).map { BrowseItem(id: "n\($0)", title: "Note \($0)", detail: "Note", symbolName: "doc.text", isPinned: $0 == 250) }
     let browse = OverlayPreview.noteEditor(overlay: .browse(items: many))
-    let rowViews = descendants(browse).filter { String(describing: type(of: $0)) == "BrowseRowView" }
+    let rowViews = views(named: "BrowseRowView", in: browse)
     try require(rowViews.count == OverlayTheme.browseMaxRows, "Browse must cap its rows (\(rowViews.count))")
-    try require((rowViews.first?.accessibilityLabel() ?? "").contains("Note 250") || rowViews.first.map({ descendants($0).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Note 250" } }) == true,
-                "The pinned item must be listed first")
+    try require(rowViews.first?.accessibilityLabel() == "Note 250, Note", "The pinned item must be listed first")
 
     // Characterization: locks in Browse refresh query/selection retention; not a regression test for a known bug.
     var refreshedItems = [
@@ -757,7 +751,7 @@ private func checkNoteOverlays() async throws {
     let refreshedPanel = try currentPanel()
     func selectedBrowseID() -> String? {
         guard let content = refreshedPanel.contentView,
-              let card = descendants(content).first(where: { String(describing: type(of: $0)) == "NoteBrowseView" }) else { return nil }
+              let card = views(named: "NoteBrowseView", in: content).first else { return nil }
         return OverlayPreview.selectedCardID(in: card)
     }
     let filter = try field(in: refreshedPanel)
@@ -774,7 +768,7 @@ private func checkNoteOverlays() async throws {
     // Refresh is synchronous; assert before yielding so a hover event cannot change the selected row.
     refreshedEditor.refreshBrowseItems()
     guard let refreshedContent = refreshedPanel.contentView else { throw GalleryError("Refreshed Browse panel has no content view") }
-    let refreshedRows = descendants(refreshedContent).filter { String(describing: type(of: $0)) == "BrowseRowView" }
+    let refreshedRows = views(named: "BrowseRowView", in: refreshedContent)
     let selectedRow = refreshedRows.firstIndex { $0.accessibilityValue() as? String == "Selected" }
     try require(try field(in: refreshedPanel).stringValue == "Trip"
                 && selectedBrowseID() == "beta" && selectedRow == 1,
@@ -802,9 +796,7 @@ private func checkCardButtonClicks() throws {
                 onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in }, onOpenAsNote: { _ in }, browseItems: { [] },
                 onBrowse: { _, _ in }, onTogglePin: { true }, onClose: {}, onError: { _ in }))
             let panel = try currentPanel()
-            guard let root = panel.contentView, let button = descendants(root).first(where: {
-                String(describing: type(of: $0)) == "ChromeButton" && $0.accessibilityLabel() == label
-            }) else { throw GalleryError("Card button missing") }
+            guard let root = panel.contentView, let button = chromeButtons(in: root).first(where: { $0.accessibilityLabel() == label }) else { throw GalleryError("Card button missing") }
             root.appearance = NSAppearance(named: appearance)
             root.layoutSubtreeIfNeeded()
             func event(_ type: NSEvent.EventType) throws -> NSEvent {
@@ -849,7 +841,7 @@ private func checkFooterFit() async throws {
             guard let content = panel.contentView else { throw GalleryError("Footer check: no content view") }
             content.layoutSubtreeIfNeeded()
             let all = descendants(content)
-            let hints = all.filter { String(describing: type(of: $0)) == "KeycapView" && !$0.isHidden }
+            let hints = views(named: "KeycapView", in: content).filter { !$0.isHidden }
             let frames = hints.map { content.convert($0.bounds, from: $0) }
             let label = all.compactMap { $0 as? NSTextField }.first { $0.stringValue == "Draft kept" }
             let context = "Footer \(title) draft=\(!draft.isEmpty)"
@@ -867,10 +859,10 @@ private func checkFooterFit() async throws {
             try key(35, modifiers: .command)
             try await settle()
             content.layoutSubtreeIfNeeded()
-            guard let card = descendants(content).first(where: { String(describing: type(of: $0)) == "NoteBrowseView" }) else {
+            guard let card = views(named: "NoteBrowseView", in: content).first else {
                 throw GalleryError("\(context): Browse card missing")
             }
-            let browseHints = descendants(card).filter { String(describing: type(of: $0)) == "KeycapView" }
+            let browseHints = views(named: "KeycapView", in: card)
             try require(browseHints.count == 3 && browseHints.allSatisfy { card.bounds.insetBy(dx: OverlayTheme.browseFooterInset, dy: 0).contains(card.convert($0.bounds, from: $0)) },
                         "\(context): three Browse hints must fit inside the card with 12pt side insets")
             try require(hints.enumerated().allSatisfy { index, hint in !hint.isHidden && content.convert(hint.bounds, from: hint) == frames[index] },
