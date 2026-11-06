@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using CaptureApp.Core;
+using CaptureApp.Platform.Interop;
 using Microsoft.Win32;
 
 namespace CaptureApp.Platform.Tray;
@@ -42,7 +43,7 @@ public sealed class TrayIcon : IDisposable
     private const uint DeviceIconApplication = 32512;
 
     private readonly Action<string> _onItemInvoked;
-    private readonly TrayNativeMethods.WindowProcedure _windowProcedure;
+    private readonly WindowNativeMethods.WindowProcedure _windowProcedure;
     private readonly string _className = $"PlatformTrayOwner.{Guid.NewGuid():N}";
     private readonly IntPtr _instance;
     private readonly IntPtr _lightIcon;
@@ -84,7 +85,7 @@ public sealed class TrayIcon : IDisposable
         _postTrackMessageForTesting = postTrackMessageForTesting;
         assets ??= TrayIconAssets.FindDefault();
         _windowProcedure = WindowProcedure;
-        _instance = TrayNativeMethods.GetModuleHandle(null);
+        _instance = WindowNativeMethods.GetModuleHandle(null);
         _taskbarCreatedMessage = TrayNativeMethods.RegisterWindowMessage("TaskbarCreated");
 
         (_lightIcon, _ownsLightIcon) = LoadIcon(assets.Light);
@@ -95,14 +96,14 @@ public sealed class TrayIcon : IDisposable
         var classNamePointer = Marshal.StringToHGlobalUni(_className);
         try
         {
-            var windowClass = new TrayNativeMethods.WindowClassEx
+            var windowClass = new WindowNativeMethods.WindowClassEx
             {
-                Size = (uint)Marshal.SizeOf<TrayNativeMethods.WindowClassEx>(),
+                Size = (uint)Marshal.SizeOf<WindowNativeMethods.WindowClassEx>(),
                 WindowProcedure = Marshal.GetFunctionPointerForDelegate(_windowProcedure),
                 Instance = _instance,
                 ClassName = classNamePointer
             };
-            if (TrayNativeMethods.RegisterClassEx(ref windowClass) == 0)
+            if (WindowNativeMethods.RegisterClassEx(ref windowClass) == 0)
             {
                 throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not register the tray owner window class.");
             }
@@ -112,11 +113,11 @@ public sealed class TrayIcon : IDisposable
             Marshal.FreeHGlobal(classNamePointer);
         }
 
-        _windowHandle = TrayNativeMethods.CreateWindowEx(0, _className, null, 0, 0, 0, 0, 0,
+        _windowHandle = WindowNativeMethods.CreateWindowEx(0, _className, null, 0, 0, 0, 0, 0,
             IntPtr.Zero, IntPtr.Zero, _instance, IntPtr.Zero);
         if (_windowHandle == IntPtr.Zero)
         {
-            TrayNativeMethods.UnregisterClass(_className, _instance);
+            WindowNativeMethods.UnregisterClass(_className, _instance);
             DestroyLoadedIcons();
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not create the hidden tray owner window.");
         }
@@ -234,14 +235,14 @@ public sealed class TrayIcon : IDisposable
     private bool PostBenignMessageAfterTrackPopup()
         => _postTrackMessageForTesting is not null
             ? _postTrackMessageForTesting(WmNull)
-            : TrayNativeMethods.PostMessage(_windowHandle, WmNull, 0, 0);
+            : WindowNativeMethods.PostMessage(_windowHandle, WmNull, 0, 0);
 
     /// <summary>Allows a host or interactive test to dismiss an open native menu.</summary>
     public void CancelCurrentMenu()
     {
         if (!_disposed)
         {
-            TrayNativeMethods.PostMessage(_windowHandle, WmCancelMode, 0, 0);
+            WindowNativeMethods.PostMessage(_windowHandle, WmCancelMode, 0, 0);
         }
     }
 
@@ -305,7 +306,7 @@ public sealed class TrayIcon : IDisposable
     {
         Size = (uint)Marshal.SizeOf<TrayNativeMethods.NotifyIconData>(),
         Window = _windowHandle,
-        Id = 1,
+        Id = TrayIconId,
         Flags = NifIcon | NifMessage | NifTip,
         CallbackMessage = WmAppNotifyIcon,
         Icon = icon,
@@ -394,14 +395,7 @@ public sealed class TrayIcon : IDisposable
         }
         catch (Exception exception)
         {
-            try
-            {
-                MenuDispatchFailed?.Invoke(exception);
-            }
-            catch
-            {
-                // User event handlers must not unwind through the unmanaged window procedure.
-            }
+            SafeWndProc.Invoke(MenuDispatchFailed, exception);
         }
     }
 
@@ -447,7 +441,7 @@ public sealed class TrayIcon : IDisposable
             return IntPtr.Zero;
         }
 
-        return TrayNativeMethods.DefWindowProc(window, message, wParam, lParam);
+        return WindowNativeMethods.DefWindowProc(window, message, wParam, lParam);
     }
 
     private bool TryDecodeCallback(
@@ -480,14 +474,7 @@ public sealed class TrayIcon : IDisposable
 
     private void DispatchMenuFailure(Exception exception)
     {
-        try
-        {
-            MenuDispatchFailed?.Invoke(exception);
-        }
-        catch
-        {
-            // User event handlers must not unwind through the unmanaged window procedure.
-        }
+        SafeWndProc.Invoke(MenuDispatchFailed, exception);
     }
 
     private void DestroyLoadedIcons()
@@ -508,11 +495,11 @@ public sealed class TrayIcon : IDisposable
         RemoveIcon();
         if (_windowHandle != IntPtr.Zero)
         {
-            TrayNativeMethods.DestroyWindow(_windowHandle);
+            WindowNativeMethods.DestroyWindow(_windowHandle);
             _windowHandle = IntPtr.Zero;
         }
 
-        TrayNativeMethods.UnregisterClass(_className, _instance);
+        WindowNativeMethods.UnregisterClass(_className, _instance);
         DestroyLoadedIcons();
         _disposed = true;
         GC.KeepAlive(_windowProcedure);
@@ -521,26 +508,6 @@ public sealed class TrayIcon : IDisposable
 
 internal static partial class TrayNativeMethods
 {
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    internal delegate IntPtr WindowProcedure(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct WindowClassEx
-    {
-        public uint Size;
-        public uint Style;
-        public IntPtr WindowProcedure;
-        public int ClassExtra;
-        public int WindowExtra;
-        public IntPtr Instance;
-        public IntPtr Icon;
-        public IntPtr Cursor;
-        public IntPtr Background;
-        public IntPtr MenuName;
-        public IntPtr ClassName;
-        public IntPtr SmallIcon;
-    }
-
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct NotifyIconData
     {
@@ -567,16 +534,6 @@ internal static partial class TrayNativeMethods
         public int X;
         public int Y;
     }
-
-    [LibraryImport("user32.dll", EntryPoint = "RegisterClassExW", SetLastError = true)]
-    internal static partial ushort RegisterClassEx(ref WindowClassEx windowClass);
-
-    [LibraryImport("user32.dll", EntryPoint = "CreateWindowExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    internal static partial IntPtr CreateWindowEx(uint extendedStyle, string className, string? windowName, uint style,
-        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
-
-    [LibraryImport("user32.dll", EntryPoint = "DefWindowProcW")]
-    internal static partial IntPtr DefWindowProc(IntPtr window, uint message, nuint wParam, nint lParam);
 
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     internal static partial nint SendMessage(IntPtr window, uint message, nuint wParam, nint lParam);
@@ -606,18 +563,6 @@ internal static partial class TrayNativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool AppendMenu(IntPtr menu, uint flags, nuint itemIdOrSubmenu, string? newItem);
 
-    [LibraryImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool PostMessage(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [LibraryImport("user32.dll", EntryPoint = "DestroyWindow", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DestroyWindow(IntPtr window);
-
-    [LibraryImport("user32.dll", EntryPoint = "UnregisterClassW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UnregisterClass(string className, IntPtr instance);
-
     [LibraryImport("user32.dll", EntryPoint = "LoadImageW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     internal static partial IntPtr LoadImage(IntPtr instance, string fileName, int imageType, int width, int height, uint loadOptions);
 
@@ -631,7 +576,4 @@ internal static partial class TrayNativeMethods
     [LibraryImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool ShellNotifyIcon(uint operation, IntPtr data);
-
-    [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial IntPtr GetModuleHandle(string? moduleName);
 }
