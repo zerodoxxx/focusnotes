@@ -53,6 +53,7 @@ struct FolderShortcutStore {
     }
 
     init(url: URL) { self.url = url }
+    init(stateDirectory: URL) { self.init(url: stateDirectory.appendingPathComponent("folder-shortcuts.json")) }
 
     func load() throws -> [FolderShortcut] {
         guard let data = try StateFile.read(url) else { return [] }

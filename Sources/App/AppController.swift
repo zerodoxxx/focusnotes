@@ -156,9 +156,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var folderShortcutsPanel: FolderShortcutsPanel?
     private var folderShortcutsMenu: NSMenu?
     private var recordingShortcut = false
-    private var folderShortcutStore: FolderShortcutStore {
-        FolderShortcutStore(url: pipeline.drafts.url.deletingLastPathComponent().appendingPathComponent("folder-shortcuts.json"))
-    }
+    private var folderShortcutStore: FolderShortcutStore { pipeline.folderShortcuts }
     private var sessionItem: NSMenuItem?
     private var accessibilityItem: NSMenuItem?
     private var screenRecordingItem: NSMenuItem?

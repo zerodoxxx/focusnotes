@@ -928,7 +928,7 @@ private func checkChangesDuringInitialScan() async throws {
     let pipeline = CapturePipeline(vault: original.vault, sessions: original.selfCheck.sessions, service: original.selfCheck.service,
                                    index: original.index, semantic: original.semantic, monitor: monitor,
                                    journal: original.selfCheck.journal, drafts: original.drafts, pins: original.pins,
-                                   calendar: original.calendar, logger: original.logger)
+                                   folderShortcuts: original.folderShortcuts, calendar: original.calendar, logger: original.logger)
     let controller = AppController(pipeline: pipeline, presentsUI: false)
     let initialSync = Task { await controller.start() }
     let initialDeadline = ContinuousClock.now.advanced(by: .seconds(3))

@@ -40,6 +40,7 @@ struct CapturePipeline: Sendable {
     private let journal: CaptureJournal
     let drafts: NoteDraftStore
     let pins: NotePinStore
+    let folderShortcuts: FolderShortcutStore
     let calendar: Calendar
     let logger: Logger
     private let renames: SessionRenameTransaction
@@ -56,8 +57,8 @@ struct CapturePipeline: Sendable {
 
     init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
          semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
-         drafts: NoteDraftStore, pins: NotePinStore, calendar: Calendar, logger: Logger,
-         noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
+         drafts: NoteDraftStore, pins: NotePinStore, folderShortcuts: FolderShortcutStore,
+         calendar: Calendar, logger: Logger, noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
         self.vault = vault
         self.sessions = sessions
         self.service = service
@@ -67,6 +68,7 @@ struct CapturePipeline: Sendable {
         self.journal = journal
         self.drafts = drafts
         self.pins = pins
+        self.folderShortcuts = folderShortcuts
         self.calendar = calendar
         self.logger = logger
         self.noteIDForPin = noteIDForPin
@@ -101,6 +103,7 @@ struct CapturePipeline: Sendable {
             journal: CaptureJournal(stateDirectory: stateDirectory),
             drafts: NoteDraftStore(stateDirectory: stateDirectory),
             pins: NotePinStore(stateDirectory: stateDirectory),
+            folderShortcuts: FolderShortcutStore(stateDirectory: stateDirectory),
             calendar: calendar, logger: logger
         )
         try await pipeline.renames.recover(allowFileRename: true)

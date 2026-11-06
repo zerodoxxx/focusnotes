@@ -721,7 +721,8 @@ extension AppController {
             stateDirectory: resolveBase.appendingPathComponent("State"), calendar: pipeline.calendar)
         let resolvePipeline = CapturePipeline(vault: opened.vault, sessions: opened.selfCheck.sessions, service: opened.selfCheck.service,
             index: opened.index, semantic: opened.semantic, monitor: opened.monitor, journal: opened.selfCheck.journal,
-            drafts: opened.drafts, pins: opened.pins, calendar: opened.calendar, logger: opened.logger,
+            drafts: opened.drafts, pins: opened.pins, folderShortcuts: opened.folderShortcuts,
+            calendar: opened.calendar, logger: opened.logger,
             noteIDForPin: { _ in throw CocoaError(.fileReadInvalidFileName) })
         var resolveToasts: [Toast] = []
         let resolveController = AppController(pipeline: resolvePipeline, presentsUI: false, onToast: { resolveToasts.append($0) })
