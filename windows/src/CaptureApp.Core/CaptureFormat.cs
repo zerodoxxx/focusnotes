@@ -7,16 +7,24 @@ public static class CaptureFormat
 {
     public const string MarkerPrefix = "<!-- capture:";
     public const string MarkerSuffix = " -->";
+    public const int CaptureIdLength = 36;
+    public const string SubheadingMarkerPrefix = "<!-- subheading:";
+    public const string SourceLinkPrefix = "[Source](<";
+    public const string ImageLinkPrefix = "![](";
+    public const string IsoStampPattern = "yyyy-MM-dd'T'HH:mm:ss";
+    public static string CaptureMarker(Guid id) => $"{MarkerPrefix}{id:D}{MarkerSuffix}";
+    public static string MarkerKeyword(CaptureContentKind kind) => kind == CaptureContentKind.Note ? "note:" : kind == CaptureContentKind.Subheading ? "subheading:" : "capture:";
+    public static bool IsHeadingKind(CaptureContentKind kind) => kind is CaptureContentKind.Note or CaptureContentKind.Subheading;
     public static string NoteHeader(string title) => $"# {title}\n";
     public static string Block(Capture capture, string noteRelativeDir, TimeZoneInfo timeZone, bool includeSourceHeading = true, string? assetPathPrefix = null)
     {
         var id = capture.Id.ToString("D");
         if (capture.Content.Kind == CaptureContentKind.Subheading)
         {
-            return $"## {CleanSubheading(capture.Content.Value)}\n<!-- subheading:{id} -->\n";
+            return $"## {CleanSubheading(capture.Content.Value)}\n{SubheadingMarkerPrefix}{id}{MarkerSuffix}\n";
         }
 
-        var stamp = LocalStamp(capture.CreatedAt, "yyyy-MM-dd'T'HH:mm:ss", timeZone);
+        var stamp = LocalStamp(capture.CreatedAt, IsoStampPattern, timeZone);
         if (capture.Content.Kind == CaptureContentKind.Note)
         {
             return $"<!-- note:{id} at={stamp} -->\n\n{NoteBody(capture.Content.Value)}\n";
@@ -138,7 +146,7 @@ public static class CaptureFormat
             .Replace("(", "%28", StringComparison.Ordinal)
             .Replace(")", "%29", StringComparison.Ordinal);
         if (!Uri.TryCreate(normalized, UriKind.Absolute, out var parsed) || parsed.Scheme != scheme || string.IsNullOrEmpty(parsed.Host)) return null;
-        return $"[Source](<{normalized}>)";
+        return $"{SourceLinkPrefix}{normalized}>)";
     }
 
     public static string SourceHeading(CaptureSource source)
@@ -189,7 +197,7 @@ public static class CaptureFormat
     {
         var local = TimeZoneInfo.ConvertTime(date, timeZone);
         var result = local.ToString(pattern, CultureInfo.InvariantCulture);
-        if (pattern == "yyyy-MM-dd'T'HH:mm:ss")
+        if (pattern == IsoStampPattern)
         {
             result += local.Offset == TimeSpan.Zero ? "Z" : local.ToString("zzz", CultureInfo.InvariantCulture);
         }
@@ -201,7 +209,7 @@ public static class CaptureFormat
     private static string ImageBody(string asset, string directory, string? prefix)
     {
         var path = prefix is null ? string.Concat(Enumerable.Repeat("../", directory.Split('/', StringSplitOptions.RemoveEmptyEntries).Length)) + asset : string.Join('/', prefix.Split('/', StringSplitOptions.RemoveEmptyEntries).Concat(asset.Split('/', StringSplitOptions.RemoveEmptyEntries)));
-        return "![](" + string.Join('/', path.Split('/').Select(Uri.EscapeDataString)) + ")";
+        return ImageLinkPrefix + string.Join('/', path.Split('/').Select(Uri.EscapeDataString)) + ")";
     }
 
     private static string TextBody(string text)
@@ -230,7 +238,7 @@ public static class CaptureFormat
             fence = fence,
             length = length
         };
-        public bool IsVisible(string line)
+        public bool Advance(string line)
         {
             var indentation = line.TakeWhile(c => c == ' ').Count();
             var text = line[Math.Min(indentation, 3)..];
@@ -259,12 +267,14 @@ public static class CaptureFormat
 
             return length == 0;
         }
+
+        public bool Peek(string line) => Copy().Advance(line);
     }
 
     public static IReadOnlyList<int> UnfencedLines(IReadOnlyList<string> lines)
     {
         var fence = new FenceState();
-        return Enumerable.Range(0, lines.Count).Where(i => fence.IsVisible(lines[i])).ToArray();
+        return Enumerable.Range(0, lines.Count).Where(i => fence.Advance(lines[i])).ToArray();
     }
 
     public static (int Level, string Text)? AtxHeading(string line)

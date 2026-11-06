@@ -22,9 +22,9 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
         {
             foreach (var prefix in new[]
             {
-                "<!-- capture:",
+                CaptureFormat.MarkerPrefix,
                 "<!-- note:",
-                "<!-- subheading:"
+                CaptureFormat.SubheadingMarkerPrefix
             }
 
             )
@@ -40,10 +40,10 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     }
 
                     found += start;
-                    if (found + needle.Length + 36 <= data.Length)
+                    if (found + needle.Length + CaptureFormat.CaptureIdLength <= data.Length)
                     {
-                        var identity = Encoding.UTF8.GetString(data, found, needle.Length + 36);
-                        if (Guid.TryParseExact(identity[^36..], "D", out _))
+                        var identity = Encoding.UTF8.GetString(data, found, needle.Length + CaptureFormat.CaptureIdLength);
+                        if (Guid.TryParseExact(identity[^CaptureFormat.CaptureIdLength..], "D", out _))
                         {
                             if (!Markers.TryGetValue(identity, out var offsets))
                             {
@@ -120,12 +120,12 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             var block = CaptureFormat.Block(capture, directory, timeZone, false, prefix);
             var header = CaptureFormat.NoteHeader(destination.Title) + "\n";
             var kind = capture.Content.Kind;
-            var identity = "<!-- " + (kind == CaptureContentKind.Note ? "note:" : kind == CaptureContentKind.Subheading ? "subheading:" : "capture:") + capture.Id.ToString("D");
+            var identity = "<!-- " + CaptureFormat.MarkerKeyword(kind) + capture.Id.ToString("D");
             var savedMarker = replay && noteIdentity && kind == CaptureContentKind.Note ? block.Split('\n')[0] : null;
-            var heading = kind is CaptureContentKind.Note or CaptureContentKind.Subheading ? null : CaptureFormat.SourceHeading(capture.Source);
-            var equivalents = kind is CaptureContentKind.Note or CaptureContentKind.Subheading ? Array.Empty<string>() : new[]
+            var heading = CaptureFormat.IsHeadingKind(kind) ? null : CaptureFormat.SourceHeading(capture.Source);
+            var equivalents = CaptureFormat.IsHeadingKind(kind) ? Array.Empty<string>() : new[]
             {
-                $"<!-- capture:{capture.Id:D} -->" + block[block.IndexOf('\n')..]
+                CaptureFormat.CaptureMarker(capture.Id) + block[block.IndexOf('\n')..]
             };
             lock (NoteFile.Gate(target))
             {
