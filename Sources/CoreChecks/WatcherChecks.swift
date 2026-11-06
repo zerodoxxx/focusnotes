@@ -126,6 +126,7 @@ func checkVaultWatcher() throws {
 
     try checkBoundedExternalWatcher()
     try checkVaultWatcherUnavailableRetry()
+    try checkVaultWatcherIgnoresOwnerLockFiles()
     try checkExternalWatcherDescriptorCapAndPolling()
     try checkExternalWatcherParentCap()
     print("Vault watcher checks passed.")
@@ -155,6 +156,27 @@ private func checkVaultWatcherUnavailableRetry() throws {
                 "an explicit start retry should create the vault stream")
     try require(!watcher.reportedWatchIssuesForChecks.contains("vault-stream-unavailable"),
                 "a successful explicit retry should clear the stream issue")
+}
+
+private func checkVaultWatcherIgnoresOwnerLockFiles() throws {
+    let root = try checkMakeDirectory("vault-watcher-owner-lock")
+    defer { checkRemoveDirectory(root) }
+    let vault = Vault(root: root)
+    try vault.prepare()
+    let recorder = VaultChangeRecorder()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
+    defer { watcher.stop() }
+    watcher.start()
+    try require(watcher.isRunning, "VaultWatcher should start for the owner lock file check")
+
+    try checkWrite("lock", to: root.appendingPathComponent("~$lock.md"))
+    try checkWrite("lock", to: root.appendingPathComponent("Folder/~$lock.md"))
+    try checkWrite("# Sentinel\n", to: root.appendingPathComponent("sentinel.md"))
+    let sentinelChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains("sentinel.md") }
+    try require(sentinelChange != nil, "VaultWatcher did not report sentinel.md within 3 seconds")
+    try require(recorder.changes().allSatisfy { change in
+        !change.notesChanged.union(change.assetsChanged).contains { $0.split(separator: "/").last?.hasPrefix("~$") == true }
+    }, "an Office or editor owner lock file must never be reported as a change")
 }
 
 private func checkExternalWatcherDescriptorCapAndPolling() throws {
