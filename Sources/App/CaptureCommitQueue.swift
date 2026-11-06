@@ -322,9 +322,7 @@ final class CaptureCommitQueue {
         // capture, never its title or destination routing.
         for (id, preparation) in preparedJobs {
             do {
-                let job = try await preparation.value
-                try await pipeline.stage(job)
-                _ = try await pipeline.commit(job) { [weak self] saved, pinFailed in
+                _ = try await Self.stageAndCommit(try await preparation.value, pipeline: pipeline) { [weak self] saved, pinFailed in
                     self?.host?.noteSaved(saved, pinFailed: pinFailed)
                 }
                 preparedJobs.removeValue(forKey: id)
@@ -357,13 +355,20 @@ final class CaptureCommitQueue {
         let task = Task.detached(priority: .userInitiated) {
             let job = try await preparation.value
             for journal in journals { _ = try? await journal.value }
-            try await pipeline.stage(job)
-            _ = try? await previous?.value
-            return try await pipeline.commit(job, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
+            return try await Self.stageAndCommit(job, pipeline: pipeline, after: previous, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
         }
         commitTail = task
         commitGeneration += 1
         return (task, commitGeneration)
+    }
+
+    /// Shared by the commit chain and the quit retry: journal, wait for earlier writes, then save.
+    private nonisolated static func stageAndCommit(_ job: CaptureJob, pipeline: CapturePipeline,
+                                                   after previous: Task<SavedCapture, Error>? = nil, pinOnSave: Bool? = nil,
+                                                   onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
+        try await pipeline.stage(job)
+        _ = try? await previous?.value
+        return try await pipeline.commit(job, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
     }
 
     private func releaseCommitTail(_ generation: Int) {

@@ -106,7 +106,7 @@ struct CapturePipeline: Sendable {
             folderShortcuts: FolderShortcutStore(stateDirectory: stateDirectory),
             calendar: calendar, logger: logger
         )
-        try await pipeline.renames.recover(allowFileRename: true)
+        try await pipeline.recoverPendingRename(allowFileRename: true)
         try await pipeline.journal.discardPreviousProcessRedirects()
         return pipeline
     }
@@ -136,7 +136,12 @@ struct CapturePipeline: Sendable {
     }
 
     func recoverSessionIdentity() async throws {
-        try await renames.recover(allowFileRename: false)
+        try await recoverPendingRename(allowFileRename: false)
+    }
+
+    /// Only startup may rename files; `open` alone then discards earlier-process redirects.
+    private func recoverPendingRename(allowFileRename: Bool) async throws {
+        try await renames.recover(allowFileRename: allowFileRename)
     }
 
     func currentSession() async -> Session? { await sessions.current() }
@@ -192,7 +197,7 @@ struct CapturePipeline: Sendable {
 
     func commit(_ originalJob: CaptureJob, pinOnSave: Bool? = nil,
                 onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
-        try await renames.recover(allowFileRename: false)
+        try await recoverPendingRename(allowFileRename: false)
         let job = try await journal.redirected(originalJob)
         let saved = try await service.save(job.prepared, png: job.png)
         monitor.refreshExternalRoots()
@@ -333,7 +338,6 @@ struct CapturePipeline: Sendable {
     @concurrent
     func region(png: Data, context: FrontmostContext, id: UUID = UUID(), createdAt: Date = Date(),
                 recognize: @escaping @Sendable (Data) async throws -> OCRResult = { try await OCR.recognize(pngData: $0) }) async -> PendingCapture {
-        let race = OCRBudgetRace()
         let recognition = Task.detached(priority: .userInitiated) { () -> OCRResult? in
             do { return try await recognize(png) }
             catch {
@@ -341,14 +345,8 @@ struct CapturePipeline: Sendable {
                 return nil
             }
         }
-        Task { await race.resolve(.finished(await recognition.value)) }
-        let timer = Task {
-            do { try await Task.sleep(for: .milliseconds(1500)); await race.resolve(.expired) }
-            catch {} // An on-time result cancels the one-shot deadline.
-        }
-        let outcome = await race.wait()
-        timer.cancel()
-        guard case .finished(let recognized) = outcome else {
+        // Returns at the deadline without waiting for Vision to stop.
+        guard let recognized = await withDeadline(.now + .milliseconds(1500), { await recognition.value }) else {
             return PendingCapture(id: id, createdAt: createdAt, trigger: .region, content: .image(png: png, ocr: nil),
                                   source: Self.source(context), subtitle: "Image", deferredOCR: recognition)
         }
@@ -376,22 +374,5 @@ struct CapturePipeline: Sendable {
     static func firstLine(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         return line.count > 100 ? String(line.prefix(99)) + "…" : line
-    }
-}
-
-/// An unstructured race returns at the deadline without waiting for Vision to stop.
-private actor OCRBudgetRace {
-    enum Outcome: Sendable { case finished(OCRResult?), expired }
-    private var outcome: Outcome?
-    private var continuation: CheckedContinuation<Outcome, Never>?
-    func resolve(_ value: Outcome) {
-        guard outcome == nil else { return }
-        outcome = value
-        continuation?.resume(returning: value)
-        continuation = nil
-    }
-    func wait() async -> Outcome {
-        if let outcome { return outcome }
-        return await withCheckedContinuation { continuation = $0 }
     }
 }
