@@ -1,4 +1,25 @@
 import AppKit
+@_spi(Checks) import OverlayKit
+
+struct GalleryError: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+}
+
+@MainActor
+func currentPanel() throws -> OverlayPanel {
+    try autoreleasepool {
+        let panels = NSApp.windows.compactMap { $0 as? OverlayPanel }.filter { $0.isVisible && $0.canBecomeKey }
+        // Sticky note panels may remain visible after losing key status. Synthetic input and
+        // assertions must follow the active panel, not NSApp.windows enumeration order.
+        let panel = panels.first(where: \.isKeyWindow)
+            ?? panels.max(by: { $0.windowNumber < $1.windowNumber })
+        guard let panel else {
+            throw GalleryError("Interactive panel was not visible")
+        }
+        return panel
+    }
+}
 
 @MainActor
 func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
