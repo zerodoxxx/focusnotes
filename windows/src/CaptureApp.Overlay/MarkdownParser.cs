@@ -47,6 +47,14 @@ internal static partial class MarkdownParser
     [GeneratedRegex(@"^([ \t]*)([-*+]) \[\]$")] internal static partial Regex TaskAutocorrect();
     [GeneratedRegex(@"^([ \t]*)([-*+] )\[[ xX]\] ")] internal static partial Regex TaskMarkerLine();
 
+    internal static int MaxHeadingLevel => Tokens.EditorHeadingSizes.Length;
+    internal const string EmptyTaskMarker = "[ ] ";
+    /// <summary>Offset of the check character from the list bullet's start, the "- [" of "- [ ] ".</summary>
+    internal const int TaskCheckOffset = 3;
+    internal const string FallbackFontFamily = "Segoe UI";
+
+    internal static double HeadingSize(int level) => Tokens.EditorHeadingSizes[Math.Min(level, MaxHeadingLevel) - 1];
+
     /// <summary>The fence state after <paramref name="line"/> and whether the line is itself a fence delimiter.</summary>
     internal static FenceState Advance(string line, FenceState fence, out bool fenceLine)
     {
@@ -61,6 +69,7 @@ internal static partial class MarkdownParser
         {
             if (first == fence.Character && run >= fence.Length && rest.Trim(' ', '\t').Length == 0) { fence = FenceState.Outside; fenceLine = true; }
         }
+        // Mirrors CaptureApp.Core CaptureFormat fence Advance; Overlay doesn't reference Core, keep both in sync.
         else if (run >= 3 && (first != '`' || !rest.Contains('`'))) { fence = new FenceState(first, run); fenceLine = true; }
         return fence;
     }
@@ -79,7 +88,7 @@ internal static partial class MarkdownParser
         var size = Tokens.EditorFontSize;
         if (HeadingPattern().Match(line) is { Success: true } heading)
         {
-            size = Tokens.EditorHeadingSizes[Math.Min(heading.Length - 1, 4) - 1];
+            size = HeadingSize(heading.Length - 1);
             styles.Add(new MarkdownStyle(0, line.Length, "TextPrimary", Bold: true, Size: size, Display: size > Tokens.EditorHeadingSizes[2]));
             styles.Add(new MarkdownStyle(0, heading.Length, "Tertiary"));
             model.Syntax.Add(new LineRange(0, heading.Length));

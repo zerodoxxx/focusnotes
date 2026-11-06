@@ -150,7 +150,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     {
         var doc = Inner.Document; var widest = Tokens.Zero;
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var family = (FontFamily)(TryFindResource("Font.UI") ?? new FontFamily("Segoe UI"));
+        var family = (FontFamily)(TryFindResource("Font.UI") ?? new FontFamily(MarkdownParser.FallbackFontFamily));
         var display = (FontFamily)(TryFindResource("Font.Display") ?? family);
         var count = Math.Min(doc.LineCount, Tokens.EditorMeasuredLines);
         for (var i = 1; i <= count; i++)
@@ -160,7 +160,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
             var text = doc.GetText(line);
             var size = Tokens.EditorFontSize; var face = family;
             var hashes = text.TakeWhile(c => c == '#').Count();
-            if (hashes > 0 && hashes < text.Length && text[hashes] == ' ') { size = Tokens.EditorHeadingSizes[Math.Min(hashes, 4) - 1]; face = size > Tokens.EditorHeadingSizes[2] ? display : family; }
+            if (hashes > 0 && hashes < text.Length && text[hashes] == ' ') { size = MarkdownParser.HeadingSize(hashes); face = size > Tokens.EditorHeadingSizes[2] ? display : family; }
             var formatted = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
                 new Typeface(face, FontStyles.Normal, size == Tokens.EditorFontSize ? FontWeights.Normal : FontWeights.SemiBold, FontStretches.Normal), size, Brushes.Black, dpi);
             widest = Math.Max(widest, Math.Ceiling(formatted.WidthIncludingTrailingWhitespace));
@@ -179,7 +179,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         }
         return brush;
     }
-    private FontFamily Family(string key) => TryFindResource(key) as FontFamily ?? new FontFamily("Segoe UI");
+    private FontFamily Family(string key) => TryFindResource(key) as FontFamily ?? new FontFamily(MarkdownParser.FallbackFontFamily);
     internal void Apply(VisualLineElementTextRunProperties properties, MarkdownStyle style)
     {
         if (style.Color is { } color) properties.SetForegroundBrush(Resolve(color));
@@ -253,7 +253,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
                 ReplacementKind.Hidden => new HiddenElement(item.Length),
                 ReplacementKind.Bullet => new InlineObjectElement(item.Length, BulletCell()),
                 ReplacementKind.Quote => new InlineObjectElement(item.Length, new Canvas { Width = Tokens.EditorQuoteIndent, Height = 1 }),
-                _ => new InlineObjectElement(item.Length, new CheckboxVisual(this, line, item.Start + 3, ModelFor(line).TaskChecked))
+                _ => new InlineObjectElement(item.Length, new CheckboxVisual(this, line, item.Start + MarkdownParser.TaskCheckOffset, ModelFor(line).TaskChecked))
             };
         }
         return null;
@@ -454,7 +454,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         var doc = Inner.Document; var caret = Inner.CaretOffset; var line = doc.GetLineByOffset(caret);
         if (!MarkdownParser.TaskAutocorrect().IsMatch(doc.GetText(line.Offset, caret - line.Offset)) || FenceBefore(line.LineNumber).IsOpen) return;
         doc.UndoStack.StartUndoGroup();
-        try { Replace(caret - 2, 2, "[ ] "); } finally { doc.UndoStack.EndUndoGroup(); }
+        try { Replace(caret - 2, 2, MarkdownParser.EmptyTaskMarker); } finally { doc.UndoStack.EndUndoGroup(); }
         e.Handled = true;
     }
     private void OnPreviewExecuted(object sender, ExecutedRoutedEventArgs e)
@@ -480,7 +480,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         if (MarkdownParser.TaskMarkerLine().Match(doc.GetText(line)) is not { Success: true } match || caret != line.Offset + match.Length) return false;
         // Delete "[ ] " and keep the list bullet.
         var start = line.Offset + match.Groups[1].Length + match.Groups[2].Length;
-        Replace(start, 4, "");
+        Replace(start, MarkdownParser.EmptyTaskMarker.Length, "");
         return true;
     }
     private void InsertLineBreak()
@@ -492,7 +492,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         if (rest.Value.Trim(' ', '\t').Length == 0) { Replace(line.Offset, rest.Index, ""); return; } // An empty item exits the list.
         string next;
         if (match.Groups[3].Success && int.TryParse(match.Groups[3].Value, out var number) && number < int.MaxValue) next = (number + 1).ToString(CultureInfo.InvariantCulture) + ". ";
-        else if (marker.Contains('[')) next = marker[..2] + "[ ] ";
+        else if (marker.Contains('[')) next = marker[..2] + MarkdownParser.EmptyTaskMarker;
         else next = marker;
         Insert("\n" + indent + next);
     }

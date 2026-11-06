@@ -2,6 +2,8 @@ namespace CaptureApp.Overlay;
 
 public static class Icons
 {
+    public const string Default = "doc.text";
+
     // SF Symbol                              Segoe Fluent / MDL2 glyph
     // magnifyingglass                        E721 Search
     // text.alignleft                         E8E4 AlignLeft
@@ -24,7 +26,7 @@ public static class Icons
     // arrow.triangle.2.circlepath             E72C Refresh (loading)
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["magnifyingglass"] = "\uE721", ["text.alignleft"] = "\uE8E4", ["doc.text"] = "\uE8A5",
+        ["magnifyingglass"] = "\uE721", ["text.alignleft"] = "\uE8E4", [Default] = "\uE8A5",
         ["checkmark.circle.fill"] = "\uE73E", ["exclamationmark.triangle.fill"] = "\uE7BA",
         ["record.circle"] = "\uE7C8", ["doc.on.doc.fill"] = "\uE8C8", ["xmark"] = "\uE711",
         ["arrow.up.left.and.arrow.down.right"] = "\uE740", ["rectangle.on.rectangle.angled"] = "\uE8FD",
@@ -33,5 +35,5 @@ public static class Icons
         ["folder"] = "\uE8B7", ["arrow.up.right.square"] = "\uE8A7", ["photo"] = "\uEB9F",
         ["arrow.triangle.2.circlepath"] = "\uE72C"
     };
-    public static string Glyph(string symbol) => Map.TryGetValue(symbol, out var glyph) ? glyph : Map["doc.text"];
+    public static string Glyph(string symbol) => Map.TryGetValue(symbol, out var glyph) ? glyph : Map[Default];
 }
