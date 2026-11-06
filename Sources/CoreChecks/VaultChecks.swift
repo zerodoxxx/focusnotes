@@ -134,15 +134,19 @@ private func checkNoteNameResolution() throws {
                 "missing paths should reuse existing folder spelling and preserve new segments")
     try require(!FileManager.default.fileExists(atPath: math.appendingPathComponent("physics").path),
                 "resolving a missing note must not create its folders")
-    try require((try? vault.resolveNoteName("Assets/hidden-note")) == nil,
-                "managed asset folders must not accept note destinations")
+    try expectRejection("managed asset folders must not accept note destinations",
+                        matching: { ($0 as? NotePathNameError) == .invalidComponent }) {
+        try vault.resolveNoteName("Assets/hidden-note")
+    }
 
     let outside = root.appendingPathComponent("linked-note-target", isDirectory: true)
     try checkWrite("# External\n", to: outside.appendingPathComponent("Note.md"))
     let linked = root.appendingPathComponent("Linked", isDirectory: true)
     try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: outside)
-    try require((try? vault.resolveNoteName("linked/note")) == nil,
-                "case-insensitive folder matching must reject symbolic-link ancestors")
+    try expectRejection("case-insensitive folder matching must reject symbolic-link ancestors",
+                        matching: { ($0 as? CocoaError)?.code == .fileWriteInvalidFileName }) {
+        try vault.resolveNoteName("linked/note")
+    }
 
     let homeName = "Codex Issue 8 \(UUID().uuidString)"
     let homeLocation = try vault.resolveNoteName("/\(homeName)/Nested/Theory")
@@ -197,6 +201,8 @@ private func checkUnsafeNoteListing() throws {
 private final class AtomicSaver: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
+    private var renameCount = 0
+    private var failure: String?
     private let group = DispatchGroup()
 
     init(url: URL, contents: String) {
@@ -206,12 +212,32 @@ private final class AtomicSaver: @unchecked Sendable {
         Thread.detachNewThread { [self] in
             defer { group.leave() }
             while !isStopped {
-                guard (try? data.write(to: temporary)) != nil, rename(temporary.path, url.path) == 0 else { return }
+                do {
+                    try data.write(to: temporary)
+                } catch {
+                    record(failure: "could not write \(temporary.lastPathComponent): \(error)")
+                    return
+                }
+                guard rename(temporary.path, url.path) == 0 else {
+                    record(failure: "could not rename \(temporary.lastPathComponent) over \(url.lastPathComponent): errno \(errno)")
+                    return
+                }
+                lock.withLock { renameCount += 1 }
             }
         }
     }
 
     private var isStopped: Bool { lock.withLock { stopped } }
+
+    /// Keeps the first failure only; later ones are consequences of it.
+    private func record(failure message: String) {
+        lock.withLock {
+            if failure == nil { failure = message }
+        }
+    }
+
+    var firstFailure: String? { lock.withLock { failure } }
+    var renames: Int { lock.withLock { renameCount } }
 
     func stop() {
         lock.withLock { stopped = true }
@@ -238,6 +264,13 @@ private func checkListingSurvivesAtomicSaves() throws {
         let paths = Set(try vault.listNotes().compactMap { vault.relativePath(of: $0.url) })
         try require(paths.contains("proj.md") && paths.contains("Sessions/2026-10-01 Standup.md"),
                     "a note replaced by an atomic save while listing must stay listed (listed \(paths.sorted()))")
+    }
+    savers.forEach { $0.stop() }
+    for saver in savers {
+        if let failure = saver.firstFailure {
+            throw CheckFailure.failed("the atomic-save writer failed: \(failure)")
+        }
+        try require(saver.renames > 0, "the atomic-save writer never ran during listing")
     }
 }
 
@@ -292,11 +325,10 @@ private func checkInboxLinks() throws {
     for symbolic in [true, false] {
         if symbolic { try FileManager.default.createSymbolicLink(at: vault.inboxURL, withDestinationURL: outside) }
         else { try FileManager.default.linkItem(at: outside, to: vault.inboxURL) }
-        do {
+        try expectRejection("prepare must reject a linked Inbox instead of changing an outside target",
+                            matching: isPOSIX(symbolic ? .ELOOP : .EPERM)) {
             try vault.prepare()
-            throw CheckFailure.failed("prepare must reject a linked Inbox instead of changing an outside target")
-        } catch is CheckFailure { throw CheckFailure.failed("linked Inbox unexpectedly accepted") }
-        catch {}
+        }
         let mode = try FileManager.default.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber
         try require(mode?.intValue == 0o644, "prepare must leave an outside linked target's permissions untouched")
         let contents = try checkRead(outside)

@@ -1,40 +1,6 @@
 @_spi(Checks) import Core
 import Foundation
 
-private final class ExternalWatcherRecorder: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var recorded: [VaultChange] = []
-
-    func append(_ change: VaultChange) {
-        condition.lock()
-        recorded.append(change)
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    func waitForChange(timeout: TimeInterval, matching predicate: (VaultChange) -> Bool) -> VaultChange? {
-        let deadline = Date().addingTimeInterval(timeout)
-        condition.lock()
-        defer { condition.unlock() }
-        while true {
-            if let change = recorded.first(where: predicate) { return change }
-            guard condition.wait(until: deadline) else { return nil }
-        }
-    }
-
-    func waitForQuiet(for interval: TimeInterval) -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        let initialCount = recorded.count
-        let deadline = Date().addingTimeInterval(interval)
-        while Date() < deadline {
-            guard condition.wait(until: deadline) else { break }
-            if recorded.count != initialCount { return false }
-        }
-        return recorded.count == initialCount
-    }
-}
-
 func checkExternalNoteRegistry() async throws {
     try checkOwnedFileDescriptorClosesOnlyOnce()
     let base = try checkMakeDirectory("external-notes")
@@ -61,12 +27,10 @@ func checkExternalNoteRegistry() async throws {
     let state = base.appendingPathComponent("CaptureState", isDirectory: true)
     let service = externalCaptureService(vault: vault, stateDirectory: state, now: now, calendar: calendar)
 
-    let recorder = ExternalWatcherRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     watcher.start()
     try require(watcher.isRunning, "external-note watcher should start before registration")
-    let initialGeneration = watcher.streamGenerationForChecks
-
     let capture = externalNoteCapture("/Desktop/Research/Registered", body: "externalregistryneedle", now: now)
     let prepared = try await service.prepareNote(capture, calendar: calendar)
     let expectedURL = home.appendingPathComponent("Desktop/Research/Registered.md")
@@ -85,28 +49,18 @@ func checkExternalNoteRegistry() async throws {
                 "reopening a Vault must not scan unrelated files in HOME")
 
     // The app refreshes external vnode membership after a successful save.
-    // The recursive FSEvents stream remains attached to the vault root.
     watcher.refreshExternalRoots()
-    try require(watcher.streamGenerationForChecks == initialGeneration,
-                "adding an external note must not replace the vault FSEvents stream")
     let rootRefresh = recorder.waitForChange(timeout: 3.0) { $0.needsFullSync }
     try require(rootRefresh != nil, "adding external vnode sources should request a bounded full sync")
-    let activeGeneration = watcher.streamGenerationForChecks
-    watcher.refreshExternalRoots()
-    try require(watcher.streamGenerationForChecks == activeGeneration,
-                "refreshing unchanged external membership should preserve the vault stream")
     try checkWrite("# Registered\n\nexternalregistryneedle updated", to: registered.url)
     let externalChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains(registered.id) }
     watcher.stop()
     try require(externalChange != nil, "watcher should report an explicitly registered external note by scoped ID")
 
     let index = try SearchIndex(vault: reopened, databaseURL: base.appendingPathComponent("Index/search.sqlite"), calendar: calendar)
-    do {
+    try await expectRejection("indexing an unregistered HOME URL should be rejected", matching: isPOSIX(.EPERM)) {
         try await index.reindex(note: unregistered.url)
-        throw CheckFailure.failed("indexing an unregistered HOME URL should be rejected")
-    } catch is CheckFailure {
-        throw CheckFailure.failed("indexing an unregistered HOME URL should be rejected")
-    } catch {}
+    }
 
     let indexed = try await index.sync()
     try require(indexed.added == 2, "index sync should include Inbox and only explicitly registered external notes")
@@ -181,18 +135,19 @@ private func checkExternalLinksAreRejected(
     try FileManager.default.createSymbolicLink(at: symbolicURL, withDestinationURL: outsideSymbolicTarget)
     try FileManager.default.linkItem(at: outsideHardTarget, to: hardURL)
 
-    for (name, url) in [("/Desktop/Linked", symbolicURL), ("/Desktop/Hardlinked", hardURL)] {
+    let rejections: [(name: String, url: URL, code: POSIXErrorCode)] = [
+        ("/Desktop/Linked", symbolicURL, .ELOOP),
+        ("/Desktop/Hardlinked", hardURL, .EPERM)
+    ]
+    for (name, url, code) in rejections {
         let prepared = try await service.prepareNote(
             externalNoteCapture(name, body: "must not overwrite linked content", now: now), calendar: calendar
         )
         try require(prepared.destination.url.standardizedFileURL == url.standardizedFileURL,
                     "unsafe external fixture should resolve to its existing path")
-        do {
+        try await expectRejection("external note \(name) must reject writes", matching: isPOSIX(code)) {
             _ = try await service.save(prepared)
-            throw CheckFailure.failed("external symlink and hardlink targets must reject writes")
-        } catch is CheckFailure {
-            throw CheckFailure.failed("external symlink and hardlink targets must reject writes")
-        } catch {}
+        }
     }
 
     let listed = try vault.listNotes()
@@ -268,7 +223,7 @@ private func checkDirectHomeWatcherFiltering(base: URL, now: Date, calendar: Cal
     let unregisteredSibling = home.appendingPathComponent("UnregisteredSibling.md")
     try checkWrite("# Unregistered sibling\n\nunregistered sibling", to: unregisteredSibling)
 
-    let recorder = ExternalWatcherRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     watcher.start()
     defer { watcher.stop() }

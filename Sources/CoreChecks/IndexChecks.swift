@@ -173,11 +173,9 @@ func checkSearchIndex() async throws {
         try require(staleMtime == [imagePath], "changed asset mtime alone should invalidate OCR")
         try await index.setImageText(assetPath: imagePath, text: "persistedocr", fingerprint: SearchIndex.imageFingerprint(try Data(contentsOf: vault.root.appendingPathComponent(imagePath))))
         // Invalid paths cannot access files outside the vault.
-        do {
+        try await expectRejection("setImageText should reject paths outside the vault", matching: isPOSIX(.EPERM)) {
             try await index.setImageText(assetPath: "../outside.png", text: "bad", fingerprint: SearchIndex.imageFingerprint(Data()))
-            throw CheckFailure.failed("setImageText should reject paths outside the vault")
-        } catch is CheckFailure { throw CheckFailure.failed("setImageText accepted an outside path") }
-        catch {}
+        }
     }
 
     do {
@@ -221,7 +219,10 @@ func checkSearchIndex() async throws {
 private func checkIndexSkipsUnreadableNote() async throws {
     // Root can read mode-000 files, so this filesystem behavior check only applies
     // to the normal non-root test account used by local and CI runs.
-    guard getuid() != 0 else { return }
+    guard getuid() != 0 else {
+        checkSkip("unreadable-note index check: root can read mode-000 files")
+        return
+    }
 
     let base = try checkMakeDirectory("index-unreadable-note")
     let vault = Vault(root: base.appendingPathComponent("Vault"))
@@ -607,24 +608,18 @@ private func checkIndexRejectsLinkedManagedReads() async throws {
     try require(Set(missing) == Set(assetPaths) && Set(changedLink) == Set(assetPaths),
                 "full and changed-path scans must reject same-metadata linked assets (full: \(missing), changed: \(changedLink), expected: \(assetPaths))")
 
-    for path in assetPaths {
-        do {
-            _ = try await index.setImageText(
+    for (path, code) in [(symlinkAssetPath, POSIXErrorCode.ELOOP), (hardlinkAssetPath, POSIXErrorCode.EPERM)] {
+        try await expectRejection("setImageText linked outside asset at \(path)", matching: isPOSIX(code)) {
+            try await index.setImageText(
                 assetPath: path, text: "readoutsideafterlinksecret",
                 fingerprint: SearchIndex.imageFingerprint(outsideAssetBytes)
             )
-            throw CheckFailure.failed("setImageText read a linked outside asset at \(path)")
-        } catch is CheckFailure {
-            throw CheckFailure.failed("setImageText accepted a linked outside asset at \(path)")
-        } catch {}
+        }
     }
-    for note in [symlinkNote, hardlinkNote] {
-        do {
+    for (note, code) in [(symlinkNote, POSIXErrorCode.ELOOP), (hardlinkNote, POSIXErrorCode.EPERM)] {
+        try await expectRejection("reindex linked outside note \(note.lastPathComponent)", matching: isPOSIX(code)) {
             try await index.reindex(note: note)
-            throw CheckFailure.failed("reindex read a linked outside note at \(note.lastPathComponent)")
-        } catch is CheckFailure {
-            throw CheckFailure.failed("reindex accepted a linked outside note at \(note.lastPathComponent)")
-        } catch {}
+        }
     }
 
     let leakedNote = try await index.search("outside-note-secret")
