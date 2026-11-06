@@ -187,7 +187,7 @@ func checkLivePreviewInteraction() async throws {
     guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
                                        windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { throw GalleryError("Checkbox click event missing") }
     text.mouseDown(with: event)
-    try require(text.string == "## Heading\n- [x] todo\n- [x] done" && draft == text.string,"Checkbox click must toggle the stored task and persist its draft")
+    try require(text.string == "## Heading\n- [x] todo\n- [x] done" && draft == text.string, "Checkbox click must toggle the stored task and persist its draft")
     try require(text.selectedRange() == selection && panel.isKeyWindow && panel.firstResponder === text, "Checkbox click must preserve caret and panel keyboard focus")
     text.undoManager?.undo()
     try require(text.string == markdown && draft == markdown, "Checkbox edit must be undoable")
