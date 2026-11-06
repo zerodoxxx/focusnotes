@@ -39,8 +39,13 @@ public sealed class VaultChange : IEquatable<VaultChange>
 public sealed class VaultWatcher : IDisposable
 {
     internal const int BufferSize = 64 * 1024; // Also valid for UNC/network roots.
-    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private static readonly StringComparer PathComparer = PathIdentity.Comparer;
     private static readonly TimeSpan ExternalDebounce = TimeSpan.FromMilliseconds(40);
+    // Errors carry across native watcher replacements, so this is a budget per watched path.
+    private const int MaxWatchErrors = 3;
+    private const int MaxParentRetries = 5;
+    private const double MinimumRetryMilliseconds = 30000;
+    private const double FallbackIntervalsPerRetry = 4;
     private readonly object gate = new();
     private readonly Vault vault;
     private readonly TimeSpan latency;
@@ -223,8 +228,7 @@ public sealed class VaultWatcher : IDisposable
     private static bool Affects(string path, string target)
     {
         var prefix = Path.EndsInDirectorySeparator(path) ? path : path + Path.DirectorySeparatorChar;
-        return PathComparer.Equals(path, target) || target.StartsWith(prefix,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        return PathComparer.Equals(path, target) || target.StartsWith(prefix, PathIdentity.Comparison);
     }
 
     private void HandleError(DirectoryWatch watch, bool recursive, Exception error)
@@ -247,11 +251,11 @@ public sealed class VaultWatcher : IDisposable
 
             // An overflow loses event details but does not stop the native watcher.
             // Other errors can stop it; recreate it immediately, or enter fallback.
-            if (watch.Errors >= 3 || error is not InternalBufferOverflowException)
+            if (watch.Errors >= MaxWatchErrors || error is not InternalBufferOverflowException)
             {
                 var path = watch.Watcher.Path;
                 watch.Watcher.Dispose();
-                var replacement = watch.Errors < 3 ? CreateWatch(path, recursive) : null;
+                var replacement = watch.Errors < MaxWatchErrors ? CreateWatch(path, recursive) : null;
                 if (replacement is not null) { replacement.Errors = watch.Errors; }
                 if (recursive)
                 {
@@ -264,10 +268,10 @@ public sealed class VaultWatcher : IDisposable
                     // A watched directory deleted and recreated in place races this handler (Windows reports
                     // access-denied on deletion). Let ReconcileParents decide so a missing path is not poisoned.
                     if (replacement is not null) { parents[path] = replacement; }
-                    else if (watch.Errors >= 3) { failedParents.Add(path); }
+                    else if (watch.Errors >= MaxWatchErrors) { failedParents.Add(path); }
                 }
 
-                if (replacement is null && (recursive || watch.Errors >= 3)) { ReportIssue("watch-unavailable:" + path); }
+                if (replacement is null && (recursive || watch.Errors >= MaxWatchErrors)) { ReportIssue("watch-unavailable:" + path); }
                 ReconcileParents();
                 UpdateFallbackTimer();
             }
@@ -373,7 +377,7 @@ public sealed class VaultWatcher : IDisposable
     {
         var parts = path.Split('/');
         var name = parts[^1];
-        return !parts.Any(p => p.StartsWith('.')) && !name.StartsWith("~$", StringComparison.Ordinal)
+        return !parts.Any(p => p.StartsWith('.')) && !NoteTitle.IsOwnerFileName(name)
             && !name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".icloud", StringComparison.OrdinalIgnoreCase)
             && (IsAsset(path) ? parts.Length >= 2 : Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase));
     }
@@ -558,7 +562,7 @@ public sealed class VaultWatcher : IDisposable
         }
         pendingExternal.UnionWith(fallbackIds);
         FlushExternal();
-        if (Environment.TickCount64 - lastRetry >= Math.Max(30000, fallbackInterval.TotalMilliseconds * 4))
+        if (Environment.TickCount64 - lastRetry >= Math.Max(MinimumRetryMilliseconds, fallbackInterval.TotalMilliseconds * FallbackIntervalsPerRetry))
         {
             lastRetry = Environment.TickCount64;
             failedParents.Clear();
@@ -593,7 +597,7 @@ public sealed class VaultWatcher : IDisposable
     private void ScheduleParentRetry(string path)
     {
         var attempts = parentRetries.GetValueOrDefault(path);
-        if (attempts >= 5) { return; }
+        if (attempts >= MaxParentRetries) { return; }
         parentRetries[path] = attempts + 1;
         if (parentRetryTimer is not null) { return; }
         var generation = epoch;
@@ -603,7 +607,7 @@ public sealed class VaultWatcher : IDisposable
             {
                 if (generation != epoch || !running) { return; }
                 parentRetryTimer?.Dispose(); parentRetryTimer = null;
-                failedParents.RemoveWhere(p => parentRetries.GetValueOrDefault(p) is > 0 and < 5);
+                failedParents.RemoveWhere(p => parentRetries.GetValueOrDefault(p) is > 0 and < MaxParentRetries);
                 ReconcileParents();
                 UpdateFallbackTimer();
             }

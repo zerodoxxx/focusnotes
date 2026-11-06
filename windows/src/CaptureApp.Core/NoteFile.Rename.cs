@@ -140,7 +140,7 @@ public static partial class NoteFile
     }
 
     // With `keepFor` (the session note's file name), the staged copy may be the only one left: it is renamed to
-    // the restorable "recovered-" name instead of deleted, unless that copy already exists.
+    // the restorable ".recovered-" name instead of deleted, unless that copy already exists.
     internal static void RemoveSessionTemporary(string root, SessionRenameStage stage, string? keepFor = null)
     {
         var parts = PathComponents(stage.TemporaryPath);
@@ -172,7 +172,7 @@ public static partial class NoteFile
         finally { Marshal.FreeHGlobal(disposition); }
     }
 
-    // Installs a verified "recovered-" copy of a staged temporary at a missing session target; never overwrites.
+    // Installs a verified ".recovered-" copy of a staged temporary at a missing session target; never overwrites.
     internal static void InstallSessionTemporary(string root, SessionRenameStage stage, string targetPath)
     {
         var parts = PathComponents(stage.TemporaryPath);
@@ -187,7 +187,7 @@ public static partial class NoteFile
             var path = SafePath(root, stage.TemporaryPath);
             var target = SafePath(root, targetPath);
             if (FileMetadata.At(target) is not null) return;
-            // Only the "recovered-" sibling marks a replace that removed the target; a bare "pending-" may predate it.
+            // Only the ".recovered-" sibling marks a replace that removed the target; a bare ".pending-" may predate it.
             var kept = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], targetParts[^1]));
             path = FileMetadata.At(kept) is not null ? kept : Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], null));
             if (FileMetadata.At(path) is null) return;

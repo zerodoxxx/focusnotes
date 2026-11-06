@@ -7,7 +7,7 @@ namespace CaptureApp.Core.Watching;
 // No content handles: even a metadata-only ReadManagedSnapshot opens the file.
 internal sealed record WatchSnapshot(FileAttributes Attributes, long Size, long Written, long Created, FileMetadata? Metadata)
 {
-    private const FileAttributes Recall = (FileAttributes)(0x400000 | 0x40000);
+    private const FileAttributes Recall = CloudRecall.Mask;
     internal bool IsDirectory => (Attributes & FileAttributes.Directory) != 0;
     internal bool IsLink => (Attributes & FileAttributes.ReparsePoint) != 0 && !IsPlaceholder && Metadata is { IsLink: true };
     internal bool IsPlaceholder => IsOnlineOnly(Attributes);

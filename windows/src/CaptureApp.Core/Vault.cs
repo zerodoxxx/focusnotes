@@ -205,7 +205,7 @@ public sealed class Vault
                         _ = NoteFile.SafePath(Root, path + "/.read-check");
                         Visit(path);
                     }
-                    else if (!name.StartsWith("~$", StringComparison.Ordinal) && Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase))
+                    else if (!NoteTitle.IsOwnerFileName(name) && Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase))
                     {
                         value?.Validate();
                         if (value is not null && !value.IsLink)
@@ -312,7 +312,7 @@ public sealed class Vault
     private void ValidateNoteLocation(NotePathScope scope, string relative)
     {
         var components = NoteFile.PathComponents(relative);
-        if (components[^1].StartsWith("~$", StringComparison.Ordinal) || scope == NotePathScope.Vault && components[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase))
+        if (NoteTitle.IsOwnerFileName(components[^1]) || scope == NotePathScope.Vault && components[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
@@ -380,7 +380,7 @@ public sealed class Vault
     {
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         var full = Path.GetFullPath(path);
-        return full.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? full[prefix.Length..].Replace(Path.DirectorySeparatorChar, '/') : null;
+        return full.StartsWith(prefix, PathIdentity.Comparison) ? full[prefix.Length..].Replace(Path.DirectorySeparatorChar, '/') : null;
     }
 
     public static string DecodeFilePath(string path)
