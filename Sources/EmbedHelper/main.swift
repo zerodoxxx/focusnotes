@@ -45,7 +45,7 @@ func runHelper() throws {
             do {
                 let decoded = try JSONDecoder().decode(EmbedRequest.self, from: line)
                 request = decoded
-                guard [128, 256, 512, 768].contains(decoded.dimensions) else { throw EmbeddingError.invalid("Unsupported dimensions") }
+                guard EmbedProtocol.supportedDimensions.contains(decoded.dimensions) else { throw EmbeddingError.invalid("Unsupported dimensions") }
                 let embedder: Embedder
                 if let existing = embedders[decoded.dimensions] { embedder = existing }
                 else {
@@ -69,7 +69,7 @@ func runHelper() throws {
                 response = try EmbedResponse(id: decoded.id, dimensions: decoded.dimensions, vectors: vectors,
                                              processID: getpid(), visionLoaded: embedder.visionLoaded)
             } catch {
-                response = try EmbedResponse(id: request?.id ?? "", dimensions: request?.dimensions ?? 256,
+                response = try EmbedResponse(id: request?.id ?? "", dimensions: request?.dimensions ?? EmbedProtocol.defaultDimensions,
                                              error: String(describing: error), processID: getpid(),
                                              visionLoaded: embedders.values.contains { $0.visionLoaded })
             }

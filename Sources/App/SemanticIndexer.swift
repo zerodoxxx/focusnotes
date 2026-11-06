@@ -12,7 +12,7 @@ struct SemanticHits: Sendable {
 /// Coordinates disposable vectors. Models and runtime stay in EmbedHelper.
 actor SemanticIndexer {
     private static let defaultRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60), .seconds(300), .seconds(900)]
-    private static let embeddingModelFiles = ModelManifest.current.modelFiles.map(\.path).filter { $0.hasPrefix("onnx/") }
+    private static let embeddingModelFiles = ModelManifest.current.embeddingModelFiles
 
     nonisolated let modelsDirectory: URL
     private let index: SearchIndex

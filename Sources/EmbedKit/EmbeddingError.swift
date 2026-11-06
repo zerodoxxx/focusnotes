@@ -45,7 +45,7 @@ public enum Float16Vectors {
     }
 
     public static func decode(_ data: Data, dimensions: Int) throws -> [Float] {
-        guard dimensions > 0, dimensions <= 768, data.count == dimensions * 2 else {
+        guard dimensions > 0, dimensions <= EmbedProtocol.maxDimensions, data.count == dimensions * 2 else {
             throw EmbeddingError.invalid("Invalid Float16 vector length")
         }
         let bytes = Array(data)

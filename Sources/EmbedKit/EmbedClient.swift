@@ -12,7 +12,7 @@ public final class EmbedClient: Sendable {
 
     public init(helperExecutable: URL, modelsDirectory: URL, dimensions: Int = 256,
                 idleSeconds: Double = 60, requestTimeout: Double = 120) throws {
-        guard [128, 256, 512, 768].contains(dimensions), idleSeconds.isFinite, idleSeconds > 0, idleSeconds <= 86_400,
+        guard EmbedProtocol.supportedDimensions.contains(dimensions), idleSeconds.isFinite, idleSeconds > 0, idleSeconds <= 86_400,
               requestTimeout.isFinite, requestTimeout > 0, requestTimeout <= 86_400 else {
             throw EmbeddingError.invalid("Invalid client configuration")
         }

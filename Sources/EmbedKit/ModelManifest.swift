@@ -71,6 +71,9 @@ public struct ModelManifest: Sendable {
     /// Files that must exist in the models directory before semantic search is enabled.
     public var requiredFiles: [String] { modelFiles.map(\.path) + [dylibName] }
 
+    /// Model files the embedder loads (the "onnx/" subtree).
+    public var embeddingModelFiles: [String] { modelFiles.map(\.path).filter { $0.hasPrefix("onnx/") } }
+
     /// Bytes downloaded on a first install (model files plus the runtime archive).
     public var totalDownloadBytes: Int64 { modelFiles.reduce(0) { $0 + $1.size } + runtime.size }
 
