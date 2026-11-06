@@ -56,7 +56,7 @@ final class InputPanelView: OverlaySurface {
                                   color: selected ? OverlayTheme.selectedText : OverlayTheme.textColor),
                 secondary: attributed(suggestion.secondary ?? "", font: OverlayTheme.metaFont,
                                       color: selected ? OverlayTheme.selectedSecondary : OverlayTheme.tertiaryColor),
-                meta: "", iconName: suggestion.symbolName, selected: selected, suggestion: true)
+                meta: "", iconName: suggestion.symbolName, selected: selected, kind: .suggestion)
             row.onClick = { [weak self] in self?.onSelect?(index) }
             document.addSubview(row)
             return row
@@ -157,19 +157,20 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
         panel?.resizeContent(to: content.desiredSize)
     }
     private func handleKey(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 53:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .cancel:
             outcome = .escape
             panel?.dismiss()
             return true
-        case 125, 126:
+        case .moveDown, .moveUp:
             guard !suggestions.isEmpty else { return true }
-            let next = selection.map { $0 + (event.keyCode == 125 ? 1 : -1) }
-                ?? (event.keyCode == 125 ? 0 : suggestions.count - 1)
+            let next = selection.map { $0 + (command == .moveDown ? 1 : -1) }
+                ?? (command == .moveDown ? 0 : suggestions.count - 1)
             selection = min(suggestions.count - 1, max(0, next))
             refresh()
             return true
-        case 48:
+        case .complete:
             guard !suggestions.isEmpty, let content else { return true }
             let title = suggestions[selection ?? 0].title
             content.field.stringValue = title
@@ -179,7 +180,7 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
             suggestions = provider?(title) ?? []
             refresh()
             return true
-        case 36, 76:
+        case .submit:
             guard !event.isARepeat else { return true }
             guard let content else { return true }
             if selectionOnly, selection == nil { return true }
@@ -193,7 +194,8 @@ public final class InputPanelController: NSObject, NSTextFieldDelegate {
             else { outcome = .submit(text); accept?(text) }
             panel?.dismiss()
             return true
-        default: return false
+        case .toggleActions, .toggleBrowse:
+            return false
         }
     }
     private func didClose() {

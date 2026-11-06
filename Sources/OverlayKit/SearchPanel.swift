@@ -158,7 +158,7 @@ final class SearchPanelView: OverlaySurface {
                                          matchColor: selected ? OverlayTheme.selectedSecondary : OverlayTheme.textColor)
                 let row = ChoiceRowView(title: title, secondary: snippet, meta: model.meta,
                                         iconName: model.kind == .image ? nil : (model.kind == .note ? OverlayTheme.noteSymbol : OverlayTheme.textSymbol),
-                                        selected: selected, image: model.kind == .image)
+                                        selected: selected, kind: model.kind == .image ? .image : .note)
                 row.icon.image = model.kind == .image ? thumbnails[rowIndex] : row.icon.image
                 row.onClick = { [weak self] in
                     self?.onSelect?(rowIndex)
@@ -312,15 +312,17 @@ public final class SearchPanelController: NSObject, NSTextFieldDelegate {
         content.select(index, query: content.field.stringValue)
     }
     private func handleKey(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 125, 126:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .moveDown, .moveUp:
             guard !rows.isEmpty else { return true }
-            select(min(rows.count - 1, max(0, (selection ?? 0) + (event.keyCode == 125 ? 1 : -1))))
+            select(min(rows.count - 1, max(0, (selection ?? 0) + (command == .moveDown ? 1 : -1))))
             return true
-        case 36, 76:
+        case .submit:
             if let selection { perform(index: selection, modifiers: event.modifierFlags) }
             return true
-        default: return false
+        case .cancel, .complete, .toggleActions, .toggleBrowse:
+            return false
         }
     }
     private func perform(index: Int, modifiers: NSEvent.ModifierFlags) {

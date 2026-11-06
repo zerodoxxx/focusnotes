@@ -170,20 +170,19 @@ final class SeparatorView: NSView {
 
 @MainActor
 final class ChoiceRowView: FlippedView {
+    enum Kind { case note, suggestion, image }
     let title: NSTextField
     let secondary: NSTextField
     let meta: NSTextField
     let icon: NSImageView
     var onClick: (() -> Void)?
     private let selected: Bool
-    private let isSuggestion: Bool
-    private let isImage: Bool
+    private let kind: Kind
 
     init(title: NSAttributedString, secondary: NSAttributedString, meta: String,
-         iconName: String?, selected: Bool, suggestion: Bool = false, image: Bool = false) {
+         iconName: String?, selected: Bool, kind: Kind = .note) {
         self.selected = selected
-        isSuggestion = suggestion
-        isImage = image
+        self.kind = kind
         self.title = label("", font: OverlayTheme.titleFont, color: OverlayTheme.textColor)
         self.secondary = label("", font: OverlayTheme.snippetFont, color: OverlayTheme.secondaryColor)
         self.meta = label(meta, font: OverlayTheme.metaFont, color: selected ? OverlayTheme.selectedSecondary : OverlayTheme.tertiaryColor)
@@ -193,10 +192,10 @@ final class ChoiceRowView: FlippedView {
         layer?.cornerRadius = OverlayTheme.selectedRadius
         self.title.attributedStringValue = title
         self.secondary.attributedStringValue = secondary
-        if suggestion { self.secondary.alignment = .right }
+        if kind == .suggestion { self.secondary.alignment = .right }
         addSubview(self.title); addSubview(self.secondary); addSubview(self.meta)
-        if iconName != nil || image { addSubview(self.icon) }
-        if image {
+        if iconName != nil || kind == .image { addSubview(self.icon) }
+        if kind == .image {
             self.icon.image = nil
             self.icon.wantsLayer = true
             self.icon.layer?.cornerRadius = OverlayTheme.thumbnailRadius
@@ -216,7 +215,7 @@ final class ChoiceRowView: FlippedView {
             layer?.backgroundColor = selected ? OverlayTheme.selectedFill.cgColor : nil
         }
         let inset = OverlayTheme.rowInset
-        if isSuggestion {
+        if kind == .suggestion {
             let iconSize = OverlayTheme.suggestionIconSize
             icon.frame = NSRect(x: inset + (OverlayTheme.suggestionLeadingWidth - iconSize) / 2,
                                 y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
@@ -234,7 +233,7 @@ final class ChoiceRowView: FlippedView {
             meta.frame = .zero
             return
         }
-        let iconSize = isImage ? OverlayTheme.thumbnailSize : OverlayTheme.iconSize
+        let iconSize = kind == .image ? OverlayTheme.thumbnailSize : OverlayTheme.iconSize
         let leadingWidth = OverlayTheme.thumbnailSize
         icon.frame = NSRect(x: inset + (leadingWidth - iconSize) / 2,
                             y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
