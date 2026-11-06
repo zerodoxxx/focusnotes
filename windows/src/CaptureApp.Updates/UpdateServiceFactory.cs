@@ -25,7 +25,7 @@ public static class UpdateServiceFactory
         var options = new UpdateServiceOptions
         {
             CurrentVersion = AppInfo.Version,
-            InstallerUrl = $"https://github.com/{AppInfo.GitHubRepo}/releases/latest",
+            InstallerUrl = FeedNames.LatestReleaseUrl(AppInfo.GitHubRepo),
         };
 
         if (keys.IsEmpty && TryParseConfiguredKeys(out var configured))

@@ -72,15 +72,15 @@ internal static class Program
         var seed = Convert.FromBase64String(encoded.Trim());
         var index = options.Index();
         var signature = IndexSignature.Sign(File.ReadAllBytes(index), options.Require("--channel"), options.Require("--key-id"), seed);
-        File.WriteAllText(index + ".sig", signature);
-        Console.WriteLine($"Wrote {index}.sig");
+        File.WriteAllText(index + FeedNames.SignatureSuffix, signature);
+        Console.WriteLine($"Wrote {index}{FeedNames.SignatureSuffix}");
         return 0;
     }
 
     private static int Verify(Options options)
     {
         var index = options.Index();
-        var signaturePath = index + ".sig";
+        var signaturePath = index + FeedNames.SignatureSuffix;
         IndexSignature.Verify(
             File.ReadAllBytes(index),
             File.Exists(signaturePath) ? File.ReadAllText(signaturePath) : null,

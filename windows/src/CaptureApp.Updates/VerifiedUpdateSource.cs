@@ -28,10 +28,10 @@ public sealed class VerifiedUpdateSource(
         }
 
         var location = await locator.LocateAsync(channel, CancellationToken.None).ConfigureAwait(false);
-        var indexUri = location.For($"releases.{channel}.json");
+        var indexUri = location.For(FeedNames.IndexFile(channel));
         // Fetch index and signature concurrently.
         var indexTask = fetcher.GetBytesAsync(indexUri, CancellationToken.None);
-        var signatureTask = GetSignatureAsync(location.For($"releases.{channel}.json.sig"));
+        var signatureTask = GetSignatureAsync(location.For(FeedNames.SignatureFile(channel)));
         try
         {
             await Task.WhenAll(indexTask, signatureTask).ConfigureAwait(false);
