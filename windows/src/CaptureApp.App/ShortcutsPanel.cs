@@ -128,8 +128,7 @@ internal sealed class ShortcutsPanel : StackPanel
 
     private void Rebind(HotkeyAction action, string label)
     {
-        controller.PauseHotkeys();
-        try
+        SettingsActions.WithHotkeysPaused(controller, () =>
         {
             var recorder = new ChordRecorder(label, chord => controller.ValidateBinding(action, chord)) { Owner = Window.GetWindow(this) };
             if (recorder.ShowDialog() == true && recorder.Chord is { } chord)
@@ -137,11 +136,7 @@ internal sealed class ShortcutsPanel : StackPanel
                 var result = controller.TrySaveBinding(action, chord);
                 message.Text = result.Succeeded ? $"{label} is now {chord.DisplayString}." : $"Not saved: {result.ValidationError ?? "another app already uses this combination."}";
             }
-        }
-        finally
-        {
-            controller.RegisterHotkeys();
-        }
+        });
 
         Refresh();
         changed();

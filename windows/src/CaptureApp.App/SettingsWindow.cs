@@ -52,7 +52,7 @@ internal sealed class SettingsWindow : Window
                 loginMessage.Text = "";
                 if (!controller.ApplyStartAtLogin(login.IsChecked == true)) { login.IsChecked = controller.LoginItem.IsEnabled; }
             }
-            catch (Exception error) when (error is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException)
+            catch (Exception error) when (SettingsFailures.IsLoginItemError(error))
             {
                 loginMessage.Text = $"Couldn't update start at login: {error.Message}";
                 login.IsChecked = controller.LoginItem.IsEnabled;
@@ -100,15 +100,13 @@ internal sealed class SettingsWindow : Window
     private StackPanel UpdatesTab()
     {
         var panel = new StackPanel();
-        var auto = UiKit.Radio("Check for updates automatically (daily)", "settingsUpdates", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
-        var manual = UiKit.Radio("Only when I ask", "settingsUpdates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "settingsUpdates", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
+        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "settingsUpdates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
         var message = UiKit.Secondary(controller.Settings.UpdatesChoice is null ? "Choose an option in Setup to confirm it." : "Automatic checks take effect on the next launch.");
         void Choose(UpdatesChoice choice)
         {
             if (controller.ApplyUpdatesChoice(choice)) { return; }
-            // Show the value that is actually saved.
-            auto.IsChecked = controller.Settings.UpdatesChoice != UpdatesChoice.Manual;
-            manual.IsChecked = controller.Settings.UpdatesChoice == UpdatesChoice.Manual;
+            SettingsActions.ShowSavedUpdatesChoice(controller, auto, manual);
         }
 
         auto.Click += (_, _) => Choose(UpdatesChoice.Auto);

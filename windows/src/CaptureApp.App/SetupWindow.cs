@@ -291,8 +291,8 @@ internal sealed class SetupWindow : Window
         body.Children.Add(use);
         body.Children.Add(dont);
         body.Children.Add(UiKit.Text("Updates", 13, true));
-        var auto = UiKit.Radio("Check for updates automatically (daily)", "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Auto);
-        var manual = UiKit.Radio("Only when I ask", "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Auto);
+        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
         body.Children.Add(auto);
         body.Children.Add(manual);
         var message = UiKit.Text("", 12, false, "Warning");
@@ -471,7 +471,7 @@ internal sealed class SetupWindow : Window
 
                 Finish(SetupStepId.StartAtLogin, SetupStatus.Passed, toggle.IsChecked == true ? null : "Off by choice");
             }
-            catch (Exception error) when (error is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
+            catch (Exception error) when (SettingsFailures.IsLoginItemError(error))
             {
                 Mark(SetupStepId.StartAtLogin, SetupStatus.Failed, $"Couldn't write the Run key: {error.Message}");
                 Go(current);
@@ -483,16 +483,15 @@ internal sealed class SetupWindow : Window
     private void Updates(StackPanel body)
     {
         body.Children.Add(UiKit.Text("Review how updates are checked. Updates come from github.com and are verified before they are installed.", 13, false, "TextPrimary", 8));
-        var auto = UiKit.Radio("Check for updates automatically (daily)", "updates7", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
-        var manual = UiKit.Radio("Only when I ask", "updates7", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "updates7", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
+        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "updates7", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
         body.Children.Add(auto);
         body.Children.Add(manual);
         body.Children.Add(UiKit.Row(UiKit.Button("Looks good", () =>
         {
             if (!controller.ApplyUpdatesChoice(auto.IsChecked == true ? UpdatesChoice.Auto : UpdatesChoice.Manual))
             {
-                auto.IsChecked = controller.Settings.UpdatesChoice != UpdatesChoice.Manual;
-                manual.IsChecked = controller.Settings.UpdatesChoice == UpdatesChoice.Manual;
+                SettingsActions.ShowSavedUpdatesChoice(controller, auto, manual);
                 return;
             }
 
