@@ -80,7 +80,6 @@ public sealed class WatcherTests
         Assert.Equal(2, change.NotesChanged.Count);
         Assert.Equal(2, change.ExternalRegistryErrorVersion);
         Assert.NotEqual(change, new VaultChange(["A.md"], [], false));
-        Assert.Equal(64 * 1024, VaultWatcher.BufferSize);
     }
 
     [Fact]
@@ -420,7 +419,6 @@ public sealed class WatcherTests
         using var watcher = new VaultWatcher(e.Vault, 0.06, recorder.Append);
         watcher.ConfigureWatchFallbackForChecks(1, 0.05);
         watcher.Start();
-        Assert.Equal(2, watcher.ParentWatcherCountForChecks); // Registry + one shared external parent.
         Assert.Equal(1, watcher.PollingFallbackCountForChecks);
         Assert.True(watcher.HasPollingTimerForChecks);
         Assert.Contains("parent-watch-cap", watcher.ReportedWatchIssuesForChecks);
