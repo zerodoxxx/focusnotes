@@ -39,12 +39,12 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
             if (Native.LStat(path, out var value) != 0)
             {
                 var error = Marshal.GetLastPInvokeError();
-                if (error is 2 or 20)
+                if (FileErrors.IsAbsentCode(error))
                 {
                     return null;
                 }
 
-                if (FileErrors.IsDeniedCode(error))
+                if (FileErrors.IsUnavailableCode(error))
                 {
                     throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
                 }
@@ -63,7 +63,7 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
                 return null;
             }
 
-            if (FileErrors.IsUnavailableVolumeCode(error))
+            if (FileErrors.IsUnavailableCode(error))
             {
                 throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
             }
@@ -206,11 +206,9 @@ public static class FileErrors
 
     public static bool IsSharingCode(int c) => c is 11 or 32 or 33;
 
-    public static bool IsAbsentCode(int c) => c is 2 or 3;
+    public static bool IsAbsentCode(int c) => OperatingSystem.IsWindows() ? c is 2 or 3 : c is 2 or 20;
 
-    public static bool IsUnavailableVolumeCode(int c) => c is 21 or 55 or 1117 or 1167;
-
-    public static bool IsDeniedCode(int c) => c is 5 or 6 or 19;
+    public static bool IsUnavailableCode(int c) => OperatingSystem.IsWindows() ? c is 21 or 55 or 1117 or 1167 : c is 5 or 6 or 19;
 
     public static bool IsSharingViolation(Exception e) => e is IOException && IsSharingCode(Code(e));
 }

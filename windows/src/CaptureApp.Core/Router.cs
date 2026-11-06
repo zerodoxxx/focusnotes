@@ -39,14 +39,16 @@ public static class Router
 
             if (key == NoteTitle.MatchKey(Vault.InboxTitle))
             {
-                return new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+                return InboxDestination(vault);
             }
 
             return new(vault.ResolveNoteName(name).Url, cleaned, NoteKind.Note);
         }
 
-        return activeSession is not null ? new(vault.ManagedUrl(activeSession.NotePath), activeSession.Name, NoteKind.Session) : new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+        return activeSession is not null ? new(vault.ManagedUrl(activeSession.NotePath), activeSession.Name, NoteKind.Session) : InboxDestination(vault);
     }
+
+    public static Destination InboxDestination(Vault vault) => new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
 
     /// Whether a title is matched against note headings rather than read as a path to a nested or HOME note.
     public static bool IsHeadingTitle(string title, VaultNamingRules rules)

@@ -99,7 +99,7 @@ public static partial class NoteFile
 
     private static readonly ConcurrentDictionary<string, bool> SweptRoots = new(StringComparer.Ordinal);
 
-    // Best effort: remove "pending-<guid>" files that a crashed write left behind. Skips dot-directories,
+    // Best effort: remove ".pending-<guid>" files that a crashed write left behind. Skips dot-directories,
     // links and cloud placeholders (same attributes WatchSnapshot treats as online-only).
     internal static void SweepStaleTemporaries(string root, TimeSpan? olderThan = null)
     {
@@ -147,7 +147,7 @@ public static partial class NoteFile
         catch (Exception) { }
     }
 
-    // Decodes the target name from an on-disk "recovered-" name; null unless it is a plain, valid file name.
+    // Decodes the target name from an on-disk ".recovered-" name; null unless it is a plain, valid file name.
     private static string? RecoveredTarget(string name)
     {
         var match = TempNames.RecoveredPattern.Match(name);
@@ -167,7 +167,7 @@ public static partial class NoteFile
         return true;
     }
 
-    // Moves the newest "recovered-" copy of a missing target back into place; never overwrites. Older copies
+    // Moves the newest ".recovered-" copy of a missing target back into place; never overwrites. Older copies
     // are renamed to the plain, non-restorable name (never deleted). Call under no lock; it takes the target's gate.
     // Returns false only when a restorable copy exists, could not be moved back and the target is still missing,
     // so a caller that writes must not start a fresh note; every other outcome, including "nothing to restore", returns true.
@@ -457,7 +457,7 @@ public static partial class NoteFile
     }
 
     // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
-    // "recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
+    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
     // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
     internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
         Action<string, string>? keep = null)
@@ -470,7 +470,7 @@ public static partial class NoteFile
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
-            // "pending-" name is later deleted. Copying only needs read sharing.
+            // ".pending-" name is later deleted. Copying only needs read sharing.
             Report($"Could not rename kept temporary: {error}");
             try { File.Copy(temporary, kept, false); }
             catch (Exception copy) when (copy is IOException or UnauthorizedAccessException)
