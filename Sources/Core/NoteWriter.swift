@@ -45,7 +45,7 @@ public actor NoteWriter {
         let header = CaptureFormat.noteHeader(title: title) + "\n"
 
         try NoteFile.append(block: block, header: header, root: location.anchor, relativePath: location.relativePath,
-                            to: location.url, cache: &appendCache, identityPrefix: identityPrefix(capture),
+                            to: location.url, cache: &appendCache, identityPrefix: CaptureFormat.identityPrefix(for: capture),
                             sourceHeading: headingSource(capture), equivalentBlocks: legacyBlocks(capture, block: block),
                             calendar: calendar, beforeWrite: beforeAppend, afterWrite: afterAppend)
     }
@@ -63,31 +63,31 @@ public actor NoteWriter {
             }
         }
         let block = captureBlock(capture, location: location, includeSourceHeading: false)
-        let prefix: String = switch capture.content {
-        case .note: "note"
-        case .subheading: "subheading"
-        default: "capture"
-        }
-        let marker = "<!-- \(prefix):\(capture.id.uuidString.lowercased()) -->"
-        let savedNoteMarker = noteMarkerIsIdentity && prefix == "note" ? String(block.prefix(while: { $0 != "\n" })) : nil
+        let marker = CaptureFormat.bareMarker(for: capture)
+        let savedNoteMarker = noteMarkerIsIdentity && CaptureFormat.MarkerKind(capture) == .note
+            ? String(block.prefix(while: { $0 != "\n" })) : nil
         try NoteFile.append(block: block, header: CaptureFormat.noteHeader(title: destination.title) + "\n",
                             root: location.anchor, relativePath: location.relativePath, to: location.url,
-                            cache: &appendCache, identityPrefix: identityPrefix(capture), unlessMarkerExists: marker,
+                            cache: &appendCache, identityPrefix: CaptureFormat.identityPrefix(for: capture), unlessMarkerExists: marker,
                             savedNoteMarker: savedNoteMarker, sourceHeading: headingSource(capture),
                             equivalentBlocks: legacyBlocks(capture, block: block), calendar: calendar,
                             beforeWrite: beforeAppend, afterWrite: afterAppend)
     }
 
     private func prepareParentDirectory(for location: VaultManagedLocation) throws {
-        let parentPath = location.relativePath.split(separator: "/").dropLast().joined(separator: "/")
-        if !parentPath.isEmpty {
-            try NoteFile.prepareManagedDirectory(parentPath, in: location.anchor)
+        let parent = parentPath(of: location.relativePath)
+        if !parent.isEmpty {
+            try NoteFile.prepareManagedDirectory(parent, in: location.anchor)
         }
+    }
+
+    private func parentPath(of relativePath: String) -> String {
+        relativePath.split(separator: "/").dropLast().joined(separator: "/")
     }
 
     private func captureBlock(_ capture: Capture, location: VaultManagedLocation,
                               includeSourceHeading: Bool) -> String {
-        let noteRelativeDir = location.relativePath.split(separator: "/").dropLast().joined(separator: "/")
+        let noteRelativeDir = parentPath(of: location.relativePath)
         let assetPathPrefix = CaptureFormat.relativePath(
             from: location.url.deletingLastPathComponent(), to: vault.root
         )
@@ -95,29 +95,15 @@ public actor NoteWriter {
                                    includeSourceHeading: includeSourceHeading, assetPathPrefix: assetPathPrefix)
     }
 
-    private func identityPrefix(_ capture: Capture) -> String {
-        switch capture.content {
-        case .note: "<!-- note:\(capture.id.uuidString.lowercased())"
-        case .subheading: "<!-- subheading:\(capture.id.uuidString.lowercased())"
-        default: "<!-- capture:\(capture.id.uuidString.lowercased())"
-        }
-    }
-
     private func legacyBlocks(_ capture: Capture, block: String) -> [String] {
-        switch capture.content {
-        case .subheading, .note: return []
-        default:
-            // An upgrade may replay a job already saved by the old writer.
-            let body = block.drop(while: { $0 != "\n" })
-            return ["<!-- capture:\(capture.id.uuidString.lowercased()) -->" + body]
-        }
+        guard CaptureFormat.groupsBySource(capture) else { return [] }
+        // An upgrade may replay a job already saved by the old writer.
+        let body = block.drop(while: { $0 != "\n" })
+        return [CaptureFormat.bareMarker(for: capture) + body]
     }
 
     private func headingSource(_ capture: Capture) -> String? {
-        switch capture.content {
-        case .subheading, .note: return nil
-        default: break
-        }
+        guard CaptureFormat.groupsBySource(capture) else { return nil }
         return CaptureFormat.sourceHeading(capture.source)
     }
 

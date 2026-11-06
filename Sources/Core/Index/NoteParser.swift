@@ -43,8 +43,8 @@ public enum NoteParser {
         for (offset, boundary) in boundaries.enumerated() {
             var bodyStart = boundary.marker + 1
             var bodyEnd = offset + 1 < boundaries.count ? boundaries[offset + 1].line : lines.count
-            if bodyStart < bodyEnd, isBlank(lines[bodyStart]) { bodyStart += 1 }
-            while bodyEnd > bodyStart, isBlank(lines[bodyEnd - 1]) { bodyEnd -= 1 }
+            if bodyStart < bodyEnd, CaptureFormat.isBlank(lines[bodyStart]) { bodyStart += 1 }
+            while bodyEnd > bodyStart, CaptureFormat.isBlank(lines[bodyEnd - 1]) { bodyEnd -= 1 }
             var body = lines[bodyStart..<bodyEnd].joined(separator: "\n")
             if boundary.id == nil {
                 body = lines[boundary.line] + (body.isEmpty ? "" : "\n" + body)
@@ -86,9 +86,12 @@ public enum NoteParser {
         var source: String?
         var result: [Boundary] = []
         for index in visible.sorted() where index >= start {
-            if lines[index].hasPrefix("### ") { source = String(lines[index].dropFirst(4)) }
-            if lines[index].hasPrefix("<!-- subheading:"), lines[index].hasSuffix(" -->"),
-               UUID(uuidString: String(lines[index].dropFirst(16).dropLast(4))) != nil,
+            if lines[index].hasPrefix(CaptureFormat.sourceHeadingPrefix) {
+                source = String(lines[index].dropFirst(CaptureFormat.sourceHeadingPrefix.count))
+            }
+            if lines[index].hasPrefix(CaptureFormat.subheadingMarkerPrefix), lines[index].hasSuffix(CaptureFormat.markerSuffix),
+               UUID(uuidString: String(lines[index].dropFirst(CaptureFormat.subheadingMarkerPrefix.count)
+                                                  .dropLast(CaptureFormat.markerSuffix.count))) != nil,
                index > start, visible.contains(index - 1), CaptureFormat.atxHeading(lines[index - 1])?.level == 2 {
                 result.append(Boundary(line: index - 1, marker: index, id: nil, date: nil, app: nil, window: nil, source: nil))
                 continue
@@ -99,13 +102,13 @@ public enum NoteParser {
                 continue
             }
             guard let marker = parseMarker(lines[index]) else { continue }
-            let preceding = index > start && visible.contains(index - 1) && lines[index - 1].hasPrefix("### ")
+            let preceding = index > start && visible.contains(index - 1) && lines[index - 1].hasPrefix(CaptureFormat.sourceHeadingPrefix)
             if marker.metadata == nil {
-                guard preceding, let old = parseHeader(String(lines[index - 1].dropFirst(4)), calendar: calendar) else { continue }
-                source = CaptureFormat.sourceHeading(CaptureSource(appName: old.app, windowTitle: old.window))
+                guard preceding, let old = parseHeader(String(lines[index - 1].dropFirst(CaptureFormat.sourceHeadingPrefix.count)), calendar: calendar) else { continue }
+                let legacySource = CaptureFormat.sourceHeading(CaptureSource(appName: old.app, windowTitle: old.window))
+                source = legacySource
                 result.append(Boundary(line: index - 1, marker: index, id: marker.id, date: old.date,
-                                       app: old.app, window: old.window,
-                                       source: CaptureFormat.sourceHeading(CaptureSource(appName: old.app, windowTitle: old.window))))
+                                       app: old.app, window: old.window, source: legacySource))
             } else if let metadata = marker.metadata {
                 result.append(Boundary(line: preceding ? index - 1 : index, marker: index, id: marker.id,
                                        date: metadata.date, app: metadata.app, window: source, source: source))
@@ -158,13 +161,15 @@ public enum NoteParser {
                 previousLine = nil
                 return
             }
-            defer { previousLine = line.hasPrefix("### ") ? line : nil }
-            if line.hasPrefix("### ") { source = String(line.dropFirst(4)) }
+            defer { previousLine = line.hasPrefix(CaptureFormat.sourceHeadingPrefix) ? line : nil }
+            if line.hasPrefix(CaptureFormat.sourceHeadingPrefix) {
+                source = String(line.dropFirst(CaptureFormat.sourceHeadingPrefix.count))
+            }
             if CaptureFormat.atxHeading(line) != nil { headingAfterCapture = true }
             guard let marker = NoteParser.parseMarker(line) else { return }
             if marker.metadata == nil {
-                guard let previousLine, previousLine.hasPrefix("### "),
-                      let old = NoteParser.parseHeader(String(previousLine.dropFirst(4)), calendar: calendar) else { return }
+                guard let previousLine, previousLine.hasPrefix(CaptureFormat.sourceHeadingPrefix),
+                      let old = NoteParser.parseHeader(String(previousLine.dropFirst(CaptureFormat.sourceHeadingPrefix.count)), calendar: calendar) else { return }
                 source = CaptureFormat.sourceHeading(CaptureSource(appName: old.app, windowTitle: old.window))
             }
             lastCaptureSource = source
@@ -174,21 +179,22 @@ public enum NoteParser {
     }
 
     private static func parseNoteMarker(_ line: String) -> (id: UUID, date: Date)? {
-        let prefix = "<!-- note:"
+        let prefix = CaptureFormat.noteMarkerPrefix
         guard line.hasPrefix(prefix), line.hasSuffix(CaptureFormat.markerSuffix) else { return nil }
         let value = String(line.dropFirst(prefix.count).dropLast(CaptureFormat.markerSuffix.count))
-        guard value.count > 40, let id = UUID(uuidString: String(value.prefix(36))),
-              value.dropFirst(36).hasPrefix(" at="),
-              let date = ISO8601DateFormatter().date(from: String(value.dropFirst(40))) else { return nil }
+        guard value.count > CaptureFormat.uuidLength + " at=".count,
+              let id = UUID(uuidString: String(value.prefix(CaptureFormat.uuidLength))),
+              value.dropFirst(CaptureFormat.uuidLength).hasPrefix(" at="),
+              let date = ISO8601DateFormatter().date(from: String(value.dropFirst(CaptureFormat.uuidLength + " at=".count))) else { return nil }
         return (id, date)
     }
 
     private static func parseMarker(_ line: String) -> (id: UUID, metadata: (date: Date, app: String?)?)? {
         guard line.hasPrefix(CaptureFormat.markerPrefix), line.hasSuffix(CaptureFormat.markerSuffix) else { return nil }
         let value = String(line.dropFirst(CaptureFormat.markerPrefix.count).dropLast(CaptureFormat.markerSuffix.count))
-        guard value.count >= 36, let id = UUID(uuidString: String(value.prefix(36))) else { return nil }
-        if value.count == 36 { return (id, nil) }
-        let rest = String(value.dropFirst(36))
+        guard value.count >= CaptureFormat.uuidLength, let id = UUID(uuidString: String(value.prefix(CaptureFormat.uuidLength))) else { return nil }
+        if value.count == CaptureFormat.uuidLength { return (id, nil) }
+        let rest = String(value.dropFirst(CaptureFormat.uuidLength))
         guard rest.hasPrefix(" at="), let appStart = rest.range(of: " app=\""), rest.hasSuffix("\"") else { return nil }
         let stamp = String(rest[rest.index(rest.startIndex, offsetBy: 4)..<appStart.lowerBound])
         guard let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
@@ -226,19 +232,20 @@ public enum NoteParser {
 
     private static func imagePath(_ body: String, notePath: String, assetRootURL: URL?) -> String? {
         var imageBody = body
-        let sourcePrefix = "[Source](<"
+        let sourcePrefix = CaptureFormat.sourceLinkPrefix
         if body.hasPrefix(sourcePrefix), let separator = body.range(of: "\n\n") {
             let sourceLine = String(body[..<separator.lowerBound])
             let candidate = body[separator.upperBound...]
-            if !sourceLine.contains("\n"), !candidate.contains("\n"), sourceLine.hasSuffix(">)") {
-                let sourceURL = String(sourceLine.dropFirst(sourcePrefix.count).dropLast(2))
+            if !sourceLine.contains("\n"), !candidate.contains("\n"), sourceLine.hasSuffix(CaptureFormat.sourceLinkSuffix) {
+                let sourceURL = String(sourceLine.dropFirst(sourcePrefix.count).dropLast(CaptureFormat.sourceLinkSuffix.count))
                 if let canonicalSourceLine = CaptureFormat.sourceLink(for: CaptureSource(url: sourceURL)), canonicalSourceLine == sourceLine {
                     imageBody = String(candidate)
                 }
             }
         }
-        guard !imageBody.contains("\n"), imageBody.hasPrefix("![]("), imageBody.hasSuffix(")") else { return nil }
-        let encodedLink = String(imageBody.dropFirst(4).dropLast())
+        guard !imageBody.contains("\n"), imageBody.hasPrefix(CaptureFormat.imageLinkPrefix),
+              imageBody.hasSuffix(CaptureFormat.imageLinkSuffix) else { return nil }
+        let encodedLink = String(imageBody.dropFirst(CaptureFormat.imageLinkPrefix.count).dropLast(CaptureFormat.imageLinkSuffix.count))
         guard !encodedLink.isEmpty, !encodedLink.hasPrefix("/"), !encodedLink.contains(":"),
               !encodedLink.contains("\\"), !encodedLink.contains("?"), !encodedLink.contains("#"),
               !encodedLink.contains("\n") else { return nil }
@@ -282,8 +289,6 @@ public enum NoteParser {
         return URL(fileURLWithPath: notePath)
     }
 
-    private static func isBlank(_ line: String) -> Bool { line.allSatisfy(\.isWhitespace) }
-
     private static func looseBlocks(_ lines: ArraySlice<String>) -> [ParsedBlock] {
         var blocks: [ParsedBlock] = []
         var region: [String] = []
@@ -302,7 +307,7 @@ public enum NoteParser {
             region.removeAll(keepingCapacity: true)
         }
         for line in lines {
-            if isBlank(line) { flush() } else { region.append(line) }
+            if CaptureFormat.isBlank(line) { flush() } else { region.append(line) }
         }
         flush()
         return blocks
