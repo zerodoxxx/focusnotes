@@ -203,23 +203,23 @@ final class NoteTextView: NSTextView {
         if event.modifierFlags.contains(.command) {
             if let action = noteShortcutAction(for: event) { onShortcut?(action); return true }
             switch event.keyCode {
-            case 6: if event.modifierFlags.contains(.shift) { history.redo() } else { history.undo() }
-            case 9: paste(nil)
-            case 8: copy(nil)
-            case 40: onToggleActions?()
-            case 7: cut(nil)
-            case 0: selectAll(nil)
-            case 36, 76: onSave?()
+            case OverlayKeyCode.z: if event.modifierFlags.contains(.shift) { history.redo() } else { history.undo() }
+            case OverlayKeyCode.v: paste(nil)
+            case OverlayKeyCode.c: copy(nil)
+            case OverlayKeyCode.k: onToggleActions?()
+            case OverlayKeyCode.x: cut(nil)
+            case OverlayKeyCode.a: selectAll(nil)
+            case OverlayKeyCode.returnKey, OverlayKeyCode.keypadEnter: onSave?()
             default: return false
             }
             return true
         }
         switch event.keyCode {
-        case 36, 76:
+        case OverlayKeyCode.returnKey, OverlayKeyCode.keypadEnter:
             if event.modifierFlags.contains(.shift) { insertText("\n", replacementRange: selectedRange()) }
             else { insertLineBreak() }
             return true
-        case 48: indentList(outdent: event.modifierFlags.contains(.shift)); return true
+        case OverlayKeyCode.tab: indentList(outdent: event.modifierFlags.contains(.shift)); return true
         default: return false
         }
     }
@@ -643,7 +643,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         guard actionMenu == nil else { return }
         detachBrowse()
         let menu = NoteActionMenuView(items: NoteActionItem.standard(isPinned: isPinned, hasText: !textView.string.isEmpty,
-                                                                     appendsToExisting: appendsToExisting, hasActiveSession: hasActiveSession),
+                                                                     editor: EditorContext(appendsToExisting: appendsToExisting, hasActiveSession: hasActiveSession)),
                                       query: query, selectedIndex: selectedIndex)
         menu.onRun = { [weak self] id in self?.hideActions(); self?.perform(id) }
         menu.onClose = { [weak self] in self?.hideActions() }
@@ -739,7 +739,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             if let editor = card.field.currentEditor(), window?.firstResponder === editor {
                 if let browse = card as? NoteBrowseView {
                     if browse.handle(event) { return true }
-                    guard event.keyCode == 40, event.shortcutFlags == .command else { return false }
+                    guard OverlayKeyCommand(event) == .toggleActions else { return false }
                     showActions() // closes Browse first
                     return true
                 }
@@ -751,7 +751,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
                     return true
                 }
             }
-            if event.keyCode == 53 || (event.keyCode == 40 && event.shortcutFlags == .command) { hideCard(); return true }
+            if let command = OverlayKeyCommand(event), command == .cancel || command == .toggleActions { hideCard(); return true }
         }
         guard !textView.hasMarkedText() else { return false }
         return textView.handle(event)

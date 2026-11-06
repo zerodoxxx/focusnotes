@@ -1,5 +1,12 @@
 import AppKit
 
+/// Editor state that only the quick-note editor's Actions menu needs.
+struct EditorContext {
+    /// The typed title names an existing note, so saving would append; the escape row is then live.
+    var appendsToExisting = false
+    var hasActiveSession = false
+}
+
 struct NoteActionItem {
     var id: NoteActionID
     var title: String
@@ -9,12 +16,11 @@ struct NoteActionItem {
     /// Rows in different groups are divided by a separator.
     var group: Int
 
-    /// `appendsToExisting`: the typed title names an existing note, so saving would append; the escape row is then live.
-    @MainActor static func standard(isPinned: Bool, hasText: Bool, appendsToExisting: Bool = false, hasActiveSession: Bool = false) -> [NoteActionItem] {
+    @MainActor static func standard(isPinned: Bool, hasText: Bool, editor: EditorContext = EditorContext()) -> [NoteActionItem] {
         var items = [
             NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: "⌘N", isEnabled: true, group: 0),
             NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: "⌥⌘↩",
-                           isEnabled: appendsToExisting, group: 0),
+                           isEnabled: editor.appendsToExisting, group: 0),
             NoteActionItem(id: .pin, title: isPinned ? "Remove from Pinned" : "Add to Pinned", symbolName: isPinned ? "pin.slash" : "pin",
                            shortcut: "⇧⌘P", isEnabled: true, group: 0),
             NoteActionItem(id: .openAsNote, title: "Open as Note", symbolName: "arrow.up.left.and.arrow.down.right",
@@ -22,7 +28,7 @@ struct NoteActionItem {
             NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: "⇧⌘C", isEnabled: hasText, group: 1),
             NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: "⇧⌘⌫", isEnabled: hasText, group: 1),
         ]
-        if hasActiveSession {
+        if editor.hasActiveSession {
             items.insert(NoteActionItem(id: .writeOutsideSession, title: "Write outside session", symbolName: "arrow.turn.up.right",
                                         shortcut: "⇧⌘N", isEnabled: true, group: 0), at: 1)
         }
