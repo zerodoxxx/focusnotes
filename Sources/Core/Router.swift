@@ -12,6 +12,16 @@ public struct Destination: Codable, Sendable, Equatable {
     }
 }
 
+extension Destination {
+    static func inbox(in vault: Vault) -> Destination {
+        Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+    }
+
+    static func isInboxTitle(_ title: String) -> Bool {
+        NoteTitle.matchKey(title) == NoteTitle.matchKey(Vault.inboxTitle)
+    }
+}
+
 public enum RouterError: Error, Sendable, LocalizedError {
     case ambiguous([Destination])
 
@@ -64,8 +74,8 @@ public enum Router {
                 guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
                 return candidates[0]
             }
-            if key == NoteTitle.matchKey(Vault.inboxTitle) {
-                return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+            if Destination.isInboxTitle(cleaned) {
+                return .inbox(in: vault)
             }
             let location = try vault.resolveNoteName(pathName)
             return Destination(url: location.url, title: cleaned, kind: .note)
@@ -79,6 +89,6 @@ public enum Router {
             )
         }
 
-        return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+        return .inbox(in: vault)
     }
 }
