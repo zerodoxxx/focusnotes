@@ -41,7 +41,7 @@ public sealed class ExternalNoteTests
 
         )
         {
-            Assert.ThrowsAny<Exception>(() => reopened.NoteLocation(id));
+            Assert.Throws<VaultFileException>(() => reopened.NoteLocation(id));
         }
     }
 

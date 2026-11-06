@@ -38,7 +38,7 @@ public sealed class SessionRenameTests
         index.Sync();
         Assert.DoesNotContain(index.Search("untouchedneedle"), hit => hit.NotePath == Candidate().NotePath);
         Assert.Contains(index.Search("untouchedneedle"), hit => hit.NotePath == renamed.NotePath);
-        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(target)!, ".pending-*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(target)!, TempNames.PendingPrefix + "*"));
     }
 
     [Theory]
@@ -141,7 +141,7 @@ public sealed class SessionRenameTests
             beforeReplace: () => throw new IOException("Injected replace failure")));
         Assert.Equal("# Standup\noriginal\n", CheckVault.Read(old));
         Assert.False(File.Exists(e.Vault.UrlForRelativePath(next)));
-        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(old)!, ".pending-*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(old)!, TempNames.PendingPrefix + "*"));
     }
 
     [Fact]
@@ -240,7 +240,8 @@ public sealed class SessionRenameTests
         using var _ = e;
         Assert.Equal(target, e.Sessions.CompleteRename(plan));
         Assert.Equal("# Daily sync\nbody\n", CheckVault.Read(e.Vault.UrlForRelativePath(target.NotePath)));
-        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, ".*-*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, TempNames.PendingPrefix + "*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, TempNames.RecoveredPrefix + "*"));
         e.Sessions.CleanupRename(plan);
     }
 
@@ -303,7 +304,8 @@ public sealed class SessionRenameTests
         using var _ = e;
         e.Write(target.NotePath, "# Daily sync\nbody\n");
         e.Sessions.CleanupRename(plan);
-        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, ".*-*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, TempNames.PendingPrefix + "*"));
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(staged)!, TempNames.RecoveredPrefix + "*"));
     }
 
     // Old note removed and a staged rewrite at ".pending-" (or already renamed to ".recovered-").
@@ -315,7 +317,7 @@ public sealed class SessionRenameTests
         var original = e.Vault.FileSnapshot(Candidate().NotePath)!;
         var target = new Session("Daily sync", "Sessions/archive/Daily sync.md", CheckVault.Now, true);
         var rewritten = NoteFile.RewriteHeading(original.Contents!, target.Name);
-        var stagedPath = "Sessions/archive/.pending-" + Guid.NewGuid().ToString("N");
+        var stagedPath = "Sessions/archive/" + TempNames.PendingPrefix + Guid.NewGuid().ToString("N");
         var staged = e.Write(stagedPath, System.Text.Encoding.UTF8.GetString(rewritten));
         var identity = e.Vault.FileSnapshot(stagedPath)!;
         var plan = new SessionRenamePlan(Candidate().NotePath, target, new(original.Device, original.Inode),

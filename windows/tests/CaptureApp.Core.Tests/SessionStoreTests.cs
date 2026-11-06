@@ -136,7 +136,7 @@ public sealed class SessionStoreTests
         CheckVault.SetMode(e.State, 320);
         try
         {
-            Assert.ThrowsAny<Exception>(e.Sessions.End);
+            Assert.Throws<UnauthorizedAccessException>(e.Sessions.End);
             Assert.Equal(kept, e.Sessions.Current());
             Assert.True(File.Exists(e.Sessions.StateFileUrl));
         }

@@ -110,7 +110,6 @@ public sealed class VaultTests
         }
 
         Assert.Equal(new[] { "Inbox.md" }, e.Vault.ListNotes().Select(n => e.Vault.NoteId(n.Url)));
-        Assert.Equal(new[] { "Inbox.md" }, e.Vault.ListNotes().Select(n => e.Vault.NoteId(n.Url)));
         Assert.Equal(new[] { "Inbox.md" }, e.Vault.ListNoteFiles().Select(n => n.Id));
         Assert.ThrowsAny<IOException>(() => e.Vault.FileSnapshot("Hardlink.md"));
     }
@@ -194,7 +193,7 @@ public sealed class VaultTests
 
         )
         {
-            Assert.ThrowsAny<Exception>(() => e.Vault.FileSnapshot(path));
+            Assert.Throws<VaultFileException>(() => e.Vault.FileSnapshot(path));
         }
 
         foreach (var id in new[]
@@ -207,7 +206,7 @@ public sealed class VaultTests
 
         )
         {
-            Assert.ThrowsAny<Exception>(() => e.Vault.NoteLocation(id));
+            Assert.Throws<VaultFileException>(() => e.Vault.NoteLocation(id));
         }
     }
 }
