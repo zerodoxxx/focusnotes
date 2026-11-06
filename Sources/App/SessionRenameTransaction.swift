@@ -20,11 +20,34 @@ actor SessionRenameTransaction {
         var installation: SessionRenameStage? = nil
         var previousInstallations: [SessionRenameStage] = []
 
+        /// Compared before hashing, so an unchanged file is recognised without reading its contents.
+        struct SourceStat: Equatable {
+            let size: Int64
+            let modifiedSeconds: Int64
+            let modifiedNanoseconds: Int64
+            let changedSeconds: Int64
+            let changedNanoseconds: Int64
+
+            init(size: Int64, modifiedSeconds: Int64, modifiedNanoseconds: Int64, changedSeconds: Int64, changedNanoseconds: Int64) {
+                self.size = size
+                self.modifiedSeconds = modifiedSeconds
+                self.modifiedNanoseconds = modifiedNanoseconds
+                self.changedSeconds = changedSeconds
+                self.changedNanoseconds = changedNanoseconds
+            }
+            init(_ snapshot: VaultFileSnapshot) {
+                self.init(size: snapshot.size, modifiedSeconds: snapshot.modifiedSeconds, modifiedNanoseconds: snapshot.modifiedNanoseconds,
+                          changedSeconds: snapshot.changedSeconds, changedNanoseconds: snapshot.changedNanoseconds)
+            }
+        }
+        var sourceStat: SourceStat {
+            SourceStat(size: sourceSize, modifiedSeconds: sourceModifiedSeconds, modifiedNanoseconds: sourceModifiedNanoseconds,
+                       changedSeconds: sourceChangedSeconds, changedNanoseconds: sourceChangedNanoseconds)
+        }
+
         func isOriginal(_ snapshot: VaultFileSnapshot) -> Bool {
             guard ManagedFileIdentity(snapshot) == source else { return false }
-            if snapshot.size == sourceSize &&
-                snapshot.modifiedSeconds == sourceModifiedSeconds && snapshot.modifiedNanoseconds == sourceModifiedNanoseconds &&
-                snapshot.changedSeconds == sourceChangedSeconds && snapshot.changedNanoseconds == sourceChangedNanoseconds { return true }
+            if SourceStat(snapshot) == sourceStat { return true }
             // A rolled-back atomic swap updates ctime even though the original
             // inode and every byte are restored. Accept that same original only
             // after hashing a fresh validated snapshot, never by inode alone.
@@ -46,18 +69,20 @@ actor SessionRenameTransaction {
     let index: SearchIndex
     let semantic: SemanticIndexer
     let logger: Logger
+    private let stateDirectory: URL
     private let intentURL: URL
 
-    init(vault: Vault, sessions: SessionStore, journal: CaptureJournal, pins: NotePinStore,
+    init(vault: Vault, stateDirectory: URL, sessions: SessionStore, journal: CaptureJournal, pins: NotePinStore,
          index: SearchIndex, semantic: SemanticIndexer, logger: Logger) {
         self.vault = vault
+        self.stateDirectory = stateDirectory
         self.sessions = sessions
         self.journal = journal
         self.pins = pins
         self.index = index
         self.semantic = semantic
         self.logger = logger
-        intentURL = journal.stateDirectory.appendingPathComponent("session-rename.json")
+        intentURL = stateDirectory.appendingPathComponent("session-rename.json")
     }
 
     /// Called only after the controller drains capture writes. The durable
@@ -125,13 +150,14 @@ actor SessionRenameTransaction {
         guard let source = try vault.fileSnapshot(relativePath: oldPath), let contents = source.contents else {
             throw SessionStoreError.candidateNoLongerExists(oldPath)
         }
+        let stat = Intent.SourceStat(source)
         let intent = Intent(oldPath: oldPath, session: session, captureIDs: ids,
-                            source: ManagedFileIdentity(source), sourceSize: source.size,
-                            sourceModifiedSeconds: source.modifiedSeconds, sourceModifiedNanoseconds: source.modifiedNanoseconds,
-                            sourceChangedSeconds: source.changedSeconds, sourceChangedNanoseconds: source.changedNanoseconds,
+                            source: ManagedFileIdentity(source), sourceSize: stat.size,
+                            sourceModifiedSeconds: stat.modifiedSeconds, sourceModifiedNanoseconds: stat.modifiedNanoseconds,
+                            sourceChangedSeconds: stat.changedSeconds, sourceChangedNanoseconds: stat.changedNanoseconds,
                             sourceDigest: Intent.digest(contents))
         try FileManager.default.createDirectory(at: intentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Self.writeJSON(intent, to: intentURL)
+        try StateFile.writeJSON(intent, to: intentURL)
         return intent
     }
 
@@ -143,7 +169,7 @@ actor SessionRenameTransaction {
             var installed = intent
             if let previous = installed.installation { installed.previousInstallations.append(previous) }
             installed.installation = stage
-            try Self.writeJSON(installed, to: url)
+            try StateFile.writeJSON(installed, to: url)
         }
     }
 
@@ -153,12 +179,8 @@ actor SessionRenameTransaction {
         let data = try Data(contentsOf: intentURL)
         do { return try JSONDecoder().decode(Intent.self, from: data) }
         catch {
-            let corrupt = journal.directory.appendingPathComponent("corrupt", isDirectory: true)
-            try FileManager.default.createDirectory(at: corrupt, withIntermediateDirectories: true)
-            let stem = intentURL.deletingPathExtension().lastPathComponent
-            let target = FileManager.default.fileExists(atPath: corrupt.appendingPathComponent(stem + ".json").path)
-                ? stem + "-" + UUID().uuidString.lowercased() : stem
-            try FileManager.default.moveItem(at: intentURL, to: corrupt.appendingPathComponent(target + ".json"))
+            try StateFile.quarantine([intentURL], stem: "session-rename",
+                                     into: CaptureJournal.corruptDirectory(stateDirectory: stateDirectory))
             Logger(subsystem: AppInfo.bundleIdentifier, category: "journal")
                 .error("Corrupt session rename intent quarantined (\(AppErrorLog.summary(error), privacy: .public))")
             return nil
@@ -269,10 +291,6 @@ actor SessionRenameTransaction {
     private func clear() throws {
         do { try FileManager.default.removeItem(at: intentURL) }
         catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {}
-    }
-
-    private static func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {
-        try JSONEncoder().encode(value).write(to: url, options: .atomic)
     }
 }
 

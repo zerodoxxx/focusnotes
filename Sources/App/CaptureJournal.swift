@@ -14,6 +14,8 @@ struct CaptureJob: Sendable {
 }
 
 actor CaptureJournal {
+    private static let logger = Logger(subsystem: AppInfo.bundleIdentifier, category: "journal")
+
     struct Record: Codable {
         let prepared: PreparedCapture
         let hasPNG: Bool
@@ -29,8 +31,16 @@ actor CaptureJournal {
 
     init(stateDirectory: URL) {
         self.stateDirectory = stateDirectory
-        directory = stateDirectory.appendingPathComponent("unsaved", isDirectory: true)
+        directory = Self.directory(stateDirectory: stateDirectory)
         redirectsURL = stateDirectory.appendingPathComponent("capture-destinations.json")
+    }
+
+    static func directory(stateDirectory: URL) -> URL {
+        stateDirectory.appendingPathComponent("unsaved", isDirectory: true)
+    }
+
+    static func corruptDirectory(stateDirectory: URL) -> URL {
+        directory(stateDirectory: stateDirectory).appendingPathComponent("corrupt", isDirectory: true)
     }
 
     func store(_ job: CaptureJob) throws {
@@ -42,7 +52,7 @@ actor CaptureJournal {
         }
         let record = Record(prepared: job.prepared, hasPNG: job.png != nil, ocr: job.ocr, noteDraft: job.noteDraft,
                             noteOutsideSession: job.noteOutsideSession ? true : nil, noteFolder: job.noteFolder)
-        try Self.writeJSON(record, to: directory.appendingPathComponent(stem + ".json"))
+        try StateFile.writeJSON(record, to: directory.appendingPathComponent(stem + ".json"))
     }
 
     /// Captures bound for `oldPath`: in-flight jobs (after redirects) and stored records.
@@ -53,7 +63,10 @@ actor CaptureJournal {
         }.map { $0.prepared.capture.id })
         for url in try recordURLs() {
             let data = try Data(contentsOf: url)
-            guard let record = try? JSONDecoder().decode(Record.self, from: data) else { continue }
+            guard let record = try? JSONDecoder().decode(Record.self, from: data) else {
+                Self.logger.error("Skipped corrupt capture record while matching a rename")
+                continue
+            }
             if (try? vault.noteID(for: record.prepared.destination.url)) == oldPath {
                 ids.insert(record.prepared.capture.id)
             }
@@ -62,10 +75,6 @@ actor CaptureJournal {
     }
 
     private static func key(for id: UUID) -> String { id.uuidString.lowercased() }
-
-    private static func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {
-        try JSONEncoder().encode(value).write(to: url, options: .atomic)
-    }
 
     private static func removeIfPresent(_ url: URL) throws {
         do { try FileManager.default.removeItem(at: url) }
@@ -76,7 +85,7 @@ actor CaptureJournal {
     func relocate(_ ids: [UUID], to destination: Destination) throws {
         var redirects = try destinationRedirects()
         for id in ids { redirects[Self.key(for: id)] = destination }
-        try Self.writeJSON(redirects, to: redirectsURL)
+        try StateFile.writeJSON(redirects, to: redirectsURL)
         for id in ids {
             let url = directory.appendingPathComponent(Self.key(for: id) + ".json")
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
@@ -86,7 +95,7 @@ actor CaptureJournal {
             let updated = Record(prepared: replacingDestination(record.prepared, with: destination),
                                  hasPNG: record.hasPNG, ocr: record.ocr, noteDraft: record.noteDraft,
                                  noteOutsideSession: record.noteOutsideSession, noteFolder: record.noteFolder)
-            try Self.writeJSON(updated, to: url)
+            try StateFile.writeJSON(updated, to: url)
         }
     }
 
@@ -160,17 +169,9 @@ actor CaptureJournal {
 
     /// Keep undecodable records and their PNGs without retrying them on every launch.
     func quarantine(record url: URL) throws {
-        let corrupt = directory.appendingPathComponent("corrupt", isDirectory: true)
-        try FileManager.default.createDirectory(at: corrupt, withIntermediateDirectories: true)
         let stem = url.deletingPathExtension().lastPathComponent
-        let targetStem = FileManager.default.fileExists(atPath: corrupt.appendingPathComponent(stem + ".json").path)
-            ? stem + "-" + UUID().uuidString.lowercased() : stem
-        for ext in ["json", "png"] {
-            let source = directory.appendingPathComponent(stem + "." + ext)
-            if FileManager.default.fileExists(atPath: source.path) {
-                try FileManager.default.moveItem(at: source, to: corrupt.appendingPathComponent(targetStem + "." + ext))
-            }
-        }
+        try StateFile.quarantine([directory.appendingPathComponent(stem + ".json"), directory.appendingPathComponent(stem + ".png")],
+                                 stem: stem, into: Self.corruptDirectory(stateDirectory: stateDirectory))
     }
 
     func remove(id: UUID) throws {

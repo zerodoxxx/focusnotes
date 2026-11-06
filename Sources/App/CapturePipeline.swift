@@ -70,8 +70,8 @@ struct CapturePipeline: Sendable {
         self.calendar = calendar
         self.logger = logger
         self.noteIDForPin = noteIDForPin
-        renames = SessionRenameTransaction(vault: vault, sessions: sessions, journal: journal, pins: pins,
-                                           index: index, semantic: semantic, logger: logger)
+        renames = SessionRenameTransaction(vault: vault, stateDirectory: journal.stateDirectory, sessions: sessions,
+                                           journal: journal, pins: pins, index: index, semantic: semantic, logger: logger)
         selfCheck = SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames)
     }
 
