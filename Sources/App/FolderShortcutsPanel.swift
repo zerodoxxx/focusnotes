@@ -196,19 +196,19 @@ final class FolderShortcutsPanel: NSObject, NSWindowDelegate {
 
     private func receive(_ event: NSEvent) -> NSEvent? {
         guard let row = recording else { return event }
-        if event.keyCode == 53 { stopRecording(); return nil }
+        if UInt32(event.keyCode) == FolderShortcutStore.escapeKeyCode { stopRecording(); return nil }
         guard !event.isARepeat else { return nil }
-        guard ![54, 55, 56, 57, 58, 59, 60, 61, 62, 63].contains(event.keyCode) else { return nil }
+        guard !FolderShortcutStore.modifierKeyCodes.contains(UInt32(event.keyCode)) else { return nil }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        guard !flags.intersection([.command, .control, .option]).isEmpty else {
-            errorLabel.stringValue = "Include Command, Control, or Option."
-            return nil
-        }
         var modifiers: Hotkey.Modifiers = []
         if flags.contains(.command) { modifiers.insert(.command) }
         if flags.contains(.control) { modifiers.insert(.control) }
         if flags.contains(.option) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
+        guard FolderShortcutStore.hasRequiredModifier(modifiers) else {
+            errorLabel.stringValue = "Include Command, Control, or Option."
+            return nil
+        }
         row.hotkey = Hotkey(keyCode: UInt32(event.keyCode), modifiers: modifiers)
         row.status.stringValue = ""
         errorLabel.stringValue = ""

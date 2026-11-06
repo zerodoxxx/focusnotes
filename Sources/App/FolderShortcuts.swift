@@ -22,6 +22,13 @@ struct FolderShortcut: Codable, Equatable, Sendable, Identifiable {
 
     var hotkey: Hotkey { Hotkey(keyCode: keyCode, modifiers: .init(rawValue: modifiers)) }
 
+    /// The menu title, e.g. "Start Session → Sessions/Work".
+    var menuTitle: String {
+        guard action == .startSession else { return "\(action.title) → \(folder)" }
+        let path = (try? NoteFolder(rawValue: folder))?.sessionsRelativePath ?? "\(Vault.sessionsDirectoryName)/\(folder)"
+        return "\(action.title) → \(path)"
+    }
+
     init(id: UUID = UUID(), hotkey: Hotkey, action: FolderShortcutAction, folder: String) {
         self.id = id
         keyCode = hotkey.keyCode
@@ -44,6 +51,12 @@ struct FolderShortcutValidationError: LocalizedError {
 
 struct FolderShortcutStore {
     static let maximumBindings = 20
+    static let allowedModifiers: Hotkey.Modifiers = [.command, .option, .control, .shift]
+    static let requiredModifiers: Hotkey.Modifiers = [.command, .option, .control]
+    static let escapeKeyCode: UInt32 = 53
+    // Modifier, caps lock, and function keys are not shortcut trigger keys.
+    static let modifierKeyCodes: Set<UInt32> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+    static func hasRequiredModifier(_ modifiers: Hotkey.Modifiers) -> Bool { !modifiers.intersection(requiredModifiers).isEmpty }
     private static let envelopeVersion = 1
     let url: URL
 
@@ -77,18 +90,14 @@ struct FolderShortcutStore {
         guard bindings.count <= maximumBindings else { try reject("You can add up to \(maximumBindings) folder shortcuts."); return }
         let builtIns: Set<Hotkey> = [.captureSelection, .captureRegion, .captureSelectionOutsideSession,
             .captureRegionOutsideSession, .search, .toggleSession, .writeNote, .writeNoteOutsideSession, .addSubheading, .openLibrary]
-        let allowed: Hotkey.Modifiers = [.command, .option, .control, .shift]
-        let required: Hotkey.Modifiers = [.command, .option, .control]
-        // Modifier, caps lock, and function keys are not shortcut trigger keys.
-        let modifierKeyCodes: Set<UInt32> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
         var ids = Set<UUID>()
         var chords = Set<Hotkey>()
         for binding in bindings {
             guard ids.insert(binding.id).inserted else { try reject("Each folder shortcut must have a unique identity."); return }
             let chord = binding.hotkey
-            guard chord.modifiers.rawValue & ~allowed.rawValue == 0,
-                  !chord.modifiers.intersection(required).isEmpty,
-                  chord.keyCode <= 126, chord.keyCode != 53, !modifierKeyCodes.contains(chord.keyCode) else {
+            guard chord.modifiers.rawValue & ~allowedModifiers.rawValue == 0,
+                  hasRequiredModifier(chord.modifiers),
+                  chord.keyCode <= 126, chord.keyCode != escapeKeyCode, !modifierKeyCodes.contains(chord.keyCode) else {
                 try reject("Choose a key with Command, Option, or Control. Escape and modifier keys cannot be used."); return
             }
             guard !builtIns.contains(chord) else { try reject("This combination is already used by a built-in shortcut."); return }
@@ -102,7 +111,7 @@ struct FolderShortcutStore {
             guard !binding.folder.isEmpty, folder.rawValue == binding.folder else {
                 try reject("Choose a valid relative folder path without empty components or surrounding whitespace."); return
             }
-            if binding.action == .quickNote, folder.components.first?.lowercased() == "assets" {
+            if binding.action == .quickNote, folder.components.first?.lowercased() == Vault.assetsDirectoryName.lowercased() {
                 try reject("The assets folder is reserved for captured images. Choose another quick note folder."); return
             }
         }

@@ -2,6 +2,12 @@ import AppKit
 import CryptoKit
 import Foundation
 
+enum OnboardingDefaults {
+    static let accessibilityGuideShown = "didShowAccessibilityGuide"
+    static let notesFolderSetupShown = "didShowNotesFolderSetup"
+    static let vaultPath = "vaultPath"
+}
+
 /// Folder preferences change the next launch, never the running capture pipeline.
 @MainActor
 enum NotesFolder {
@@ -11,7 +17,7 @@ enum NotesFolder {
     }
 
     static func configuredRoot(defaults: UserDefaults = .standard) -> URL {
-        if let path = defaults.string(forKey: "vaultPath") {
+        if let path = defaults.string(forKey: OnboardingDefaults.vaultPath) {
             return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
         }
         return FileManager.default.homeDirectoryForCurrentUser
@@ -56,7 +62,7 @@ enum NotesFolder {
     @discardableResult
     static func save(_ root: URL, defaults: UserDefaults = .standard) throws -> URL {
         let folder = try validate(root)
-        defaults.set(folder.path, forKey: "vaultPath")
+        defaults.set(folder.path, forKey: OnboardingDefaults.vaultPath)
         return folder
     }
 
@@ -96,10 +102,10 @@ enum NotesFolder {
     /// Existing users retain their configured folder without another setup prompt.
     static func startupRoot(defaults: UserDefaults = .standard) -> URL? {
         let root = configuredRoot(defaults: defaults)
-        guard !defaults.bool(forKey: "didShowNotesFolderSetup"),
-              defaults.string(forKey: "vaultPath") == nil,
-              !defaults.bool(forKey: "didShowAccessibilityGuide") else {
-            defaults.set(true, forKey: "didShowNotesFolderSetup")
+        guard !defaults.bool(forKey: OnboardingDefaults.notesFolderSetupShown),
+              defaults.string(forKey: OnboardingDefaults.vaultPath) == nil,
+              !defaults.bool(forKey: OnboardingDefaults.accessibilityGuideShown) else {
+            defaults.set(true, forKey: OnboardingDefaults.notesFolderSetupShown)
             do { return try validate(root) }
             catch {
                 let alert = NSAlert()
@@ -132,7 +138,7 @@ enum NotesFolder {
                 return nil
             }
             guard let selected else { continue }
-            defaults.set(true, forKey: "didShowNotesFolderSetup")
+            defaults.set(true, forKey: OnboardingDefaults.notesFolderSetupShown)
             return selected
         }
     }

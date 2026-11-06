@@ -12,6 +12,11 @@ enum AppErrorLog {
     }
 }
 
+private extension NoteKind {
+    var pickerLabel: String { self == .session ? "Session" : "Note" }
+    var pickerSymbol: String { self == .session ? "record.circle" : "doc.text" }
+}
+
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
@@ -204,7 +209,7 @@ final class AppController: NSObject, NSMenuDelegate {
             registerHotkeys()
             installStatusItem()
             // The guide replaces the system AX prompt, and only the first launch ever shows it.
-            let guideKey = "didShowAccessibilityGuide"
+            let guideKey = OnboardingDefaults.accessibilityGuideShown
             if !CapturePermissions.accessibilityTrusted, !UserDefaults.standard.bool(forKey: guideKey) {
                 UserDefaults.standard.set(true, forKey: guideKey)
                 permissionGuide.show(for: .accessibility)
@@ -328,7 +333,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         .filter { Self.sessionPath($0.path, isIn: folder) }
                     guard await controller.waitForAcquisition() else { return }
                     controller.presentInput(placeholder: "Session name", title: "Start Session",
-                        secondary: "In Sessions/\(folder.rawValue)", suggestions: suggestions,
+                        secondary: "In \(folder.sessionsRelativePath)", suggestions: suggestions,
                         suggestionValue: { "/" + $0.path },
                         onSubmit: { [weak controller] name in
                             guard !NoteTitle.cleanTitle(name).isEmpty else { return }
@@ -366,7 +371,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     static func sessionPath(_ path: String, isIn folder: NoteFolder) -> Bool {
         let parent = (path as NSString).deletingLastPathComponent
-        return parent.caseInsensitiveCompare("Sessions/\(folder.rawValue)") == .orderedSame
+        return parent.caseInsensitiveCompare(folder.sessionsRelativePath) == .orderedSame
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
@@ -601,6 +606,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private static let draftKeptOpenTitle = "Couldn't keep draft; editor stays open"
+    private static let draftKeptFailureTitle = "Couldn't add note; draft kept"
 
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
@@ -609,8 +615,8 @@ final class AppController: NSObject, NSMenuDelegate {
             let suggestions = candidates.map { candidate in
                 let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
                 return Suggestion(title: candidate.title,
-                                  secondary: "\(candidate.kind == .session ? "Session" : "Note") · \(path)",
-                                  symbolName: candidate.kind == .session ? "record.circle" : "doc.text",
+                                  secondary: "\(candidate.kind.pickerLabel) · \(path)",
+                                  symbolName: candidate.kind.pickerSymbol,
                                   value: candidate.url.absoluteString)
             }
             let panel = InputPanelController()
@@ -669,11 +675,11 @@ final class AppController: NSObject, NSMenuDelegate {
             return suggestions.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }.prefix(8).map {
                 let session = $0.kind == .session
                 let date = Self.stamp($0.modified, pattern: "MMM d, yyyy", calendar: calendar)
-                let detail = "\(session ? "Session" : "Note") · \(date)"
+                let detail = "\($0.kind.pickerLabel) · \(date)"
                 let pathDetail = session ? "\(detail) · \($0.path)" : detail
                 return Suggestion(title: $0.title,
                                   secondary: pathDetail,
-                                  symbolName: session ? "record.circle" : "doc.text",
+                                  symbolName: $0.kind.pickerSymbol,
                                   value: suggestionValue?($0))
             }
         }, onAccept: onAccept, onSubmit: { [weak self] text in
@@ -788,7 +794,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let choices = candidates.map {
             Suggestion(title: $0.name,
                        secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: "MMM d, yyyy", calendar: calendar)) · \($0.notePath)",
-                       symbolName: "record.circle",
+                       symbolName: NoteKind.session.pickerSymbol,
                        value: $0.notePath)
         }
         let panel = InputPanelController()
@@ -894,7 +900,12 @@ final class AppController: NSObject, NSMenuDelegate {
                                            outsideSession: requestedOutside && sessionDestination != nil)
                 let calendar = pipeline.calendar
                 func noteID(_ destination: Destination?) -> String? {
-                    destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
+                    guard let destination else { return nil }
+                    do { return try pipeline.vault.noteID(for: destination.url) }
+                    catch {
+                        controller.logger.error("Note ID lookup failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                        return nil
+                    }
                 }
                 @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
                     return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession, folder: state.folder)
@@ -915,7 +926,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onSubmit: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller) }
-                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onNew: { [weak controller, weak editor] text in
@@ -929,7 +940,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             do {
                                 _ = try await save(text, controller: controller)
                                 controller.openNoteEditor(folder: state.folder, outsideSession: requestedOutside)
-                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onOpenAsNote: { [weak controller] text in
@@ -945,17 +956,15 @@ final class AppController: NSObject, NSMenuDelegate {
                                     return
                                 }
                                 controller.showToast(Toast(style: .warning, title: "Nothing to open yet", subtitle: "Write something first"))
-                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     browseItems: {
                         let pinned = pipeline.pins.paths()
                         return state.suggestions.sorted { $0.modified > $1.modified }.map {
-                            let session = $0.kind == .session
-                            let symbol = session ? "record.circle" : "doc.text"
                             return BrowseItem(id: $0.path, title: $0.title,
-                                              detail: "\(session ? "Session" : "Note") · \(Self.stamp($0.modified, pattern: "MMM d", calendar: calendar))",
-                                              symbolName: symbol, isPinned: pinned.contains($0.path))
+                                              detail: "\($0.kind.pickerLabel) · \(Self.stamp($0.modified, pattern: "MMM d", calendar: calendar))",
+                                              symbolName: $0.kind.pickerSymbol, isPinned: pinned.contains($0.path))
                         }
                     },
                     onBrowse: { [weak controller, weak editor] item, choice in
@@ -1006,7 +1015,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller, newNote: true) }
-                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onWriteOutsideSession: sessionDestination.map { sessionDestination in
@@ -1163,7 +1172,11 @@ final class AppController: NSObject, NSMenuDelegate {
                     let data = try await self.pipeline.assetData(assetPath)
                     guard let image = await AppMedia.thumbnail(pngData: data), !Task.isCancelled else { return nil }
                     return NSImage(cgImage: image, size: .zero)
-                } catch { return nil }
+                } catch {
+                    if error is CancellationError { return nil }
+                    self.logger.error("Search thumbnail failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                    return nil
+                }
             }
         } else { loader = nil }
         return SearchRow(id: id, title: hit.title, snippet: hit.snippet,
@@ -1410,8 +1423,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard let menu = folderShortcutsMenu else { return }
         menu.removeAllItems()
         for binding in folderShortcuts {
-            let folder = binding.action == .startSession ? "Sessions/\(binding.folder)" : binding.folder
-            let item = menuItem("\(binding.action.title) → \(folder)", action: #selector(menuUseFolderShortcut(_:)))
+            let item = menuItem(binding.menuTitle, action: #selector(menuUseFolderShortcut(_:)))
             item.representedObject = binding.id
             setMenuTitle(item, title: item.title, hotkey: binding.hotkey)
             menu.addItem(item)
