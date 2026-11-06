@@ -36,7 +36,7 @@ public static partial class NoteFile
             var bytes = buffer.ToArray();
             var rewritten = RewriteHeading(bytes, title);
             var snapshot = VaultFileSnapshot.From(opened, bytes);
-            var temporaryName = ".pending-" + Guid.NewGuid().ToString("N");
+            var temporaryName = TempNames.PendingPrefix + Guid.NewGuid().ToString("N");
             var temporary = Path.Combine(Path.GetDirectoryName(source)!, temporaryName);
             var moved = false;
             FileMetadata? replaced = null;
@@ -71,7 +71,7 @@ public static partial class NoteFile
                 // Replacement is atomic: the live note is never truncated. The original handle
                 // still denies writers, and every ancestor remains pinned until replacement.
                 replaced = published;
-                if (OperatingSystem.IsWindows() || ReplaceHook.Value is not null) { ReplaceFile(temporary, target, published, ref targetLost); }
+                if (UsesReplaceFile) { ReplaceFile(temporary, target, published, ref targetLost); }
                 else { File.Move(temporary, target, true); }
             }
             catch (Exception error)
@@ -140,11 +140,11 @@ public static partial class NoteFile
     }
 
     // With `keepFor` (the session note's file name), the staged copy may be the only one left: it is renamed to
-    // the restorable ".recovered-" name instead of deleted, unless that copy already exists.
+    // the restorable "recovered-" name instead of deleted, unless that copy already exists.
     internal static void RemoveSessionTemporary(string root, SessionRenameStage stage, string? keepFor = null)
     {
         var parts = PathComponents(stage.TemporaryPath);
-        if (!System.Text.RegularExpressions.Regex.IsMatch(parts[^1], @"^\.pending-[0-9a-f]{32}$"))
+        if (!TempNames.IsPending(parts[^1]))
             throw new VaultFileException(VaultFileError.InvalidFileName);
         using var ancestors = RenameAncestors.Lock(root, parts);
         var path = SafePath(root, stage.TemporaryPath);
@@ -172,11 +172,11 @@ public static partial class NoteFile
         finally { Marshal.FreeHGlobal(disposition); }
     }
 
-    // Installs a verified ".recovered-" copy of a staged temporary at a missing session target; never overwrites.
+    // Installs a verified "recovered-" copy of a staged temporary at a missing session target; never overwrites.
     internal static void InstallSessionTemporary(string root, SessionRenameStage stage, string targetPath)
     {
         var parts = PathComponents(stage.TemporaryPath);
-        if (!PendingName.IsMatch(parts[^1]))
+        if (!TempNames.IsPending(parts[^1]))
             throw new VaultFileException(VaultFileError.InvalidFileName);
         var targetParts = PathComponents(targetPath);
         if (!parts.SkipLast(1).SequenceEqual(targetParts.SkipLast(1)))
@@ -187,7 +187,7 @@ public static partial class NoteFile
             var path = SafePath(root, stage.TemporaryPath);
             var target = SafePath(root, targetPath);
             if (FileMetadata.At(target) is not null) return;
-            // Only the ".recovered-" sibling marks a replace that removed the target; a bare ".pending-" may predate it.
+            // Only the "recovered-" sibling marks a replace that removed the target; a bare "pending-" may predate it.
             var kept = Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], targetParts[^1]));
             path = FileMetadata.At(kept) is not null ? kept : Path.Combine(Path.GetDirectoryName(path)!, RecoveredName(parts[^1], null));
             if (FileMetadata.At(path) is null) return;

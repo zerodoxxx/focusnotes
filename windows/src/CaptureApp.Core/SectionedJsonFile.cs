@@ -11,8 +11,7 @@ namespace CaptureApp.Core;
 /// a sibling corrupt directory (like the capture journal) and the file starts empty.
 public static class SectionedJsonFile
 {
-    private static readonly ConcurrentDictionary<string, object> Gates = new(
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, object> Gates = new(PathIdentity.Comparer);
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
@@ -80,7 +79,7 @@ public static class SectionedJsonFile
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                if (attempt < 4) { Thread.Sleep(20); continue; }
+                if (attempt < FileRetry.SectionedJsonRetries) { Thread.Sleep(FileRetry.SectionedJsonDelayMs); continue; }
                 if (strict) { throw; }
                 return [];
             }

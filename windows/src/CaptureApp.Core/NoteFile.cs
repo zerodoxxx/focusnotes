@@ -98,14 +98,13 @@ public static partial class NoteFile
     }
 
     private static readonly ConcurrentDictionary<string, bool> SweptRoots = new(StringComparer.Ordinal);
-    private static readonly System.Text.RegularExpressions.Regex PendingName = new(@"^\.pending-[0-9a-f]{32}$");
 
-    // Best effort: remove ".pending-<guid>" files that a crashed write left behind. Skips dot-directories,
+    // Best effort: remove "pending-<guid>" files that a crashed write left behind. Skips dot-directories,
     // links and cloud placeholders (same attributes WatchSnapshot treats as online-only).
     internal static void SweepStaleTemporaries(string root, TimeSpan? olderThan = null)
     {
         var cutoff = DateTime.UtcNow - (olderThan ?? TimeSpan.FromHours(1));
-        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x400000 | 0x40000);
+        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | CloudRecall.Mask;
         var options = new EnumerationOptions { AttributesToSkip = skip };
         var pending = new Stack<string>();
         pending.Push(root);
@@ -119,7 +118,7 @@ public static partial class NoteFile
                     try
                     {
                         if (Directory.Exists(path)) { if (!name.StartsWith('.')) { pending.Push(path); } }
-                        else if (PendingName.IsMatch(name) && File.GetLastWriteTimeUtc(path) < cutoff) { File.Delete(path); }
+                        else if (TempNames.IsPending(name) && File.GetLastWriteTimeUtc(path) < cutoff) { File.Delete(path); }
                         else if (RecoveredTarget(name) is { } targetName) { RestoreRecovered(root, Path.Combine(directory, targetName)); }
                     }
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
@@ -138,6 +137,9 @@ public static partial class NoteFile
     // Test seam: replaces the note append's write (handle, offset, data), so a test can write some bytes and then fail.
     internal static readonly AsyncLocal<Action<Microsoft.Win32.SafeHandles.SafeFileHandle, long, byte[]>?> AppendWriteHook = new();
 
+    // Windows overwrites through ReplaceFile; elsewhere only a test hook needs that path.
+    private static bool UsesReplaceFile => OperatingSystem.IsWindows() || ReplaceHook.Value is not null;
+
     internal static void Report(string message)
     {
         System.Diagnostics.Trace.TraceError(message);
@@ -145,13 +147,10 @@ public static partial class NoteFile
         catch (Exception) { }
     }
 
-    private static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
-        new(@"^\.recovered-(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2,200})\z");
-
-    // Decodes the target name from an on-disk ".recovered-" name; null unless it is a plain, valid file name.
+    // Decodes the target name from an on-disk "recovered-" name; null unless it is a plain, valid file name.
     private static string? RecoveredTarget(string name)
     {
-        var match = RecoveredPattern.Match(name);
+        var match = TempNames.RecoveredPattern.Match(name);
         if (!match.Success) { return null; }
         string target;
         try { target = Utf8.GetString(Convert.FromHexString(match.Groups["target"].Value)); }
@@ -168,7 +167,7 @@ public static partial class NoteFile
         return true;
     }
 
-    // Moves the newest ".recovered-" copy of a missing target back into place; never overwrites. Older copies
+    // Moves the newest "recovered-" copy of a missing target back into place; never overwrites. Older copies
     // are renamed to the plain, non-restorable name (never deleted). Call under no lock; it takes the target's gate.
     // Returns false only when a restorable copy exists, could not be moved back and the target is still missing,
     // so a caller that writes must not start a fresh note; every other outcome, including "nothing to restore", returns true.
@@ -203,11 +202,11 @@ public static partial class NoteFile
     // Restorable copies for a target, newest first; links, placeholders and non-files are skipped like the sweep does.
     private static List<string>? RecoveredCandidates(string directory, string targetName)
     {
-        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x400000 | 0x40000);
+        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | CloudRecall.Mask;
         var suffix = "-" + Convert.ToHexStringLower(Utf8.GetBytes(targetName));
         try
         {
-            return Directory.GetFiles(directory, ".recovered-*" + suffix)
+            return Directory.GetFiles(directory, TempNames.RecoveredPrefix + "*" + suffix)
                 .Where(path => RecoveredTarget(Path.GetFileName(path)) == targetName
                     && FileMetadata.At(path) is { IsLink: false } && (File.GetAttributes(path) & (skip | FileAttributes.Directory)) == 0)
                 .OrderByDescending(File.GetLastWriteTimeUtc).ThenByDescending(path => path, StringComparer.Ordinal).ToList();
@@ -220,7 +219,7 @@ public static partial class NoteFile
     {
         foreach (var copy in copies)
         {
-            try { File.Move(copy, Path.Combine(directory, RecoveredName(".pending-" + RecoveredPattern.Match(Path.GetFileName(copy)).Groups["id"].Value, null)), false); }
+            try { File.Move(copy, Path.Combine(directory, RecoveredName(TempNames.PendingPrefix + TempNames.RecoveredPattern.Match(Path.GetFileName(copy)).Groups["id"].Value, null)), false); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
@@ -245,7 +244,7 @@ public static partial class NoteFile
 
     internal static FileStream OpenExclusive(string path, FileMode mode, FileAccess access)
     {
-        var until = Environment.TickCount64 + 10000;
+        var until = Environment.TickCount64 + FileRetry.ExclusiveOpenBudgetMs;
         while (true)
         {
             var metadata = FileMetadata.At(path);
@@ -282,9 +281,9 @@ public static partial class NoteFile
                     throw;
                 }
             }
-            catch (IOException error) when (error is not VaultFileException && Environment.TickCount64 < until && ((error.HResult & 0xFFFF) is 11 or 32 or 33))
+            catch (IOException error) when (error is not VaultFileException && Environment.TickCount64 < until && FileErrors.IsSharingViolation(error))
             {
-                Thread.Sleep(2);
+                Thread.Sleep(FileRetry.ExclusiveOpenPollMs);
             }
         }
     }
@@ -416,7 +415,7 @@ public static partial class NoteFile
         var target = SafePath(root, relativePath, true);
         var existing = FileMetadata.At(target);
         existing?.Validate();
-        var temporary = Path.Combine(Path.GetDirectoryName(target)!, ".pending-" + Guid.NewGuid().ToString("N"));
+        var temporary = Path.Combine(Path.GetDirectoryName(target)!, TempNames.PendingPrefix + Guid.NewGuid().ToString("N"));
         FileMetadata? replaced = null;
         var targetLost = false;
         try
@@ -435,7 +434,7 @@ public static partial class NoteFile
             }
 
             current?.Validate();
-            if (overwrite && current is not null && (OperatingSystem.IsWindows() || ReplaceHook.Value is not null))
+            if (overwrite && current is not null && UsesReplaceFile)
             {
                 replaced = current;
                 ReplaceFile(temporary, target, current, ref targetLost);
@@ -458,7 +457,7 @@ public static partial class NoteFile
     }
 
     // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
-    // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
+    // "recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
     // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
     internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
         Action<string, string>? keep = null)
@@ -471,7 +470,7 @@ public static partial class NoteFile
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
-            // ".pending-" name is later deleted. Copying only needs read sharing.
+            // "pending-" name is later deleted. Copying only needs read sharing.
             Report($"Could not rename kept temporary: {error}");
             try { File.Copy(temporary, kept, false); }
             catch (Exception copy) when (copy is IOException or UnauthorizedAccessException)
@@ -494,7 +493,7 @@ public static partial class NoteFile
     internal static string RecoveredName(string pendingName, string? restorableTarget)
     {
         var bytes = restorableTarget is null ? [] : Utf8.GetBytes(restorableTarget);
-        return ".recovered-" + pendingName[".pending-".Length..] + (bytes.Length is > 0 and <= 100 ? "-" + Convert.ToHexStringLower(bytes) : "");
+        return TempNames.RecoveredPrefix + pendingName[TempNames.PendingPrefix.Length..] + (bytes.Length is > 0 and <= 100 ? "-" + Convert.ToHexStringLower(bytes) : "");
     }
 
     // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
@@ -507,14 +506,14 @@ public static partial class NoteFile
         catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !TargetIntact(target, expected) && File.Exists(temporary))
         {
             targetLost = true;
-            const int attempts = 3;
+            const int attempts = FileRetry.MoveFallbackAttempts;
             for (var attempt = 1; ; attempt++)
             {
                 try { (move ?? MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(temporary, target); return; }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < attempts && !File.Exists(target))
                 {
                     System.Diagnostics.Trace.TraceError($"Move fallback attempt {attempt} failed: {error}");
-                    Thread.Sleep(75);
+                    Thread.Sleep(FileRetry.MoveFallbackDelayMs);
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
@@ -564,4 +563,27 @@ public static partial class NoteFile
             AtomicWrite(bytes, root, relativePath);
         }
     }
+}
+
+public static class FileRetry
+{
+    public const int DurableBudgetMs = 10000;
+    public const int DurablePollMs = 2;
+    public const int ExclusiveOpenBudgetMs = 10000;
+    public const int ExclusiveOpenPollMs = 2;
+    public const int SectionedJsonRetries = 4;
+    public const int SectionedJsonDelayMs = 20;
+    public const int MoveFallbackAttempts = 3;
+    public const int MoveFallbackDelayMs = 75;
+}
+
+internal static class TempNames
+{
+    internal const string PendingPrefix = ".pending-";
+    internal const string RecoveredPrefix = ".recovered-";
+    private static readonly System.Text.RegularExpressions.Regex PendingName = new(@"^\.pending-[0-9a-f]{32}$");
+    internal static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
+        new(@"^\.recovered-(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2,200})\z");
+
+    internal static bool IsPending(string name) => PendingName.IsMatch(name);
 }

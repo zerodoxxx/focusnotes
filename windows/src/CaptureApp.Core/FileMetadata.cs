@@ -44,7 +44,7 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
                     return null;
                 }
 
-                if (error is 5 or 6 or 19)
+                if (FileErrors.IsDeniedCode(error))
                 {
                     throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
                 }
@@ -58,12 +58,12 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastPInvokeError();
-            if (error is 2 or 3)
+            if (FileErrors.IsAbsentCode(error))
             {
                 return null;
             }
 
-            if (error is 21 or 55 or 1117 or 1167)
+            if (FileErrors.IsUnavailableVolumeCode(error))
             {
                 throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
             }
@@ -198,4 +198,32 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool GetFileTagInfo(SafeFileHandle handle, int kind, out TagInfo info, uint size);
     }
+}
+
+public static class FileErrors
+{
+    public static int Code(Exception e) => e.HResult & 0xFFFF;
+
+    public static bool IsSharingCode(int c) => c is 11 or 32 or 33;
+
+    public static bool IsAbsentCode(int c) => c is 2 or 3;
+
+    public static bool IsUnavailableVolumeCode(int c) => c is 21 or 55 or 1117 or 1167;
+
+    public static bool IsDeniedCode(int c) => c is 5 or 6 or 19;
+
+    public static bool IsSharingViolation(Exception e) => e is IOException && IsSharingCode(Code(e));
+}
+
+public static class PathIdentity
+{
+    public static StringComparer Comparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    public static StringComparison Comparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+}
+
+public static class CloudRecall
+{
+    // Cloud placeholder attributes; sweeps and restores skip files carrying them so they never trigger a recall.
+    public const FileAttributes Mask = (FileAttributes)(0x400000 | 0x40000);
 }
