@@ -37,8 +37,7 @@ internal sealed partial class AppController
     // Hotkeys. Callbacks arrive on the registrar's message thread, so each captures its context first.
     internal void RegisterHotkeys()
     {
-        hotkeys ??= new HotkeyRegistrar();
-        hotkeys.UnregisterAll();
+        Hotkeys.UnregisterAll();
         if (quitting || !Setup.ConsentAnswered) return;
         failures.Clear();
         LoadBindings();
@@ -67,7 +66,7 @@ internal sealed partial class AppController
                 continue;
             }
 
-            var result = hotkeys.Register(action, chord, handler);
+            var result = Hotkeys.Register(action, chord, handler);
             if (!result.Succeeded) { failures[action] = result; log.Error($"Hotkey {action} {chord.DisplayString} failed ({result.Win32Error})"); }
         }
 
@@ -141,9 +140,9 @@ internal sealed partial class AppController
     private void OnMenu(string id)
     {
         if (quitting) { return; }
-        if (id == "folder-shortcuts.settings") { OpenSettings(3); return; }
-        if (id.StartsWith("folder-shortcuts.", StringComparison.Ordinal)
-            && Guid.TryParse(id["folder-shortcuts.".Length..], out var bindingId))
+        if (id == FolderSettingsMenuId) { OpenSettings(3); return; }
+        if (id.StartsWith(FolderMenuPrefix, StringComparison.Ordinal)
+            && Guid.TryParse(id[FolderMenuPrefix.Length..], out var bindingId))
         {
             if (folderBindings.FirstOrDefault(binding => binding.Id == bindingId) is { } binding) RunFolderShortcut(binding);
             return;

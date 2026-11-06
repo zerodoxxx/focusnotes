@@ -9,6 +9,8 @@ namespace CaptureApp.App;
 
 internal sealed partial class AppController
 {
+    /// Win32 ERROR_INVALID_PARAMETER, the code HotkeyRegistrar reports for a rejected chord.
+    private const int ErrorInvalidParameter = 87;
     private SetupWindow? setupWindow;
     private SettingsWindow? settingsWindow;
 
@@ -106,11 +108,10 @@ internal sealed partial class AppController
     /// Test-registers the combination before saving it (§4 guard 3).
     internal HotkeyRegistrationResult TrySaveBinding(HotkeyAction action, KeyChord chord)
     {
-        hotkeys ??= new HotkeyRegistrar();
-        if (ValidateBinding(action, chord) is { } error) { return new(action, chord, false, 87, error); }
+        if (ValidateBinding(action, chord) is { } error) { return new(action, chord, false, ErrorInvalidParameter, error); }
         try
         {
-            var result = BindingStore.SaveIfAvailable(action, chord, hotkeys);
+            var result = BindingStore.SaveIfAvailable(action, chord, Hotkeys);
             if (result.Succeeded)
             {
                 var set = Settings.DisabledShortcuts.ToHashSet(StringComparer.Ordinal);
@@ -120,7 +121,7 @@ internal sealed partial class AppController
 
             return result;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception exception) when (SettingsFailures.IsSaveError(exception))
         {
             if (exception is not InvalidDataException) { ReportSaveFailure(exception); }
             return new(action, chord, false, 0, exception.Message);
@@ -132,7 +133,7 @@ internal sealed partial class AppController
     internal bool TrySave(Action save)
     {
         try { save(); return true; }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (SettingsFailures.IsSaveError(error))
         {
             ReportSaveFailure(error);
             return false;

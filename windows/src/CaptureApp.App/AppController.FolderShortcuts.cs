@@ -7,6 +7,9 @@ namespace CaptureApp.App;
 
 internal sealed partial class AppController
 {
+    private const string FolderMenuId = "folder-shortcuts";
+    private const string FolderMenuPrefix = FolderMenuId + ".";
+    private const string FolderSettingsMenuId = FolderMenuPrefix + "settings";
     private IReadOnlyList<FolderShortcutBinding> folderBindings = [];
     private readonly Dictionary<Guid, HotkeyRegistrationResult> folderFailures = [];
     private string? folderBindingsLoadError;
@@ -34,10 +37,10 @@ internal sealed partial class AppController
         {
             if (ValidateFolderChord(binding.Id, binding.Shortcut) is { } reason)
             {
-                folderFailures[binding.Id] = new(null, binding.Shortcut, false, 87, reason);
+                folderFailures[binding.Id] = new(null, binding.Shortcut, false, ErrorInvalidParameter, reason);
                 continue;
             }
-            var result = hotkeys!.Register(binding.Id, binding.Shortcut,
+            var result = Hotkeys.Register(binding.Id, binding.Shortcut,
                 () => dispatcher.BeginInvoke(() => RunFolderShortcut(binding)));
             if (!result.Succeeded) { folderFailures[binding.Id] = result; }
         }
@@ -60,14 +63,13 @@ internal sealed partial class AppController
         if (folderBindingsLoadError is not null) { throw new InvalidDataException("Existing folder shortcuts could not be read. Repair the settings file before replacing them."); }
         FolderShortcutStore.Validate(proposed, Bindings, Settings.DisabledShortcuts);
         var previous = folderBindings;
-        hotkeys ??= new HotkeyRegistrar();
-        hotkeys.UnregisterAll();
+        Hotkeys.UnregisterAll();
         try
         {
             foreach (var binding in proposed)
             {
                 if (ValidateFolderChord(binding.Id, binding.Shortcut, proposed) is { } reason) throw new InvalidDataException(reason);
-                var result = hotkeys.Register(binding.Id, binding.Shortcut, () => { });
+                var result = Hotkeys.Register(binding.Id, binding.Shortcut, () => { });
                 if (!result.Succeeded) throw new InvalidDataException(result.ValidationError ?? $"{binding.Shortcut.DisplayString} is unavailable (Windows error {result.Win32Error}).");
             }
             FolderBindingStore.Save(proposed);
@@ -119,10 +121,10 @@ internal sealed partial class AppController
 
     private TrayMenuItem FolderShortcutsMenu()
     {
-        var children = new List<TrayMenuItem> { new("folder-shortcuts.settings", "Configure Folder Shortcuts…") };
-        children.AddRange(folderBindings.Select(binding => new TrayMenuItem("folder-shortcuts." + binding.Id,
+        var children = new List<TrayMenuItem> { new(FolderSettingsMenuId, "Configure Folder Shortcuts…") };
+        children.AddRange(folderBindings.Select(binding => new TrayMenuItem(FolderMenuPrefix + binding.Id,
             (binding.Action == FolderShortcutAction.QuickNote ? "Quick Note → " : "Start Session → Sessions/") + binding.Folder,
             folderFailures.ContainsKey(binding.Id) ? "" : binding.Shortcut.DisplayString)));
-        return new("folder-shortcuts", "Folder Shortcuts", Children: children);
+        return new(FolderMenuId, "Folder Shortcuts", Children: children);
     }
 }

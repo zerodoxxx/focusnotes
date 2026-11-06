@@ -35,6 +35,8 @@ internal sealed partial class AppController : IDisposable
     private UiHost host = null!;
     private TrayIcon? tray;
     private HotkeyRegistrar? hotkeys;
+    /// Created on first registration; quit and pause paths use the field so they never create one.
+    private HotkeyRegistrar Hotkeys => hotkeys ??= new HotkeyRegistrar();
     private PowerMonitor? power;
     private SemanticIndexer? semantic;
     private bool openedSetupThisLaunch;
@@ -66,7 +68,7 @@ internal sealed partial class AppController : IDisposable
     {
         pipeline = testPipeline;
         Coordinator = new(testPipeline, new HeadlessCaptureHost());
-        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
+        WireChooseNote();
     }
 
     public string SettingsPath { get; }
@@ -126,7 +128,7 @@ internal sealed partial class AppController : IDisposable
         host = new UiHost(dispatcher, trigger => BindingText(trigger == CaptureTrigger.Selection ? HotkeyAction.CaptureSelection : HotkeyAction.CaptureArea),
             () => BindingText(HotkeyAction.ToggleSession), RefreshMenu);
         Coordinator = new CaptureCoordinator(pipeline, host);
-        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
+        WireChooseNote();
         host.OnExpire = Coordinator.ToastExpired;
         LoadBindings();
         LoadFolderBindings();
@@ -169,6 +171,8 @@ internal sealed partial class AppController : IDisposable
         if (Setup.NeedsAttention) { OpenSetup(manual: true); }
         else { Coordinator.ShowToast(new(AppToastStyle.Success, $"{AppInfo.Name} is already running", "Open the tray icon for commands")); }
     });
+
+    private void WireChooseNote() => Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
 
     private void Revalidate()
     {
