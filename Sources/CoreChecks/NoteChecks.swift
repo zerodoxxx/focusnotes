@@ -1,4 +1,4 @@
-import Core
+@_spi(Checks) import Core
 import Foundation
 
 func checkTypedNotes() async throws {
@@ -149,11 +149,11 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
                     "malformed relative slash input should prepare a flat safe filename: \(item.0)")
         _ = try await service.save(preparedFallback)
         let fallbackContents = try checkRead(preparedFallback.destination.url)
-        try require(fallbackContents.hasPrefix("# \(item.0)\n\n<!-- note:"),
+        try require(fallbackContents.hasPrefix("# \(item.0)\n\n" + CaptureFormat.noteMarkerPrefix),
                     "malformed relative slash input should save as an ordinary note: \(item.0)")
     }
     let tooDeepName = Array(repeating: "x", count: 33).joined(separator: "/")
-    let tooLongComponent = String(repeating: "x", count: 120)
+    let tooLongComponent = String(repeating: "x", count: NotePathName.maximumStemCharacters)
     let tooLongName = Array(repeating: tooLongComponent, count: 8).joined(separator: "/")
     for (rawName, expectedError) in [
         ("science/../escape", NotePathNameError.invalidComponent),
@@ -190,7 +190,7 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
                 "outside-session typed note must choose a new root filename")
     _ = try await service.save(prepared)
     let before = try checkRead(prepared.destination.url)
-    try require(before.hasPrefix("# rootnoteneedle\n\n<!-- note:") && !before.contains("\n# rootnoteneedle\n") && before.contains("Body **untouched**"), "root note header/body format")
+    try require(before.hasPrefix("# rootnoteneedle\n\n" + CaptureFormat.noteMarkerPrefix) && !before.contains("\n# rootnoteneedle\n") && before.contains("Body **untouched**"), "root note header/body format")
     let journaled = try JSONDecoder().decode(PreparedCapture.self, from: JSONEncoder().encode(prepared))
     _ = try await service.save(journaled)
     let replayContents = try checkRead(prepared.destination.url)
@@ -208,7 +208,7 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
     let afterCollision = try checkRead(prepared.destination.url)
     try require(collision.destination.url == prepared.destination.url && collision.createsNote != true && collision.noteMarkerIsIdentity == true,
                 "typed note collisions should append to the existing canonical target")
-    try require(afterCollision.components(separatedBy: "<!-- note:\(collisionCapture.id.uuidString.lowercased()) at=").count - 1 == 1,
+    try require(checkCount(checkNoteMarker(collisionCapture.id), in: afterCollision) == 1,
                 "appending a typed note to an existing target should preserve its identity marker")
     let journaledCollision = try JSONDecoder().decode(PreparedCapture.self, from: JSONEncoder().encode(collision))
     _ = try await service.save(journaledCollision)
@@ -328,7 +328,8 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
         }
     }
     for (leaf, numberedBase) in [
-        (String(repeating: "a", count: 120), String(repeating: "a", count: 118)),
+        (String(repeating: "a", count: NotePathName.maximumStemCharacters),
+         String(repeating: "a", count: NotePathName.maximumStemCharacters - 2)),
         (String(repeating: "計", count: 72) + "abcd", String(repeating: "計", count: 72) + "ab"),
         (String(repeating: "😀", count: 55), String(repeating: "😀", count: 54)),
     ] {
@@ -342,20 +343,22 @@ private func checkIndependentNotes(vault: Vault, writer: NoteWriter, index: Sear
                     "Save as New Note on a max-length leaf must keep the numbered suffix: \(numberedBase.prefix(3))")
         for prepared in [longFirst, longSecond, longThird] {
             let stem = prepared.destination.url.deletingPathExtension().lastPathComponent
-            try require(stem.count <= 120 && stem.utf8.count <= 220, "numbered long names must stay within the name limits")
+            try require(stem.count <= NotePathName.maximumStemCharacters && stem.utf8.count <= NotePathName.maximumStemBytes,
+                        "numbered long names must stay within the name limits")
         }
     }
     // A path at the 900-byte relative limit also shortens the leaf (the tooLong branch): seven
     // 120-character folders plus a 53-character leaf leave room for " 2" only after two characters go.
-    let deepFolders = Array(repeating: String(repeating: "d", count: 120), count: 7)
+    let deepFolders = Array(repeating: String(repeating: "d", count: NotePathName.maximumStemCharacters), count: 7)
     let deepName = (deepFolders + [String(repeating: "n", count: 53)]).joined(separator: "/")
-    try require(deepName.utf8.count == 900, "deep-path check must sit exactly at the relative path limit")
+    try require(deepName.utf8.count == NotePathName.maximumRelativePathBytes,
+                "deep-path check must sit exactly at the relative path limit")
     let deepFirst = try await prepareBounded("# \(deepName)\nbody", newNote: false)
     let deepSecond = try await prepareBounded("# \(deepName)\nbody", newNote: true)
     let deepRelative = (deepFolders + [deepSecond.destination.url.deletingPathExtension().lastPathComponent]).joined(separator: "/")
     try require(deepFirst.destination.url.deletingLastPathComponent() == deepSecond.destination.url.deletingLastPathComponent()
                 && deepSecond.destination.url.lastPathComponent == String(repeating: "n", count: 51) + " 2.md"
-                && deepRelative.utf8.count == 900,
+                && deepRelative.utf8.count == NotePathName.maximumRelativePathBytes,
                 "Save as New Note near the path limit must shorten the leaf to keep its suffix within the limit")
     let rNone = try resolver("Pathbox/Nothingthere")
     try require(rNone == nil, "resolver: unmatched path")
@@ -380,7 +383,9 @@ private func checkWithDeadline<T: Sendable>(_ message: String, seconds: Double =
             catch { gate.finish(.failure(error)) }
         }
         Task {
-            try? await Task.sleep(for: .seconds(seconds))
+            do { try await Task.sleep(for: .seconds(seconds)) }
+            // A cancelled deadline must not report a timeout for work that already settled.
+            catch { return }
             gate.finish(.failure(CheckFailure.failed(message)))
         }
     }

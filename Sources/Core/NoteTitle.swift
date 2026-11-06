@@ -8,9 +8,9 @@ public enum NotePathScope: String, Codable, Sendable, Equatable {
 /// A validated, filename-safe name split into its destination root and path components.
 public struct NotePathName: Sendable, Equatable {
     static let maximumPathDepth = 32
-    static let maximumRelativePathBytes = 900
-    static let maximumStemCharacters = 120
-    static let maximumStemBytes = 220
+    @_spi(Checks) public static let maximumRelativePathBytes = 900
+    @_spi(Checks) public static let maximumStemCharacters = 120
+    @_spi(Checks) public static let maximumStemBytes = 220
     static let maximumStemScalarsPerCharacter = 32
     static let displayTitleLength = 60
 
