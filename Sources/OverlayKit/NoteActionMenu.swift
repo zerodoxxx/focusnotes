@@ -216,14 +216,14 @@ final class NoteActionMenuView: NoteCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func handle(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 125, 126: move(event.keyCode == 125 ? 1 : -1); return true
-        case 36, 76:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .moveDown, .moveUp: move(command == .moveDown ? 1 : -1); return true
+        case .submit:
             if let index = selection, visible.indices.contains(index), visible[index].isEnabled { onRun?(visible[index].id) }
             return true
-        case 53: onClose?(); return true
-        case 40 where event.shortcutFlags == .command: onClose?(); return true
-        default: return false
+        case .cancel, .toggleActions: onClose?(); return true
+        case .complete, .toggleBrowse: return false
         }
     }
 

@@ -121,19 +121,19 @@ final class NoteBrowseView: NoteCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func handle(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 125, 126:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .moveDown, .moveUp:
             guard !shown.isEmpty else { return true }
-            select(min(shown.count - 1, max(0, (selection ?? (event.keyCode == 125 ? -1 : shown.count)) + (event.keyCode == 125 ? 1 : -1))))
+            select(min(shown.count - 1, max(0, (selection ?? (command == .moveDown ? -1 : shown.count)) + (command == .moveDown ? 1 : -1))))
             return true
-        case 36, 76:
+        case .submit:
             guard let selection, shown.indices.contains(selection) else { return true }
             let flags = event.shortcutFlags
             choose(selection, flags.contains(.command) ? .open : (flags.contains(.option) ? .reveal : .write))
             return true
-        case 53: onBack?(); return true
-        case 35 where event.shortcutFlags == .command: onBack?(); return true
-        default: return false
+        case .cancel, .toggleBrowse: onBack?(); return true
+        case .complete, .toggleActions: return false
         }
     }
 

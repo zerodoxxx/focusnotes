@@ -141,19 +141,19 @@ final class NoteChromeBar: FlippedView {
     }
 }
 
-/// The editor shortcuts that map to note actions (⌘K is handled separately as a toggle).
+/// The editor shortcuts that map to note actions; ⌘K is OverlayKeyCommand.toggleActions.
 func noteShortcutAction(for event: NSEvent) -> NoteActionID? {
     let flags = event.shortcutFlags
     guard flags.contains(.command) else { return nil }
     let shift = flags.contains(.shift)
     switch event.keyCode {
-    case 8 where shift: return .copyMarkdown
-    case 35: return shift ? .pin : .browse
-    case 45 where flags == [.command, .shift]: return .writeOutsideSession
-    case 45 where flags == .command: return .newNote
-    case 31: return .openAsNote
-    case 51 where shift: return .discardDraft
-    case 36 where flags.contains(.option), 76 where flags.contains(.option): return .saveAsNewNote // Return, keypad Enter
+    case OverlayKeyCode.c where shift: return .copyMarkdown
+    case OverlayKeyCode.p: return shift ? .pin : .browse
+    case OverlayKeyCode.n where flags == [.command, .shift]: return .writeOutsideSession
+    case OverlayKeyCode.n where flags == .command: return .newNote
+    case OverlayKeyCode.o: return .openAsNote
+    case OverlayKeyCode.delete where shift: return .discardDraft
+    case OverlayKeyCode.returnKey where flags.contains(.option), OverlayKeyCode.keypadEnter where flags.contains(.option): return .saveAsNewNote // Return, keypad Enter
     default: return nil
     }
 }
