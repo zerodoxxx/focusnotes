@@ -53,14 +53,34 @@ internal sealed record ActionItem(NoteActionId Id, string Title, string Symbol, 
 {
     internal static IReadOnlyList<ActionItem> Standard(bool isPinned, bool hasText, bool appendsToExisting = false, bool canWriteOutsideSession = false) =>
     [
-        new(NoteActionId.NewNote, "New Note", "plus", ["Ctrl", "N"], true, 0),
-        ..(canWriteOutsideSession ? new ActionItem[] { new(NoteActionId.WriteOutsideSession, "Write outside session", "doc.text", ["Ctrl", "Shift", "N"], true, 0) } : []),
-        new(NoteActionId.SaveAsNewNote, "Save as New Note", "doc.badge.plus", ["Ctrl", "Alt", "↩"], appendsToExisting, 0),
-        new(NoteActionId.Pin, isPinned ? "Remove from Pinned" : "Add to Pinned", isPinned ? "pin.slash" : "pin", ["Ctrl", "Shift", "P"], true, 0),
-        new(NoteActionId.OpenAsNote, "Open as Note", "arrow.up.left.and.arrow.down.right", ["Ctrl", "O"], true, 1),
-        new(NoteActionId.CopyMarkdown, "Copy as Markdown", "doc.on.doc", ["Ctrl", "Shift", "C"], hasText, 1),
-        new(NoteActionId.DiscardDraft, "Discard Draft", "trash", ["Ctrl", "Shift", "Bksp"], hasText, 1)
+        new(NoteActionId.NewNote, "New Note", "plus", NoteShortcuts.Keys(NoteActionId.NewNote), true, 0),
+        ..(canWriteOutsideSession ? new ActionItem[] { new(NoteActionId.WriteOutsideSession, "Write outside session", "doc.text", NoteShortcuts.Keys(NoteActionId.WriteOutsideSession), true, 0) } : []),
+        new(NoteActionId.SaveAsNewNote, "Save as New Note", "doc.badge.plus", NoteShortcuts.Keys(NoteActionId.SaveAsNewNote), appendsToExisting, 0),
+        new(NoteActionId.Pin, isPinned ? "Remove from Pinned" : "Add to Pinned", isPinned ? "pin.slash" : "pin", NoteShortcuts.Keys(NoteActionId.Pin), true, 0),
+        new(NoteActionId.OpenAsNote, "Open as Note", "arrow.up.left.and.arrow.down.right", NoteShortcuts.Keys(NoteActionId.OpenAsNote), true, 1),
+        new(NoteActionId.CopyMarkdown, "Copy as Markdown", "doc.on.doc", NoteShortcuts.Keys(NoteActionId.CopyMarkdown), hasText, 1),
+        new(NoteActionId.DiscardDraft, "Discard Draft", "trash", NoteShortcuts.Keys(NoteActionId.DiscardDraft), hasText, 1)
     ];
+}
+
+internal sealed record NoteShortcut(NoteActionId Id, Key Key, ModifierKeys Modifiers, IReadOnlyList<string> Keys);
+
+/// <summary>One entry per Quick Note chord, so the key handler and the keycap labels cannot drift apart.</summary>
+internal static class NoteShortcuts
+{
+    internal static readonly IReadOnlyList<NoteShortcut> All =
+    [
+        new(NoteActionId.CopyMarkdown, Key.C, ModifierKeys.Control | ModifierKeys.Shift, ["Ctrl", "Shift", "C"]),
+        new(NoteActionId.Pin, Key.P, ModifierKeys.Control | ModifierKeys.Shift, ["Ctrl", "Shift", "P"]),
+        new(NoteActionId.Browse, Key.P, ModifierKeys.Control, ["Ctrl", "P"]),
+        new(NoteActionId.NewNote, Key.N, ModifierKeys.Control, ["Ctrl", "N"]),
+        new(NoteActionId.WriteOutsideSession, Key.N, ModifierKeys.Control | ModifierKeys.Shift, ["Ctrl", "Shift", "N"]),
+        new(NoteActionId.OpenAsNote, Key.O, ModifierKeys.Control, ["Ctrl", "O"]),
+        new(NoteActionId.DiscardDraft, Key.Back, ModifierKeys.Control | ModifierKeys.Shift, ["Ctrl", "Shift", "Bksp"]),
+        new(NoteActionId.SaveAsNewNote, Key.Enter, ModifierKeys.Control | ModifierKeys.Alt, ["Ctrl", "Alt", "↩"])
+    ];
+    internal static NoteActionId? Action(Key key, ModifierKeys modifiers) => All.FirstOrDefault(s => s.Key == key && s.Modifiers == modifiers)?.Id;
+    internal static IReadOnlyList<string> Keys(NoteActionId id) => All.First(s => s.Id == id).Keys;
 }
 
 /// <summary>Shared surface of the Actions and Browse cards: fill, border, shadow and the filter-field header.</summary>
