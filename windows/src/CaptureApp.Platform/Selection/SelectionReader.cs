@@ -188,7 +188,7 @@ public sealed class SelectionReader
                 if (services.ClipboardSequence != snapshot.Sequence || services.ClipboardSignal != signal)
                 {
                     var late = await services.ReadCopyAsync(context.ProcessIdentifier, TimeSpan.FromMilliseconds(100), snapshot).ConfigureAwait(false);
-                    if (late is { TargetOwned: true } && late.Sequence != snapshot.Sequence) restoreSequence = late.Sequence;
+                    if (ClipboardGuard.NeedsRestore(late, snapshot)) restoreSequence = late.Sequence;
                     // The target never released the clipboard: a copy may still land. Retry in the background, sequence-conditionally.
                     else if (late is { NotOpened: true } || (late is null && notOpened)) services.ScheduleRestoreRetry(context.ProcessIdentifier, snapshot);
                 }
