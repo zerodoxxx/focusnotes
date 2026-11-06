@@ -916,10 +916,10 @@ final class AppController: NSObject, NSMenuDelegate {
                 // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
                 editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
-                        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder)
+                        let blank = QuickNoteState.isBlank(text)
+                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder)
                         if blank {
-                            state.pinOnSave = false
+                            state.dropPinOnSaveForBlankDraft()
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
@@ -1000,12 +1000,12 @@ final class AppController: NSObject, NSMenuDelegate {
                     onError: { [weak controller] error in controller?.report(error, title: AppController.draftKeptOpenTitle) },
                     titleForText: { TypedNote(markdown: $0, createdAt: Date(), calendar: calendar).title },
                     onScheduleDraft: { [weak controller, weak editor] text in
-                        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        pipeline.drafts.scheduleStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder) { [weak controller] error in
+                        let blank = QuickNoteState.isBlank(text)
+                        pipeline.drafts.scheduleStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder) { [weak controller] error in
                             Task { @MainActor in controller?.report(error, title: AppController.draftKeptOpenTitle) }
                         }
                         if blank {
-                            state.pinOnSave = false
+                            state.dropPinOnSaveForBlankDraft()
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },

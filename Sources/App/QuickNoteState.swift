@@ -14,16 +14,17 @@ final class QuickNoteState {
     var outsideSession = false
     /// Opened by the outside-session shortcut; blank ⌘N returns here instead of to the session.
     let launchedOutside: Bool
-    var pinOnSave = false
+    private(set) var pinOnSave = false
     var suggestions: [NoteSuggestion] = []
     var kinds: [String: NoteKind] {
         Dictionary(suggestions.map { ($0.path, $0.kind) }, uniquingKeysWith: { first, _ in first })
     }
+    private var defaultOutsideSession: Bool { folder != nil || launchedOutside }
     init(destination: Destination?, pinOnSave: Bool = false, folder: NoteFolder? = nil, outsideSession launchedOutside: Bool = false) {
         self.destination = launchedOutside ? nil : destination
         self.folder = folder
         self.launchedOutside = launchedOutside
-        self.outsideSession = folder != nil || launchedOutside
+        self.outsideSession = defaultOutsideSession
         self.pinOnSave = self.destination == nil && pinOnSave
     }
     /// What a save asks Core for; a chosen session or Browse note is replayed unchanged.
@@ -43,6 +44,13 @@ final class QuickNoteState {
         try drafts.setPinOnSave(false)
         pinOnSave = false
     }
+    /// The pin intent a draft write stores; a blank draft carries none.
+    func pinOnSave(forDraft text: String) -> Bool {
+        Self.isBlank(text) ? false : pinOnSave
+    }
+    /// Forgets the intent after a blank draft was stored; the draft file needs no update.
+    func dropPinOnSaveForBlankDraft() { pinOnSave = false }
+    static func isBlank(_ text: String) -> Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     func toggleOutsideSession(sessionDestination: Destination, drafts: NoteDraftStore) throws {
         try resetPinOnSave(in: drafts)
         outsideSession.toggle()
@@ -50,7 +58,7 @@ final class QuickNoteState {
     }
     func restoreSessionDestination(_ sessionDestination: Destination?, drafts: NoteDraftStore) throws {
         try resetPinOnSave(in: drafts)
-        outsideSession = folder != nil || launchedOutside
+        outsideSession = defaultOutsideSession
         destination = outsideSession ? nil : sessionDestination
     }
 }
