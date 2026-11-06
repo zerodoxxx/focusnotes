@@ -521,7 +521,7 @@ public sealed class QuickNoteController
             try { handlers.OnDraft(content.Editor.Text); return true; }
             catch (Exception exception) { handlers.OnError(exception); return false; }
         };
-        window.CancelHandler = content.CloseOverlay;
+        window.CancelHandler = () => content.CloseOverlay() ? CancelResult.Suppress : CancelResult.Close;
         window.Resigned += content.OnResigned;
         window.PreviewKeyDown += (_, e) => { if (content.HandleKey(e)) e.Handled = true; };
         content.Resized += animated => window.ResizeVisible(content.SurfaceSize, animated);
