@@ -4,11 +4,11 @@ import Foundation
 public enum CaptureFormat {
     public static let markerPrefix = "<!-- capture:"
     public static let markerSuffix = " -->"
-    static let noteMarkerPrefix = "<!-- note:"
+    @_spi(Checks) public static let noteMarkerPrefix = "<!-- note:"
     static let subheadingMarkerPrefix = "<!-- subheading:"
     static let uuidLength = 36
     static let markerStampPattern = "yyyy-MM-dd'T'HH:mm:ssXXX"
-    static let markerStampKey = " at="
+    @_spi(Checks) public static let markerStampKey = " at="
     static let markerAppKey = " app=\""
     static let sourceHeadingPrefix = "### "
     static let sourceLinkPrefix = "[Source](<"

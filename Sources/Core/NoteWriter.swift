@@ -14,6 +14,9 @@ public actor NoteWriter {
     }
 
     @_spi(Checks)
+    public static var appendCacheFileLimit: Int { NoteFile.AppendCache.fileLimit }
+
+    @_spi(Checks)
     public static func sourceGroupingMatchesFullParser(_ contents: String, source: String, calendar: Calendar) -> Bool {
         var state = NoteParser.SourceHeadingState()
         state.consume(contents, calendar: calendar)

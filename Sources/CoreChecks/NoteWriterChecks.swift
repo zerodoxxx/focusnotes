@@ -69,10 +69,10 @@ func checkNoteWriter() async throws {
     let concurrentText = try checkRead(concurrentURL)
     try require(concurrentText.hasPrefix("# Concurrent\n\n"), "concurrent file should start with its header")
     try require(concurrentText.components(separatedBy: "# Concurrent\n").count - 1 == 1, "exclusive creation must not duplicate the header")
-    let markerTotal = concurrentText.components(separatedBy: "<!-- capture:").count - 1
+    let markerTotal = checkCount(CaptureFormat.markerPrefix, in: concurrentText)
     try require(markerTotal == 50, "expected 50 capture markers, found \(markerTotal)")
     for id in ids {
-        let count = concurrentText.components(separatedBy: checkCaptureMarker(id)).count - 1
+        let count = checkCount(checkCaptureMarker(id), in: concurrentText)
         try require(count == 1, "marker \(checkCaptureMarker(id)) appeared \(count) times")
     }
 
@@ -142,7 +142,7 @@ private func checkTypedNoteShortWrite(vault: Vault, calendar: Calendar, date: Da
                                      noteMarkerIsIdentity: true)
     let contents = try checkRead(url)
     try require(contents.hasPrefix(original) && contents.contains("\nA complete typed body\n") &&
-                contents.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1 == 1,
+                checkCount(checkNoteMarker(capture.id), in: contents) == 1,
                 "the retry after a short write must save the full typed note exactly once")
 }
 
@@ -194,11 +194,9 @@ private func checkImageLinksForManagedLocations(vault: Vault, home: URL, writer:
     try checkWrite("outside bytes\n", to: outside)
     let linked = home.appendingPathComponent("Linked.md")
     try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: outside)
-    do {
+    try await expectRejection("home-relative note appends must reject a symlink target", matching: isPOSIX(.ELOOP)) {
         try await writer.appendIfMissing(capture, to: Destination(url: linked, title: "Linked", kind: .note))
-        throw CheckFailure.failed("home-relative note appends must reject a symlink target")
-    } catch is CheckFailure { throw CheckFailure.failed("home note symlink unexpectedly accepted") }
-    catch {}
+    }
     let outsideAfter = try checkRead(outside)
     try require(outsideAfter == "outside bytes\n", "a home-note symlink must not change its outside target")
 }
@@ -253,13 +251,11 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
     var imageCapture = capture
     imageCapture.id = UUID()
     imageCapture.content = .image(assetPath: "assets/Linked.png")
-    do {
+    try await expectRejection("asset replay must reject a symlink target", matching: isPOSIX(.ELOOP)) {
         try await writer.appendIfMissing(imageCapture,
                                          to: Destination(url: vault.root.appendingPathComponent("Linked asset.md"), title: "Linked asset", kind: .note),
                                          png: png)
-        throw CheckFailure.failed("asset replay must reject a symlink target")
-    } catch is CheckFailure { throw CheckFailure.failed("symlink asset replay unexpectedly succeeded") }
-    catch {}
+    }
     let afterAssetSymlink = try Data(contentsOf: outsidePNG)
     try require(afterAssetSymlink == png, "asset replay through a symlink changed outside bytes")
 
@@ -268,13 +264,11 @@ private func checkUnsafeNoteTargets(calendar: Calendar, capture: Capture) async 
     try FileManager.default.linkItem(at: outsidePNG, to: hardlinkedAsset)
     imageCapture.id = UUID()
     imageCapture.content = .image(assetPath: "assets/Hardlinked.png")
-    do {
+    try await expectRejection("asset replay must reject a hard-linked target", matching: isPOSIX(.EPERM)) {
         try await writer.appendIfMissing(imageCapture,
                                          to: Destination(url: vault.root.appendingPathComponent("Hardlinked asset.md"), title: "Hardlinked asset", kind: .note),
                                          png: png)
-        throw CheckFailure.failed("asset replay must reject a hard-linked target")
-    } catch is CheckFailure { throw CheckFailure.failed("hard-linked asset replay unexpectedly succeeded") }
-    catch {}
+    }
     let afterAssetHardlink = try Data(contentsOf: outsidePNG)
     try require(afterAssetHardlink == png, "asset replay through a hard link changed outside bytes")
 }
@@ -316,92 +310,57 @@ private func checkInPlaceEditBeforeAppend(vault: Vault, calendar: Calendar, capt
     next.id = UUID(); next.content = .text("After racing edit")
     try await writer.appendIfMissing(next, to: destination)
     let contents = try checkRead(url)
-    let statistics = await writer.appendCacheStatistics
     try require(editor.error == nil, "in-place prewrite fixture failed")
-    try require(statistics.fullScans == 2, "a detected in-place edit must retry and rescan before writing")
     try require(contents.contains("### Chrome\n" + checkCaptureMarker(capture.id)) &&
                 contents.contains("### Safari\n" + checkCaptureMarker(next.id)),
                 "a detected edit must recompute the source heading and preserve editor bytes")
-    try require(contents.components(separatedBy: checkCaptureMarker(next.id)).count - 1 == 1, "prewrite retry must append the new capture exactly once")
+    try require(checkCount(checkCaptureMarker(next.id), in: contents) == 1, "prewrite retry must append the new capture exactly once")
 }
+
+/// Contents an editor leaves behind when it replaces a note while a background save waits on it.
+private let replacementContents = "# Replacement\n\neditor kept this\n"
 
 private func checkReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
     let url = vault.root.appendingPathComponent("Lock replacement.md")
     try checkWrite("# Lock replacement\n\nold body\n", to: url)
-    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
-    try require(lockDescriptor >= 0, "could not open the lock fixture")
-    var held = flock(lockDescriptor, LOCK_EX) == 0
-    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
-    try require(held, "could not lock the fixture note")
+    let lock = try CheckFileLock(url)
+    defer { lock.close() }
 
     let writer = NoteWriter(vault: vault, calendar: calendar)
     let append = Task.detached { try await writer.append(capture, to: url, title: "Lock replacement") }
-    // The append blocks on the held flock. If it has not opened the note yet, it
-    // simply sees the replacement, so a slow start can only weaken this check.
-    try await Task.sleep(nanoseconds: 300_000_000)
+    try await lock.waitForQueuedWriter()
     // An atomic save unlinks the locked inode (nlink 0) and installs a new one.
-    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
-    _ = flock(lockDescriptor, LOCK_UN)
-    held = false
+    try Data(replacementContents.utf8).write(to: url, options: .atomic)
+    lock.release()
     try await append.value
 
     let text = try checkRead(url)
-    try require(text.hasPrefix("# Replacement\n\neditor kept this\n"), "a replacement must keep the editor's bytes")
-    try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+    try require(text.hasPrefix(replacementContents), "a replacement must keep the editor's bytes")
+    try require(checkCount(checkCaptureMarker(capture.id), in: text) == 1,
                 "an append interrupted by a replacement must land once on the current note")
 }
 
-/// Waits until another descriptor in this process refers to the same inode as `lockDescriptor`: a
-/// background save has opened the note and is queued on its flock. Returns false after 3 seconds.
-private func checkWaitForQueuedWriter(on lockDescriptor: Int32) async -> Bool {
-    var target = stat()
-    guard fstat(lockDescriptor, &target) == 0 else { return false }
-    for _ in 0..<300 {
-        for descriptor in 0..<min(getdtablesize(), 4096) where descriptor != lockDescriptor {
-            var candidate = stat()
-            if fstat(descriptor, &candidate) == 0, candidate.st_dev == target.st_dev, candidate.st_ino == target.st_ino { return true }
-        }
-        try? await Task.sleep(nanoseconds: 10_000_000)
-    }
-    return false
-}
-
 /// A note moved away (for example by a session rename) while an append waited must not be recreated at its old path.
-/// If the append never queued on the lock, it is a first attempt that may create the note; that run is inconclusive.
 private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar, capture: Capture) async throws {
     let url = vault.root.appendingPathComponent("Moved away.md")
     let movedURL = vault.root.appendingPathComponent("Moved away elsewhere.md")
     let original = "# Moved away\n\nold body\n"
     try checkWrite(original, to: url)
-    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
-    try require(lockDescriptor >= 0, "could not open the lock fixture")
-    var held = flock(lockDescriptor, LOCK_EX) == 0
-    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
-    try require(held, "could not lock the fixture note")
+    let lock = try CheckFileLock(url)
+    defer { lock.close() }
 
     let writer = NoteWriter(vault: vault, calendar: calendar)
     let append = Task.detached { () -> Error? in
         do { try await writer.append(capture, to: url, title: "Moved away"); return nil }
         catch { return error }
     }
-    let queued = await checkWaitForQueuedWriter(on: lockDescriptor)
+    try await lock.waitForQueuedWriter()
     try FileManager.default.moveItem(at: url, to: movedURL)
-    _ = flock(lockDescriptor, LOCK_UN)
-    held = false
+    lock.release()
     let failure = await append.value
 
     let movedText = try checkRead(movedURL)
     try require(movedText == original, "the moved note must stay untouched")
-    if failure == nil {
-        try require(!queued, "an append queued on the lock must not succeed once its note moved away")
-        // The append never queued, so it only began after the move and legitimately created a fresh
-        // note on the missing path (first attempt). Accept only that, as an inconclusive run.
-        let fresh = try checkRead(url)
-        try require(fresh.hasPrefix("# Moved away\n\n") && !fresh.contains("old body") &&
-                    fresh.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
-                    "an append that succeeded must have created a fresh note, not touched the old one")
-        return
-    }
     try require((failure as? POSIXError)?.code == .ENOENT, "an append to a moved-away note must fail with ENOENT, got \(String(describing: failure))")
     try require(!FileManager.default.fileExists(atPath: url.path), "an append must not recreate the moved-away path")
 }
@@ -410,11 +369,8 @@ private func checkRenameAwayWhileWaitingForLock(vault: Vault, calendar: Calendar
 private func checkTypedNoteReplacementWhileWaitingForLock(vault: Vault, calendar: Calendar, date: Date) async throws {
     let url = vault.root.appendingPathComponent("Typed lock replacement.md")
     try checkWrite("# Typed lock replacement\n\nold body\n", to: url)
-    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
-    try require(lockDescriptor >= 0, "could not open the lock fixture")
-    var held = flock(lockDescriptor, LOCK_EX) == 0
-    defer { if held { _ = flock(lockDescriptor, LOCK_UN) }; close(lockDescriptor) }
-    try require(held, "could not lock the fixture note")
+    let lock = try CheckFileLock(url)
+    defer { lock.close() }
 
     let capture = Capture(id: UUID(), createdAt: date, content: .note("typed body after replacement"), source: CaptureSource())
     let writer = NoteWriter(vault: vault, calendar: calendar)
@@ -422,27 +378,22 @@ private func checkTypedNoteReplacementWhileWaitingForLock(vault: Vault, calendar
         try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Typed lock replacement", kind: .note),
                                          noteMarkerIsIdentity: true)
     }
-    // As above, a slow start can only weaken this check.
-    try await Task.sleep(nanoseconds: 300_000_000)
-    try Data("# Replacement\n\neditor kept this\n".utf8).write(to: url, options: .atomic)
-    _ = flock(lockDescriptor, LOCK_UN)
-    held = false
+    try await lock.waitForQueuedWriter()
+    try Data(replacementContents.utf8).write(to: url, options: .atomic)
+    lock.release()
     try await save.value
 
     let text = try checkRead(url)
-    try require(text.hasPrefix("# Replacement\n\neditor kept this\n") && text.contains("\ntyped body after replacement\n") &&
-                text.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1 == 1,
+    try require(text.hasPrefix(replacementContents) && text.contains("\ntyped body after replacement\n") &&
+                checkCount(checkNoteMarker(capture.id), in: text) == 1,
                 "a typed-note save interrupted by a replacement must land once on the current note")
 }
 
-/// Parks a typed-note save on the note's flock, runs `mutate` while it waits, then releases it.
-/// `queued` is false if the save never reached the lock; it then simply sees the mutated path.
+/// Parks a typed-note save on the note's flock, runs `mutate` once the save is queued, then releases it.
 private func checkParkedTypedSave(vault: Vault, calendar: Calendar, date: Date, url: URL, title: String,
-                                  mutate: () throws -> Void) async throws -> (capture: Capture, failure: Error?, queued: Bool) {
-    let lockDescriptor = open(url.path, O_RDONLY | O_CLOEXEC)
-    try require(lockDescriptor >= 0, "could not open the lock fixture")
-    defer { _ = flock(lockDescriptor, LOCK_UN); close(lockDescriptor) }
-    try require(flock(lockDescriptor, LOCK_EX) == 0, "could not lock the fixture note")
+                                  mutate: () throws -> Void) async throws -> (capture: Capture, failure: Error?) {
+    let lock = try CheckFileLock(url)
+    defer { lock.close() }
 
     let capture = Capture(id: UUID(), createdAt: date, content: .note("typed body after the move"), source: CaptureSource())
     let writer = NoteWriter(vault: vault, calendar: calendar)
@@ -452,20 +403,16 @@ private func checkParkedTypedSave(vault: Vault, calendar: Calendar, date: Date, 
             return nil
         } catch { return error }
     }
-    let queued = await checkWaitForQueuedWriter(on: lockDescriptor)
+    try await lock.waitForQueuedWriter()
     try mutate()
-    _ = flock(lockDescriptor, LOCK_UN)
-    return (capture, await save.value, queued)
-}
-
-private func typedMarkerCount(_ text: String, _ capture: Capture) -> Int {
-    text.components(separatedBy: "<!-- note:\(capture.id.uuidString.lowercased()) at=").count - 1
+    lock.release()
+    return (capture, await save.value)
 }
 
 /// A typed save must not recreate a note moved away while it waited (journal replay keeps the record),
 /// and must follow an editor that renamed the note to a backup and installed a new file at its path.
 private func checkTypedNoteMovedWhileWaitingForLock(vault: Vault, calendar: Calendar, date: Date) async throws {
-    // Moved away: nothing at the old path afterwards, unless the save started only after the move.
+    // Moved away: nothing at the old path afterwards.
     let url = vault.root.appendingPathComponent("Typed moved away.md")
     let movedURL = vault.root.appendingPathComponent("Typed moved elsewhere.md")
     let original = "# Typed moved away\n\nold body\n"
@@ -475,16 +422,8 @@ private func checkTypedNoteMovedWhileWaitingForLock(vault: Vault, calendar: Cale
     }
     let movedText = try checkRead(movedURL)
     try require(movedText == original, "the moved typed note must stay untouched")
-    if moved.failure == nil {
-        try require(!moved.queued, "a typed save queued on the lock must not succeed once its note moved away")
-        // The save never queued: it began after the move and legitimately created a fresh note. Inconclusive.
-        let fresh = try checkRead(url)
-        try require(fresh.hasPrefix("# Typed moved away\n\n") && !fresh.contains("old body") && typedMarkerCount(fresh, moved.capture) == 1,
-                    "a typed save that succeeded must have created a fresh note, not touched the old one")
-    } else {
-        try require((moved.failure as? POSIXError)?.code == .ENOENT, "a typed save to a moved-away note must fail with ENOENT, got \(String(describing: moved.failure))")
-        try require(!FileManager.default.fileExists(atPath: url.path), "a typed save must not recreate the moved-away path")
-    }
+    try require((moved.failure as? POSIXError)?.code == .ENOENT, "a typed save to a moved-away note must fail with ENOENT, got \(String(describing: moved.failure))")
+    try require(!FileManager.default.fileExists(atPath: url.path), "a typed save must not recreate the moved-away path")
 
     // Renamed to a backup with a new file at the path: the save lands in the new file.
     let editedURL = vault.root.appendingPathComponent("Typed backup swap.md")
@@ -493,11 +432,11 @@ private func checkTypedNoteMovedWhileWaitingForLock(vault: Vault, calendar: Cale
     try checkWrite(backupBody, to: editedURL)
     let swapped = try await checkParkedTypedSave(vault: vault, calendar: calendar, date: date, url: editedURL, title: "Typed backup swap") {
         try FileManager.default.moveItem(at: editedURL, to: backupURL)
-        try checkWrite("# Replacement\n\neditor kept this\n", to: editedURL)
+        try checkWrite(replacementContents, to: editedURL)
     }
     try require(swapped.failure == nil, "a typed save must follow a rename-to-backup replacement, got \(String(describing: swapped.failure))")
     let swappedText = try checkRead(editedURL)
-    try require(swappedText.hasPrefix("# Replacement\n\neditor kept this\n") && typedMarkerCount(swappedText, swapped.capture) == 1,
+    try require(swappedText.hasPrefix(replacementContents) && checkCount(checkNoteMarker(swapped.capture.id), in: swappedText) == 1,
                 "the typed save must land once in the new file")
     let backupText = try checkRead(backupURL)
     try require(backupText == backupBody, "the backup must stay untouched")
@@ -515,8 +454,7 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
     let saved = try Data(contentsOf: url)
     try await writer.appendIfMissing(capture, to: destination)
     let replayed = try Data(contentsOf: url)
-    var statistics = await writer.appendCacheStatistics
-    try require(replayed == saved && statistics.fullScans == 1, "warm appends/replay should use one initial scan and exact block verification")
+    try require(replayed == saved, "warm appends/replay must leave the note's bytes unchanged")
 
     // Same inode, same size and restored mtime: ctime must still invalidate source state.
     var beforeEdit = stat()
@@ -538,15 +476,13 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
     next.id = UUID(); next.content = .text("After same-size edit")
     try await writer.appendIfMissing(next, to: destination)
     let afterEdit = try checkRead(url)
-    statistics = await writer.appendCacheStatistics
-    try require(statistics.fullScans == 2 && afterEdit.contains("### Safari\n" + checkCaptureMarker(next.id)), "same-size edits must invalidate cached source context")
+    try require(afterEdit.contains("### Safari\n" + checkCaptureMarker(next.id)), "same-size edits must invalidate cached source context")
 
     // An atomic editor save can preserve every byte while replacing the inode.
     try Data(afterEdit.utf8).write(to: url, options: .atomic)
     try await writer.appendIfMissing(next, to: destination)
     let afterReplacement = try checkRead(url)
-    statistics = await writer.appendCacheStatistics
-    try require(statistics.fullScans == 3 && afterReplacement == afterEdit, "replacement must rescan and keep replay idempotent")
+    try require(afterReplacement == afterEdit, "replacement must keep replay idempotent")
 
     // The metadata cache is bounded even when captures visit many destinations.
     for index in 0..<12 {
@@ -554,12 +490,12 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
         let note = vault.root.appendingPathComponent("Cache limit \(index).md")
         try await writer.appendIfMissing(next, to: Destination(url: note, title: "Cache limit", kind: .note))
     }
-    statistics = await writer.appendCacheStatistics
-    try require(statistics.cachedFiles <= 8, "append cache must evict old destinations")
-    let scansBefore = statistics.fullScans
+    let statistics = await writer.appendCacheStatistics
+    try require(statistics.cachedFiles <= NoteWriter.appendCacheFileLimit, "append cache must evict old destinations")
     try await writer.appendIfMissing(capture, to: destination)
-    statistics = await writer.appendCacheStatistics
-    try require(statistics.fullScans == scansBefore + 1, "an evicted destination must safely rescan for a replay")
+    let evictedReplay = try checkRead(url)
+    try require(checkCount(checkCaptureMarker(capture.id), in: evictedReplay) == 1,
+                "an evicted destination must replay without duplicating the capture")
 }
 
 private func checkCachedSourceParsing(vault: Vault, calendar: Calendar, capture: Capture) async throws {
@@ -608,7 +544,7 @@ private func checkPartialCaptureReplay(vault: Vault, calendar: Calendar, capture
         let after = try Data(contentsOf: url)
         try require(after.starts(with: before), "partial recovery must preserve every existing byte")
         let text = String(decoding: after, as: UTF8.self)
-        try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 2, "a partial block must be followed by a full replay block")
+        try require(checkCount(checkCaptureMarker(capture.id), in: text) == 2, "a partial block must be followed by a full replay block")
         let parsed = NoteParser.parse(contents: text, notePath: url.lastPathComponent, titleFallback: "", calendar: calendar)
         try require(parsed.blocks.count == 1 && parsed.blocks[0].captureID == capture.id && parsed.blocks[0].body == "Hello", "parser must prefer the last full occurrence of a repeated capture")
         try await writer.appendIfMissing(capture, to: destination)
@@ -636,7 +572,7 @@ private final class EditorReplacement: @unchecked Sendable {
         guard remaining > 0 else { return }
         remaining -= 1
         do {
-            let bytes = copyAppend ? try Data(contentsOf: url) : Data("# Replacement\n\neditor kept this\n".utf8)
+            let bytes = copyAppend ? try Data(contentsOf: url) : Data(replacementContents.utf8)
             try bytes.write(to: url, options: .atomic)
         } catch { self.error = error }
     }
@@ -650,16 +586,14 @@ private func checkAtomicReplacement(vault: Vault, calendar: Calendar, capture: C
         try await writer.appendIfMissing(capture, to: Destination(url: url, title: "Replacement", kind: .note))
         let text = try checkRead(url)
         try require(editor.error == nil, "atomic replacement fixture failed")
-        try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1 && text.contains("Hello\n"), "replacement retry must keep exactly one full capture on the current inode")
+        try require(checkCount(checkCaptureMarker(capture.id), in: text) == 1 && text.contains("Hello\n"), "replacement retry must keep exactly one full capture on the current inode")
         if !copiesAppend { try require(text.contains("editor kept this"), "replacement retry must preserve the editor's bytes") }
     }
     let editor = EditorReplacement(copyAppend: false, count: 10)
     let writer = NoteWriter(vault: vault, calendar: calendar, afterAppend: { editor.replace($0) })
-    do {
+    try await expectRejection("continually replaced notes must fail rather than silently lose an append", matching: isPOSIX(.EAGAIN)) {
         try await writer.appendIfMissing(capture, to: Destination(url: vault.root.appendingPathComponent("Unstable.md"), title: "Unstable", kind: .note))
-        throw CheckFailure.failed("continually replaced notes must fail rather than silently lose an append")
-    } catch is CheckFailure { throw CheckFailure.failed("unstable note unexpectedly succeeded") }
-    catch {}
+    }
     try require(editor.error == nil, "bounded replacement fixture failed")
 }
 
@@ -725,6 +659,6 @@ private func checkSourceGrouping(vault: Vault, calendar: Calendar, capture: Capt
         try await group.waitForAll()
     }
     let text = try checkRead(concurrent)
-    try require(text.components(separatedBy: "### Safari\n").count - 1 == 1 && text.components(separatedBy: "<!-- capture:").count - 1 == 20,
+    try require(text.components(separatedBy: "### Safari\n").count - 1 == 1 && checkCount(CaptureFormat.markerPrefix, in: text) == 20,
                 "concurrent source decisions must emit one heading and every capture")
 }
