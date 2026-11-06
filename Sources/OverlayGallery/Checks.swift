@@ -900,23 +900,22 @@ private func checkFolderQuickNote() async throws {
         view.layoutSubtreeIfNeeded()
         return descendants(view).compactMap { $0 as? NSTextField }.first { $0.font == OverlayTheme.quickTitleFont }?.stringValue
     }
-    func labels(_ view: NSView) -> [String] { descendants(view).compactMap { $0 as? NSTextField }.map(\.stringValue) }
     func saveAsNewEnabled(_ view: NSView) -> Bool? {
-        let row = descendants(view).first { String(describing: type(of: $0)) == "ActionRowView" && $0.accessibilityLabel() == "Save as New Note" }
+        let row = views(named: "ActionRowView", in: view).first { $0.accessibilityLabel() == "Save as New Note" }
         return row?.isAccessibilityEnabled()
     }
     let blank = OverlayPreview.noteEditor(fallbackTitle: folder, overlay: .actions())
-    try require(title(blank) == folder && labels(blank).contains("Create note") && !labels(blank).contains("Add to note"),
+    try require(title(blank) == folder && labels(in: blank).contains("Create note") && !labels(in: blank).contains("Add to note"),
                 "A blank folder quick note must show its folder and the Create note caption")
     try require(saveAsNewEnabled(blank) == false, "Save as New Note must be disabled in a blank folder quick note")
     let fresh = OverlayPreview.noteEditor(fallbackTitle: folder, text: "Fresh idea\nbody", overlay: .actions())
-    try require(title(fresh) == "Fresh idea" && labels(fresh).contains("Create note") && saveAsNewEnabled(fresh) == false,
+    try require(title(fresh) == "Fresh idea" && labels(in: fresh).contains("Create note") && saveAsNewEnabled(fresh) == false,
                 "A folder quick note naming no note must show the typed title, Create note and a disabled Save as New Note")
     let existing = OverlayPreview.noteEditor(fallbackTitle: folder, text: "experiment\nmore", overlay: .actions(), appendsTo: "Experiment")
-    try require(title(existing) == "Experiment" && labels(existing).contains("Add to note") && saveAsNewEnabled(existing) == true,
+    try require(title(existing) == "Experiment" && labels(in: existing).contains("Add to note") && saveAsNewEnabled(existing) == true,
                 "A folder quick note naming a note in its folder must show that note, Add to note and Save as New Note")
     let chosen = OverlayPreview.noteEditor(destination: "Chosen", fallbackTitle: folder, text: "experiment\nmore", overlay: .actions(), appendsTo: "Experiment")
-    try require(title(chosen) == "Chosen" && labels(chosen).contains("Add to note") && saveAsNewEnabled(chosen) == false,
+    try require(title(chosen) == "Chosen" && labels(in: chosen).contains("Add to note") && saveAsNewEnabled(chosen) == false,
                 "A Browse destination must still win over the folder's typed name")
 
     let editor = NoteEditorPanel()
@@ -953,15 +952,15 @@ private func checkOutsideSessionShortcut() async throws {
             onBrowse: { item, _ in editor.setDestination(item.title, isPinned: false) },
             onTogglePin: { pinToggles += 1; return true }, onClose: {}, onError: { _ in }, onWriteOutsideSession: toggle))
     }
-    func labels() throws -> [String] { descendants(try currentPanel().contentView!).compactMap { $0 as? NSTextField }.map(\.stringValue) }
+    func panelLabels() throws -> [String] { labels(in: try currentPanel().contentView!) }
     present(draft, withSession: true)
     try key(45, modifiers: [.command, .shift]); try await settle()
-    try require(editor.isVisible && outside && toggles == 1 && (try labels()).contains("Biology"),
+    try require(editor.isVisible && outside && toggles == 1 && (try panelLabels()).contains("Biology"),
                 "Shift Command N must detach this note, retain the text and show its typed title")
     try key(45, modifiers: [.command, .shift]); try await settle()
-    try require(!outside && toggles == 2 && (try labels()).contains("Thermo"), "Repeating Shift Command N must restore the session")
+    try require(!outside && toggles == 2 && (try panelLabels()).contains("Thermo"), "Repeating Shift Command N must restore the session")
     try key(40, modifiers: .command); try await settle()
-    try require((try labels()).contains("Write outside session"), "Active-session Actions must include Write outside session")
+    try require((try panelLabels()).contains("Write outside session"), "Active-session Actions must include Write outside session")
     let actionField = try field(in: currentPanel())
     actionField.stringValue = "Write outside session"
     actionField.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: actionField))
@@ -971,18 +970,18 @@ private func checkOutsideSessionShortcut() async throws {
     try require(pinToggles == 1 && editor.isVisible, "Pin-on-save must still work after detaching")
     try key(35, modifiers: .command); try await settle()
     try key(36); try await settle()
-    try require((try labels()).contains("Existing"), "Browse must still choose a destination after detaching")
+    try require((try panelLabels()).contains("Existing"), "Browse must still choose a destination after detaching")
     editor.dismiss(); try await settle()
     present("", withSession: true)
     try key(45, modifiers: [.command, .shift]); try await settle()
     try key(45, modifiers: .command); try await settle()
-    try require(!outside && editor.isVisible && (try labels()).contains("Thermo"), "Command N on a blank editor must restore the session")
+    try require(!outside && editor.isVisible && (try panelLabels()).contains("Thermo"), "Command N on a blank editor must restore the session")
     editor.dismiss(); try await settle()
     present(draft, withSession: false)
     let count = toggles
     try key(45, modifiers: [.command, .shift]); try await settle()
     try key(40, modifiers: .command); try await settle()
-    try require(toggles == count && editor.isVisible && !(try labels()).contains("Write outside session"),
+    try require(toggles == count && editor.isVisible && !(try panelLabels()).contains("Write outside session"),
                 "Without an active session, the detached shortcut must be inert and its action hidden")
     editor.dismiss(); try await settle()
 }
@@ -1018,7 +1017,7 @@ private func checkQuickNoteDesign() throws {
     // Top band: five 26pt buttons; the right three are adjacent inside one capsule; the title stays clear of all of them.
     let band = OverlayPreview.noteEditor(destination: String(repeating: "Wide title ", count: 12), revealed: true)
     band.layoutSubtreeIfNeeded()
-    let buttons = descendants(band).filter { String(describing: type(of: $0)) == "ChromeButton" }
+    let buttons = chromeButtons(in: band)
     try require(buttons.count == 5 && buttons.allSatisfy { $0.frame.size == NSSize(width: OverlayTheme.quickButtonSize, height: OverlayTheme.quickButtonSize) },
                 "Top band must have five 26pt buttons")
     let right = buttons.sorted { $0.frame.minX < $1.frame.minX }.suffix(3)
@@ -1026,7 +1025,7 @@ private func checkQuickNoteDesign() throws {
                 "The capsule order must be Browse, New, Actions")
     try require(right.last.flatMap { OverlayPreview.chromeSymbol(in: $0) } == "ellipsis", "The trailing Actions button must use ellipsis")
     try require(zip(right, right.dropFirst()).allSatisfy { abs($0.frame.maxX - $1.frame.minX) < 0.01 }, "Right buttons must be adjacent")
-    let capsule = descendants(band).first { String(describing: type(of: $0)) == "ChromeCluster" }
+    let capsule = views(named: "ChromeCluster", in: band).first
     try require(capsule.map { $0.frame.height == OverlayTheme.quickClusterHeight && $0.frame.contains(right.first!.frame) && $0.frame.contains(right.last!.frame) } == true,
                 "Right buttons must sit inside one 28pt capsule")
     if let title = titleLabel(band) {
@@ -1050,12 +1049,12 @@ private func checkQuickNoteDesign() throws {
                 "An unpinned note must hide its title pin")
     // Caret: 2pt wide, 1.1 x font size tall, 0.22 x font size below the baseline.
     let width = OverlayTheme.editorCaretWidth
-    for (text, selection, size) in [("hello", 5, 15.0), ("hello", 0, 15.0), ("", 0, 15.0), ("hello\n", 6, 15.0), ("# Head", 6, 22.0), ("- [ ] ", 6, 15.0)] {
+    for (text, selection, caretHeight) in [("hello", 5, 16.5), ("hello", 0, 16.5), ("", 0, 16.5), ("hello\n", 6, 16.5), ("# Head", 6, 24.2), ("- [ ] ", 6, 16.5)] {
         let view = OverlayPreview.noteEditor(text: text, selection: NSRange(location: selection, length: 0))
         view.layoutSubtreeIfNeeded()
         guard let caret = OverlayPreview.caretRect(in: view) else { throw GalleryError("Caret rect missing for \(text.debugDescription)") }
         try require(abs(caret.width - width) < 0.01 && width == 2, "Caret must be 2pt wide")
-        try require(abs(caret.height - size * 1.1) < 0.5, "Caret height for \(text.debugDescription): \(caret.height)")
+        try require(abs(caret.height - caretHeight) < 0.5, "Caret height for \(text.debugDescription): \(caret.height)")
     }
     let sample = OverlayPreview.noteEditor(text: "hello", selection: NSRange(location: 5, length: 0))
     sample.layoutSubtreeIfNeeded()
@@ -1069,16 +1068,15 @@ private func checkQuickNoteDesign() throws {
 /// Spec F: both cards share one surface, hang top-right under the band, and use the spec metrics.
 @MainActor
 private func checkCardDesign() throws {
-    func named(_ view: NSView, _ name: String) -> [NSView] { descendants(view).filter { String(describing: type(of: $0)) == name } }
     let actions = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true, overlay: .actions(selected: 0))
     actions.layoutSubtreeIfNeeded()
     try checkCardButtonState(in: actions, open: "Actions", context: "Actions snapshot")
-    guard let menu = named(actions, "NoteActionMenuView").first else { throw GalleryError("Actions card missing") }
+    guard let menu = views(named: "NoteActionMenuView", in: actions).first else { throw GalleryError("Actions card missing") }
     let menuFrame = actions.convert(menu.bounds, from: menu)
     try require(abs(menuFrame.width - 280) < 0.5, "Actions card width")
     try require(abs(menuFrame.maxX - (actions.bounds.width - 8)) < 0.5 && abs(menuFrame.minY - 40) < 0.5, "Actions card must anchor top-right under the band")
     try require(actions.bounds.height >= menuFrame.maxY + 8 - 0.5, "Window must fit the Actions overflow")
-    let rows = named(menu, "ActionRowView")
+    let rows = views(named: "ActionRowView", in: menu)
     let actionLabels = descendants(menu).compactMap { $0 as? NSTextField }.map(\.stringValue)
     try require(actionLabels.contains("Add to Pinned") && !actionLabels.contains("Pin Note") && !actionLabels.contains("Unpin Note"),
                 "The action must describe Browse pinning, not window stickiness")
@@ -1092,10 +1090,10 @@ private func checkCardDesign() throws {
                 "Save as New Note must be disabled when the text names no note")
     let collision = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true, overlay: .actions(), appendsTo: "Groceries")
     collision.layoutSubtreeIfNeeded()
-    let collisionRows = named(collision, "ActionRowView")
+    let collisionRows = views(named: "ActionRowView", in: collision)
     let collisionSave = collisionRows.first { $0.accessibilityLabel() == "Save as New Note" }
     try require(collisionRows.count == 6 && collisionSave?.isAccessibilityEnabled() == true, "Save as New Note must be enabled when the text names a note")
-    try require(named(menu, "SeparatorView").count == 2, "Actions card: header separator plus one group separator")
+    try require(views(named: "SeparatorView", in: menu).count == 2, "Actions card: header separator plus one group separator")
     let groups = rows.map { menu.convert($0.bounds, from: $0).minY }.sorted()
     try require(groups[3] - groups[2] > 32.5, "A gap must separate the two action groups")
     try require(menu.layer?.cornerRadius == 12, "Cards use a 12pt radius")
@@ -1104,29 +1102,29 @@ private func checkCardDesign() throws {
     let browse = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true, overlay: .browse(items: many, selected: 0))
     browse.layoutSubtreeIfNeeded()
     try checkCardButtonState(in: browse, open: "Browse notes", context: "Browse snapshot")
-    guard let card = named(browse, "NoteBrowseView").first, let list = card.subviews.compactMap({ $0 as? NSScrollView }).first else { throw GalleryError("Browse card missing") }
+    guard let card = views(named: "NoteBrowseView", in: browse).first, let list = card.subviews.compactMap({ $0 as? NSScrollView }).first else { throw GalleryError("Browse card missing") }
     let cardFrame = browse.convert(card.bounds, from: card)
     try require(abs(cardFrame.width - 320) < 0.5, "Browse card width")
-    // Two section headers (Pinned, Recent) and seven rows are visible; the rest scrolls.
-    let expected = 4 + 2 * OverlayTheme.browseHeaderHeight + 7 * OverlayTheme.browseRowHeight + 4
+    // Golden: 4pt padding, two 24pt section headers (Pinned, Recent), seven 40pt rows, 4pt padding; the rest scrolls.
+    let expected: CGFloat = 336
     try require(abs(list.frame.height - expected) < 0.5,
                 "Browse list must show at most seven rows (height \(list.frame.height))")
     try require((list.documentView?.frame.height ?? 0) > list.frame.height, "Browse must scroll past seven rows")
-    try require(named(browse, "BrowseRowView").allSatisfy { abs($0.frame.height - 40) < 0.01 }, "Browse rows are 40pt")
+    try require(views(named: "BrowseRowView", in: browse).allSatisfy { abs($0.frame.height - 40) < 0.01 }, "Browse rows are 40pt")
     try require(browse.bounds.height >= cardFrame.maxY + 8 - 0.5, "Window must fit the Browse overflow")
-    let cardHints = named(card, "KeycapView").sorted { $0.frame.minX < $1.frame.minX }
+    let cardHints = views(named: "KeycapView", in: card).sorted { $0.frame.minX < $1.frame.minX }
     try require(cardHints.count == 3, "Browse must have exactly three footer hints")
     guard let strip = cardHints.first?.superview else { throw GalleryError("Browse footer missing") }
     let stripFrame = card.convert(strip.bounds, from: strip)
     try require(stripFrame.height == OverlayTheme.browseFooterHeight && stripFrame.maxY == card.bounds.maxY,
                 "Browse hints must occupy the bottom 28pt strip")
-    try require(named(card, "SeparatorView").count == 2 && list.frame.maxY == stripFrame.minY - OverlayTheme.borderWidth,
+    try require(views(named: "SeparatorView", in: card).count == 2 && list.frame.maxY == stripFrame.minY - OverlayTheme.borderWidth,
                 "The list must scroll above the footer separator")
     try require(cardHints.first?.frame.minX == OverlayTheme.browseFooterInset && cardHints.allSatisfy { strip.bounds.contains($0.frame) }
                 && zip(cardHints, cardHints.dropFirst()).allSatisfy { $1.frame.minX - $0.frame.maxX == 16 },
                 "Browse footer hints must fit with a 12pt inset and the standard gaps")
     let empty = OverlayPreview.noteEditor(text: "one", revealed: true, overlay: .browse(items: []))
-    guard let emptyCard = named(empty, "NoteBrowseView").first else { throw GalleryError("Empty Browse card missing") }
+    guard let emptyCard = views(named: "NoteBrowseView", in: empty).first else { throw GalleryError("Empty Browse card missing") }
     try require(abs(emptyCard.frame.height - (OverlayTheme.cardFieldHeight + OverlayTheme.borderWidth + OverlayTheme.browseEmptyHeight + OverlayTheme.borderWidth + OverlayTheme.browseFooterHeight)) < 0.5, "Empty Browse area is 56pt")
 }
 
@@ -1171,13 +1169,13 @@ private func checkPanelMoving() async throws {
     try require(!OverlayPreview.isDragHandle(in: rest, at: NSPoint(x: 60, y: 38 + 10)), "Text must not be a drag handle")
     let hover = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true)
     hover.layoutSubtreeIfNeeded()
-    let buttons = descendants(hover).filter { String(describing: type(of: $0)) == "ChromeButton" }
+    let buttons = chromeButtons(in: hover)
     try require(!buttons.isEmpty && buttons.allSatisfy { !OverlayPreview.isDragHandle(in: hover, at: hover.convert(NSPoint(x: $0.bounds.midX, y: $0.bounds.midY), from: $0)) },
                 "Chrome buttons must not be drag handles")
     try require(OverlayPreview.isDragHandle(in: hover, at: NSPoint(x: width / 2, y: 19)), "The title stays a handle when revealed")
     let withCard = OverlayPreview.noteEditor(text: "one\ntwo", revealed: true, overlay: .actions(selected: 0))
     withCard.layoutSubtreeIfNeeded()
-    guard let card = descendants(withCard).first(where: { String(describing: type(of: $0)) == "NoteActionMenuView" }) else { throw GalleryError("Card missing") }
+    guard let card = views(named: "NoteActionMenuView", in: withCard).first else { throw GalleryError("Card missing") }
     try require(!OverlayPreview.isDragHandle(in: withCard, at: withCard.convert(NSPoint(x: card.bounds.midX, y: card.bounds.midY), from: card)), "An open card must not be a drag handle")
     try require(OverlayPreview.isDragHandle(in: withCard, at: NSPoint(x: withCard.bounds.width / 2, y: 19))
                 && OverlayPreview.isDragHandle(in: withCard, at: NSPoint(x: 10, y: OverlayPreview.noteRect(in: withCard).maxY - 10)),
@@ -1246,11 +1244,11 @@ private func checkCaretStates() async throws {
     // An empty line inside an open fence uses the code font.
     let fenced = OverlayPreview.noteEditor(text: "```\ncode\n", selection: NSRange(location: 9, length: 0))
     fenced.layoutSubtreeIfNeeded()
-    try require(OverlayPreview.caretRect(in: fenced).map { abs($0.height - OverlayTheme.editorCodeFont.pointSize * 1.1) < 0.5 } == true,
+    try require(OverlayPreview.caretRect(in: fenced).map { abs($0.height - 14.85) < 0.5 } == true,
                 "Caret on an empty fenced-code line must be 1.1 x the code font size")
     let plain = OverlayPreview.noteEditor(text: "```\ncode\n```\n", selection: NSRange(location: 13, length: 0))
     plain.layoutSubtreeIfNeeded()
-    try require(OverlayPreview.caretRect(in: plain).map { abs($0.height - OverlayTheme.editorFont.pointSize * 1.1) < 0.5 } == true,
+    try require(OverlayPreview.caretRect(in: plain).map { abs($0.height - 16.5) < 0.5 } == true,
                 "Caret after a closed fence is body-sized")
 
     // Selection draws nothing (and never reaches the system's caret); marked text keeps the tight caret.
@@ -1304,9 +1302,6 @@ private func checkFloatingCards() async throws {
             onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in }, onOpenAsNote: { _ in }, browseItems: { items },
             onBrowse: { item, _ in clicked = item.id }, onTogglePin: { true }, onClose: {}, onError: { _ in }))
     }
-    func named(_ root: NSView, _ name: String) -> [NSView] {
-        descendants(root).filter { String(describing: type(of: $0)) == name }
-    }
     func move(_ panel: OverlayPanel, root: NSView, to point: NSPoint) throws {
         guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: root.convert(point, to: nil), modifierFlags: [],
             timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else {
@@ -1321,7 +1316,7 @@ private func checkFloatingCards() async throws {
         root.layoutSubtreeIfNeeded()
         let noteFrame = OverlayPreview.noteFrame(in: panel)
         let noteRect = OverlayPreview.noteRect(in: root)
-        guard let surface = named(root, "OverlaySurface").first else { throw GalleryError("Note surface missing") }
+        guard let surface = views(named: "OverlaySurface", in: root).first else { throw GalleryError("Note surface missing") }
         let geometry = surface.subviews.map(\.frame)
         for code: UInt16 in [40, 35] {
             try key(code, modifiers: .command)
@@ -1329,7 +1324,7 @@ private func checkFloatingCards() async throws {
             try require(OverlayPreview.noteFrame(in: panel) == noteFrame && OverlayPreview.noteRect(in: root) == noteRect,
                         "Card open must keep the note's screen and local rect identical (text \(text.count), key \(code), screen \(noteFrame) -> \(OverlayPreview.noteFrame(in: panel)), local \(noteRect) -> \(OverlayPreview.noteRect(in: root)))")
             try require(surface.subviews.map(\.frame) == geometry, "The title, text, chrome and footer must not move")
-            guard let card = named(root, code == 40 ? "NoteActionMenuView" : "NoteBrowseView").first else { throw GalleryError("Floating card missing") }
+            guard let card = views(named: code == 40 ? "NoteActionMenuView" : "NoteBrowseView", in: root).first else { throw GalleryError("Floating card missing") }
             try require(root.layer?.masksToBounds == false && surface.layer?.masksToBounds == true && card.layer?.shadowOpacity == 0,
                         "Clip only the note surface and use a single window shadow for the visible shapes")
             try require(card.acceptsFirstMouse(for: nil), "Card backgrounds must accept the first mouse click")
@@ -1339,7 +1334,7 @@ private func checkFloatingCards() async throws {
             }
             try require(filter.acceptsFirstMouse(for: nil) && document.acceptsFirstMouse(for: nil),
                         "Card filters and scroll documents must accept the first mouse click while inactive")
-            try require(named(card, code == 40 ? "ActionRowView" : "BrowseRowView").allSatisfy { $0.acceptsFirstMouse(for: nil) },
+            try require(views(named: code == 40 ? "ActionRowView" : "BrowseRowView", in: card).allSatisfy { $0.acceptsFirstMouse(for: nil) },
                         "Every card row must accept the first mouse click")
             try require(panel.frame.maxY == noteFrame.maxY && panel.frame.width == noteFrame.width, "Window overflow only grows downward")
             if text == "one\ntwo" {
@@ -1390,7 +1385,7 @@ private func checkFloatingCards() async throws {
     for code: UInt16 in [40, 35] {
         try key(code, modifiers: .command)
         root.layoutSubtreeIfNeeded()
-        guard let card = named(root, code == 40 ? "NoteActionMenuView" : "NoteBrowseView").first,
+        guard let card = views(named: code == 40 ? "NoteActionMenuView" : "NoteBrowseView", in: root).first,
               let scroll = card.subviews.compactMap({ $0 as? NSScrollView }).first else { throw GalleryError("Capped card/list missing") }
         let cardScreen = panel.convertToScreen(root.convert(card.frame, to: nil))
         try require(cardScreen.minY >= screen.visibleFrame.minY + 8 - 0.01 && OverlayPreview.noteFrame(in: panel) == noteFrame,
@@ -1410,7 +1405,7 @@ private func checkFloatingCards() async throws {
     for code: UInt16 in [40, 35] {
         OverlayPreview.screenChanged(in: panel, to: screen.visibleFrame)
         try key(code, modifiers: .command)
-        guard let card = named(root, code == 40 ? "NoteActionMenuView" : "NoteBrowseView").first else { throw GalleryError("Screen-change card missing") }
+        guard let card = views(named: code == 40 ? "NoteActionMenuView" : "NoteBrowseView", in: root).first else { throw GalleryError("Screen-change card missing") }
         let originalHeight = card.frame.height
         let anchor = card.frame.origin
         OverlayPreview.screenChanged(in: panel, to: smaller)
@@ -1423,7 +1418,7 @@ private func checkFloatingCards() async throws {
         try require(card.frame.height < originalHeight && abs(card.frame.height - budget) < 0.01,
                     "A screen change must recompute the card cap from the new visible frame")
         if code == 35, let list = card.subviews.compactMap({ $0 as? NSScrollView }).first {
-            let hints = named(card, "KeycapView")
+            let hints = views(named: "KeycapView", in: card)
             guard let strip = hints.first?.superview else { throw GalleryError("Capped Browse footer missing") }
             try require(strip.frame.height == OverlayTheme.browseFooterHeight && strip.frame.maxY == card.bounds.height
                         && list.frame.maxY == strip.frame.minY - OverlayTheme.borderWidth && hints.allSatisfy { strip.bounds.contains($0.frame) },
@@ -1439,8 +1434,8 @@ private func checkFloatingCards() async throws {
     guard let mouseRoot = mousePanel.contentView else { throw GalleryError("Mouse root missing") }
     try require(mousePanel.acceptsMouseMovedEvents, "The inactive panel must request mouse movement")
     try key(40, modifiers: .command)
-    guard let menu = named(mouseRoot, "NoteActionMenuView").first else { throw GalleryError("Actions missing") }
-    let rows = named(menu, "ActionRowView")
+    guard let menu = views(named: "NoteActionMenuView", in: mouseRoot).first else { throw GalleryError("Actions missing") }
+    let rows = views(named: "ActionRowView", in: menu)
     try require(rows.count == 6 && !descendants(menu).compactMap({ $0 as? NSTextField }).contains { $0.stringValue == "Browse Notes" },
                 "Actions must contain six rows and no Browse Notes")
     let pinPoint = mouseRoot.convert(NSPoint(x: rows[2].bounds.midX, y: rows[2].bounds.midY), from: rows[2])
@@ -1451,8 +1446,8 @@ private func checkFloatingCards() async throws {
     try require(OverlayPreview.selectedCardID(in: menu) == "pin" && rows[5].accessibilityValue() as? String != "Selected", "Disabled rows must not highlight on hover")
     try require(!rows[5].accessibilityPerformPress(), "Disabled Actions must do nothing")
     try key(35, modifiers: .command)
-    guard let browse = named(mouseRoot, "NoteBrowseView").first else { throw GalleryError("Browse missing") }
-    let browseRows = named(browse, "BrowseRowView")
+    guard let browse = views(named: "NoteBrowseView", in: mouseRoot).first else { throw GalleryError("Browse missing") }
+    let browseRows = views(named: "BrowseRowView", in: browse)
     let browsePoint = mouseRoot.convert(NSPoint(x: browseRows[1].bounds.midX, y: browseRows[1].bounds.midY), from: browseRows[1])
     try move(mousePanel, root: mouseRoot, to: browsePoint)
     try require(OverlayPreview.selectedCardID(in: browse) == "n1", "Hover must select the Browse row")
@@ -1461,7 +1456,7 @@ private func checkFloatingCards() async throws {
     guard let click = NSEvent.mouseEvent(with: .leftMouseDown, location: mouseRoot.convert(browsePoint, to: nil), modifierFlags: [],
         timestamp: 0, windowNumber: mousePanel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { throw GalleryError("Click fixture missing") }
     hit?.mouseDown(with: click)
-    try require(clicked == "n1" && named(mouseRoot, "NoteBrowseView").isEmpty, "Clicking Browse must Write here and close the card")
+    try require(clicked == "n1" && views(named: "NoteBrowseView", in: mouseRoot).isEmpty, "Clicking Browse must Write here and close the card")
     try key(40, modifiers: .command)
     let filter = try field(in: mousePanel)
     try require((filter.currentEditor() as? NSTextView)?.insertionPointColor == OverlayTheme.brandAccent,
@@ -1684,7 +1679,7 @@ private func checkStickyNotes() async throws {
         panel.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: panel))
         try require(editor.isVisible && OverlayPreview.noteFrame(in: panel) == frame && panel.firstResponder === text,
                     "Key loss closes a card, keeps the note frame, and restores the note first responder")
-        try require(!descendants(root).contains { ["NoteActionMenuView", "NoteBrowseView"].contains(String(describing: type(of: $0))) },
+        try require(views(named: "NoteActionMenuView", in: root).isEmpty && views(named: "NoteBrowseView", in: root).isEmpty,
                     "Sticky key loss must close both kinds of card")
         try checkCardButtonState(in: root, open: nil, context: "Resign-key closes card")
         editor.focus()
@@ -1693,7 +1688,7 @@ private func checkStickyNotes() async throws {
     }
     NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
     try require(editor.isVisible && OverlayPreview.noteFrame(in: panel) == frame, "Sticky notes survive Space changes at the same position")
-    let buttons = descendants(root).filter { String(describing: type(of: $0)) == "ChromeButton" }
+    let buttons = chromeButtons(in: root)
     try require(buttons.allSatisfy { $0.acceptsFirstMouse(for: nil) }, "Chrome buttons must run on the first click")
     editor.dismiss()
     let input = InputPanelController()
