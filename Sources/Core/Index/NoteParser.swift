@@ -182,10 +182,10 @@ public enum NoteParser {
         let prefix = CaptureFormat.noteMarkerPrefix
         guard line.hasPrefix(prefix), line.hasSuffix(CaptureFormat.markerSuffix) else { return nil }
         let value = String(line.dropFirst(prefix.count).dropLast(CaptureFormat.markerSuffix.count))
-        guard value.count > CaptureFormat.uuidLength + " at=".count,
+        guard value.count > CaptureFormat.uuidLength + CaptureFormat.markerStampKey.count,
               let id = UUID(uuidString: String(value.prefix(CaptureFormat.uuidLength))),
-              value.dropFirst(CaptureFormat.uuidLength).hasPrefix(" at="),
-              let date = ISO8601DateFormatter().date(from: String(value.dropFirst(CaptureFormat.uuidLength + " at=".count))) else { return nil }
+              value.dropFirst(CaptureFormat.uuidLength).hasPrefix(CaptureFormat.markerStampKey),
+              let date = ISO8601DateFormatter().date(from: String(value.dropFirst(CaptureFormat.uuidLength + CaptureFormat.markerStampKey.count))) else { return nil }
         return (id, date)
     }
 
@@ -195,8 +195,8 @@ public enum NoteParser {
         guard value.count >= CaptureFormat.uuidLength, let id = UUID(uuidString: String(value.prefix(CaptureFormat.uuidLength))) else { return nil }
         if value.count == CaptureFormat.uuidLength { return (id, nil) }
         let rest = String(value.dropFirst(CaptureFormat.uuidLength))
-        guard rest.hasPrefix(" at="), let appStart = rest.range(of: " app=\""), rest.hasSuffix("\"") else { return nil }
-        let stamp = String(rest[rest.index(rest.startIndex, offsetBy: 4)..<appStart.lowerBound])
+        guard rest.hasPrefix(CaptureFormat.markerStampKey), let appStart = rest.range(of: CaptureFormat.markerAppKey), rest.hasSuffix("\"") else { return nil }
+        let stamp = String(rest[rest.index(rest.startIndex, offsetBy: CaptureFormat.markerStampKey.count)..<appStart.lowerBound])
         guard let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
         let app = CaptureFormat.unescapeMetadata(String(rest[appStart.upperBound...].dropLast()))
         return (id, (date, app.isEmpty ? nil : app))

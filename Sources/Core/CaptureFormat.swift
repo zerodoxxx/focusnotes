@@ -8,6 +8,8 @@ public enum CaptureFormat {
     static let subheadingMarkerPrefix = "<!-- subheading:"
     static let uuidLength = 36
     static let markerStampPattern = "yyyy-MM-dd'T'HH:mm:ssXXX"
+    static let markerStampKey = " at="
+    static let markerAppKey = " app=\""
     static let sourceHeadingPrefix = "### "
     static let sourceLinkPrefix = "[Source](<"
     static let sourceLinkSuffix = ">)"
@@ -63,7 +65,7 @@ public enum CaptureFormat {
         }
         if case .note(let text) = capture.content {
             let stamp = localStamp(capture.createdAt, pattern: markerStampPattern, calendar: calendar)
-            return identityPrefix(for: capture) + " at=\(stamp)" + markerSuffix + "\n\n" + noteBody(text) + "\n"
+            return identityPrefix(for: capture) + markerStampKey + stamp + markerSuffix + "\n\n" + noteBody(text) + "\n"
         }
         let body: String
         switch capture.content {
@@ -76,7 +78,7 @@ public enum CaptureFormat {
         }
         let app = escapeMetadata(cleanPart(capture.source.appName))
         let stamp = localStamp(capture.createdAt, pattern: markerStampPattern, calendar: calendar)
-        let marker = identityPrefix(for: capture) + " at=\(stamp) app=\"\(app)\"" + markerSuffix
+        let marker = identityPrefix(for: capture) + markerStampKey + stamp + markerAppKey + app + "\"" + markerSuffix
         let heading = includeSourceHeading ? "\(sourceHeadingPrefix)\(sourceHeading(capture.source))\n" : ""
         let sourceLink = sourceLink(for: capture.source).map { $0 + "\n\n" } ?? ""
         return heading + marker + "\n\n" + sourceLink + body + "\n"
