@@ -76,6 +76,10 @@ public enum NoteTitle {
         return prefix.trimmingCharacters(in: .whitespaces) + "…"
     }
 
+    static func leafName(of path: String) -> String {
+        String(path.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+    }
+
     static func isDotComponent(_ component: String) -> Bool {
         component == "." || component == ".."
     }

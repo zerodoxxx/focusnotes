@@ -459,15 +459,15 @@ enum NoteFile {
         mutating func consume(_ data: Data, at offset: UInt64, calendar: Calendar) {
             // UUID prefixes also locate legacy markers and interrupted metadata.
             // A candidate is only accepted after its entire requested block is read.
-            for prefix in ["<!-- capture:", "<!-- note:", "<!-- subheading:"] {
+            for prefix in [CaptureFormat.markerPrefix, CaptureFormat.noteMarkerPrefix, CaptureFormat.subheadingMarkerPrefix] {
                 let needle = Data(prefix.utf8)
                 var start = data.startIndex
                 while start < data.endIndex,
                       let range = data.range(of: needle, in: start..<data.endIndex) {
-                    let end = range.upperBound + 36
+                    let end = range.upperBound + CaptureFormat.uuidLength
                     if end <= data.endIndex {
                         let identity = String(decoding: data[range.lowerBound..<end], as: UTF8.self)
-                        if UUID(uuidString: String(identity.suffix(36))) != nil {
+                        if UUID(uuidString: String(identity.suffix(CaptureFormat.uuidLength))) != nil {
                             markers[identity, default: []].append(offset + UInt64(range.lowerBound))
                             markerCount += 1
                             if markerCount > AppendCache.markerLimit { break }
@@ -711,7 +711,7 @@ enum NoteFile {
                     if let sourceHeading {
                         let needsHeading = state?.source.needsHeading(sourceHeading, calendar: calendar) ??
                             NoteParser.needsSourceHeading(sourceHeading, contents: String(decoding: contents ?? Data(), as: UTF8.self), calendar: calendar)
-                        if needsHeading { emittedBlock = "### \(sourceHeading)\n" + block }
+                        if needsHeading { emittedBlock = CaptureFormat.sourceHeadingPrefix + sourceHeading + "\n" + block }
                     }
                 }
                 let prefix: String

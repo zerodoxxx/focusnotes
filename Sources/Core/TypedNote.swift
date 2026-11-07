@@ -13,8 +13,10 @@ public struct TypedNote: Sendable {
     /// True when the first line has no text, so the title is a creation stamp.
     public let isGeneratedTitle: Bool
 
+    private static let htmlCommentPattern = #"<!--[\s\S]*?(?:-->|$)"#
+
     public init(markdown: String, createdAt: Date, calendar: Calendar) {
-        let withoutComments = Self.replace(#"<!--[\s\S]*?(?:-->|$)"#, in: markdown, with: "")
+        let withoutComments = Self.replace(Self.htmlCommentPattern, in: markdown, with: "")
         let first = withoutComments.components(separatedBy: .newlines).first {
             !$0.trimmingCharacters(in: .whitespaces).isEmpty
         } ?? ""
@@ -36,7 +38,7 @@ public struct TypedNote: Sendable {
             $0.scope == .home || $0.components.count > 1
         } ?? false
         let rawLeaf = isFolderQualified
-            ? String(extractedName.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+            ? NoteTitle.leafName(of: extractedName)
             : extractedName
         rawName = extractedName
         pathName = resolvedName
@@ -59,7 +61,7 @@ public struct TypedNote: Sendable {
     }
 
     private static func strip(_ line: String) -> String {
-        var text = replace(#"<!--[\s\S]*?(?:-->|$)"#, in: line, with: "")
+        var text = replace(htmlCommentPattern, in: line, with: "")
         let prefix = #"^[ \t]*(?:#+[ \t]+|[-*+][ \t]+(?:\[[ xX]\][ \t]*)?|[0-9]+[.)][ \t]+|>[ \t]*)"#
         while true {
             let stripped = replace(prefix, in: text, with: "")

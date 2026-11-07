@@ -51,7 +51,7 @@ public enum Router {
             let qualifiedPath = pathName.scope == .home || pathName.components.count > 1
             if qualifiedPath {
                 let location = try vault.resolveNoteName(pathName)
-                let leafTitle = String(cleaned.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+                let leafTitle = NoteTitle.leafName(of: cleaned)
                 return Destination(url: location.url, title: NoteTitle.cleanTitle(leafTitle), kind: .note)
             }
 
