@@ -48,7 +48,10 @@ import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
 repo = re.search(r'const string Repo = "([^"]+)"', source).group(1)
-revision = re.search(r'const string Revision = "([^"]+)"', source).group(1)
+# Revision lives in GemmaModelConfig.cs; ModelManifest.cs references it.
+config_path = sys.argv[1].replace("CaptureApp.ModelInstall/ModelManifest.cs", "CaptureApp.Embed/GemmaModelConfig.cs")
+config = open(config_path, encoding="utf-8").read()
+revision = re.search(r'const string Revision = "([^"]+)"', config).group(1)
 base = f"https://huggingface.co/{repo}/resolve/{revision}"
 for path, sha, size in re.findall(r'Artifact\("([^"]+)", "([0-9a-f]{64})", (\d+)\)', source):
     print("\t".join((path, f"{base}/{path}", sha, size)))
