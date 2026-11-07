@@ -102,17 +102,9 @@ private func requests(in directory: URL) throws -> [EmbedRequest] {
     }
 }
 
-nonisolated(nonsending) private func waitUntil(_ condition: () throws -> Bool, timeout: Duration = .seconds(10)) async throws {
+nonisolated(nonsending) func waitUntil(_ condition: () async throws -> Bool, timeout: Duration = .seconds(10)) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !(try condition()) {
-        guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
-private func waitUntilAsync(_ condition: () async -> Bool, timeout: Duration = .seconds(10)) async throws {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !(await condition()) {
+    while !(try await condition()) {
         guard ContinuousClock.now < deadline else { throw EmbeddingError.invalid("Regression fixture did not become ready") }
         try await Task.sleep(for: .milliseconds(10))
     }
@@ -245,7 +237,7 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     queued.append(Task { try? await client.embedLatestQuery("obsolete-0") })
     // The indexing request and first query are both registered with the
     // transport, so the first query is now the active coalesced operation.
-    try await waitUntilAsync { await client.pendingRequestCountForTesting() >= 2 }
+    try await waitUntil { await client.pendingRequestCountForTesting() >= 2 }
     for i in 1..<20 {
         let next = Task { try? await client.embedLatestQuery("obsolete-\(i)") }
         if let previous = queued.last { _ = await previous.value }
@@ -326,10 +318,7 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
         do { _ = try await client.embedQuery("must-not-start-after-close"); return true }
         catch { return false }
     }
-    let closeDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while await client.pendingRequestCountForTesting() < 2, ContinuousClock.now < closeDeadline {
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await waitUntil({ await client.pendingRequestCountForTesting() >= 2 }, timeout: .seconds(3))
     guard await client.pendingRequestCountForTesting() == 2 else {
         throw EmbeddingError.invalid("Close fixture did not queue both requests")
     }
@@ -356,7 +345,7 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     let errorClient = try EmbedClient(helperExecutable: errorExecutable, modelsDirectory: errorDirectory)
     for i in 0..<3 {
         do { _ = try await errorClient.embedQuery("broken"); checks.require(false, "runtime failure degrades gracefully") }
-        catch { }
+        catch { checks.require(error is EmbeddingError && !String(describing: error).contains("retry paused"), "runtime failure degrades gracefully") }
         if i < 2 { _ = try await errorClient.ping() }
     }
     do { _ = try await errorClient.embedQuery("paused"); checks.require(false, "runtime failure cooldown") }
@@ -377,7 +366,7 @@ func runRegressionChecks(_ checks: inout Checks, root: URL) async throws {
     for task in failures { if !(await task.value) { allFailed = false } }
     let spawnURL = crashDirectory.appendingPathComponent("spawns")
     let spawnCount = try String(contentsOf: spawnURL, encoding: .utf8).split(separator: "\n").count
-    checks.require(allFailed && spawnCount == 3, "crash burst spawns at most three helpers before 30 s backoff")
+    checks.require(allFailed && spawnCount == 3, "crash burst spawns exactly three helpers before 30 s backoff")
     try JSONEncoder().encode(FixtureConfiguration(mode: "healthy")).write(to: crashDirectory.appendingPathComponent("settings.json"))
     do { _ = try await crashClient.ping(); checks.require(false, "restart fails fast during cooldown") }
     catch { checks.require(String(describing: error).contains("retry paused"), "restart is rejected during cooldown") }
@@ -393,7 +382,7 @@ func checkUnavailableModels(_ checks: inout Checks, helper: URL, root: URL) asyn
         let directory = root.appendingPathComponent(mode, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if mode == "corrupt" {
-            try Data("invalid dylib".utf8).write(to: directory.appendingPathComponent("libonnxruntime.dylib"))
+            try Data("invalid dylib".utf8).write(to: directory.appendingPathComponent(ModelManifest.current.dylibName))
         }
         let client = try EmbedClient(helperExecutable: helper, modelsDirectory: directory)
         let info = try await client.ping()
@@ -430,7 +419,7 @@ func checkBusyParentDeath(_ checks: inout Checks, helper: URL, models: URL, root
     helperPID = pid
     try await Task.sleep(for: .milliseconds(150))
     checks.require(parent.isRunning && kill(pid, 0) == 0 && !FileManager.default.fileExists(atPath: state.appendingPathComponent("completed").path),
-                   "intermediate parent is SIGKILLed during cold model work")
+                   "helper is still busy in cold model work before its parent is SIGKILLed")
     let start = ContinuousClock.now
     _ = kill(parent.processIdentifier, SIGKILL)
     while kill(pid, 0) == 0 && start.duration(to: .now) < .seconds(10) {
