@@ -327,11 +327,7 @@ final class AppController: NSObject, NSMenuDelegate {
             switch binding.action {
             case .quickNote: openNoteEditor(folder: folder)
             case .startSession:
-                enqueue { controller in
-                    await controller.drainCaptures()
-                    guard await controller.closePanels() else { return }
-                    await controller.captures.waitForCommits()
-                    guard !controller.isTerminating else { return }
+                enqueueAfterPanelsClose { controller in
                     let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                         .filter { Self.sessionPath($0.path, isIn: folder) }
                     guard await controller.waitForAcquisition() else { return }
@@ -393,6 +389,16 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !self.isTerminating || (runsDuringQuit && quitWindowOpen) else { return }
             await action(self)
             if self.actionGeneration == generation { self.actionTail = nil }
+        }
+    }
+
+    private func enqueueAfterPanelsClose(_ body: @escaping @MainActor (AppController) async -> Void) {
+        enqueue { controller in
+            await controller.drainCaptures()
+            guard await controller.closePanels() else { return }
+            await controller.captures.waitForCommits()
+            guard !controller.isTerminating else { return }
+            await body(controller)
         }
     }
 
@@ -728,11 +734,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func toggleSession() {
-        enqueue { controller in
-            await controller.drainCaptures()
-            guard await controller.closePanels() else { return }
-            await controller.captures.waitForCommits()
-            guard !controller.isTerminating else { return }
+        enqueueAfterPanelsClose { controller in
             if let session = await controller.pipeline.currentSession() {
                 do { _ = try await controller.endSession(session) }
                 catch { controller.report(error, title: "Couldn't end session") }
@@ -1058,11 +1060,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func openSubheading() {
-        enqueue { controller in
-            await controller.drainCaptures()
-            guard await controller.closePanels() else { return }
-            await controller.captures.waitForCommits()
-            guard !controller.isTerminating else { return }
+        enqueueAfterPanelsClose { controller in
             let destination: Destination
             do {
                 try await controller.pipeline.recoverSessionIdentity()
@@ -1493,25 +1491,26 @@ final class AppController: NSObject, NSMenuDelegate {
         else { DispatchQueue.main.async(execute: action) }
     }
 
-    @objc private func menuCaptureSelection() {
+    private func captureFromMenu(_ start: @escaping @MainActor (AppController, FrontmostContext) -> Void) {
         guard !isTerminating, !acquisitionInProgress else { return }
         let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.selection, fromHotkey: false, context: context) }
+        afterMenu { [weak self] in
+            guard let self else { return }
+            start(self, context)
+        }
+    }
+
+    @objc private func menuCaptureSelection() {
+        captureFromMenu { controller, context in controller.capture(.selection, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureRegion() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.region, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.region, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureSelectionOutsideSession() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.selection, outsideSession: true, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.selection, outsideSession: true, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureRegionOutsideSession() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
     }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }
