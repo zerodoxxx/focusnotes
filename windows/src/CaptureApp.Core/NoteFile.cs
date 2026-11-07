@@ -523,7 +523,7 @@ public static partial class NoteFile
         var components = Vault.PathComponents(relativePath);
         var parent = string.Join('/', components.SkipLast(1));
         _ = SafePath(root, parent.Length == 0 ? ".asset-check" : parent + "/.asset-check", true);
-        var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Vault.UrlUnder(root, relativePath);
         lock (Gate(path))
         {
             if (FileMetadata.At(path) is not null)
