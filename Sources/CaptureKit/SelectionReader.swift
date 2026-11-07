@@ -115,7 +115,6 @@ public enum SelectionReader {
         guard pasteboard.changeCount == snapshot.changeCount else { return .failure(.noSelection) }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        // One Command-only copy through the current session, after the frontmost check.
         down.post(tap: .cgSessionEventTap)
         up.post(tap: .cgSessionEventTap)
 

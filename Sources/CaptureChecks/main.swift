@@ -291,7 +291,6 @@ func checkOCRAndClassifier() async throws {
     }
     var results: [(Fixture, OCRResult, CaptureClassification)] = []
     for fixture in fixtures {
-        // Exercise both the PNG-data and CGImage public entry points.
         let result: OCRResult
         if fixture.name == "paragraph" {
             result = try await OCR.recognize(pngData: Fixtures.png(fixture.image))

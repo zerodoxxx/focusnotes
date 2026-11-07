@@ -106,11 +106,9 @@ public actor ModelInstaller {
         let parent = modelsDirectory.deletingLastPathComponent()
         let total = manifest.totalDownloadBytes
 
-        // Step 1: staging directory (also creates the parent) and cleanup of backups left by a crash.
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         removeStaleBackups(in: parent)
 
-        // Fail before any download when a bundled license is missing from the app.
         for license in manifest.licenses {
             let source = bundledResources.appendingPathComponent(license.resourceName)
             guard fm.fileExists(atPath: source.path) else {
@@ -118,7 +116,6 @@ public actor ModelInstaller {
             }
         }
 
-        // Step 2: work list. Files that already verify are reused and count as completed.
         var downloads: [Download] = []
         var completed: Int64 = 0
         // .part files of files that no longer need downloading. Removed only after the space check passes.
@@ -166,7 +163,6 @@ public actor ModelInstaller {
             downloads.append(Download(name: "runtime.tgz", url: runtime.url, sha256: runtime.sha256, size: runtime.size))
         }
 
-        // Step 3: disk pre-flight, counting bytes already present in .part files as downloaded.
         // Read-only: nothing is deleted until the space check has passed.
         var remainingBytes: Int64 = 0
         for item in downloads {
@@ -186,7 +182,6 @@ public actor ModelInstaller {
         let throttle = ProgressThrottle(total: total, callback: progress)
         throttle.report(completed, force: true)
 
-        // Step 4: downloads in manifest order, with the runtime archive last.
         for item in downloads {
             try checkCancellation()
             let base = completed
@@ -200,13 +195,11 @@ public actor ModelInstaller {
             completed += item.size
         }
 
-        // Step 5: unpack the runtime archive and verify each member before it is installed.
         if !runtimeInstalled {
             try checkCancellation()
             try extractRuntime(archive: archive, staging: staging)
         }
 
-        // Step 6: bundled license files, verified before they are copied in.
         for license in manifest.licenses {
             try checkCancellation()
             let source = bundledResources.appendingPathComponent(license.resourceName)
@@ -218,7 +211,6 @@ public actor ModelInstaller {
             try checkCancellation()
         }
 
-        // Step 7: everything the app needs is present, and nothing is half-written.
         let requiredNames = manifest.requiredFiles
             + [manifest.runtimeLicenseName, manifest.runtimeNoticesName]
             + manifest.licenses.map(\.installedName)
@@ -233,7 +225,7 @@ public actor ModelInstaller {
             throw ModelInstallError.io("an incomplete download is still present")
         }
 
-        // Step 8: atomic commit. The old directory is kept until the new one is in place.
+        // The old directory is kept until the new one is in place.
         guard fm.fileExists(atPath: staging.path) else {
             throw ModelInstallError.io("the staging folder was removed during the install")
         }
@@ -243,7 +235,6 @@ public actor ModelInstaller {
         try commit(staging: staging)
         logger.info("Model install complete: \(requiredNames.count, privacy: .public) files")
 
-        // Step 9: final progress.
         throttle.report(total, force: true)
     }
 

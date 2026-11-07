@@ -61,7 +61,6 @@ func runTar(_ arguments: [String]) throws {
     }
 }
 
-/// Relative paths of every regular file under `directory`.
 func regularFiles(under directory: URL) throws -> Set<String> {
     guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey]) else {
         return []
@@ -148,7 +147,6 @@ func makeFixture(in directory: URL) throws -> Fixture {
     finalFiles["ORT-LICENSE"] = runtimeLicense
     finalFiles["ORT-ThirdPartyNotices.txt"] = runtimeNotices
 
-    // Bundled licenses that ship inside the app.
     let resources = directory.appendingPathComponent("resources", isDirectory: true)
     let bundledLicense = deterministicBytes(count: 120, seed: 70)
     let bundledNotice = deterministicBytes(count: 80, seed: 71)
@@ -444,7 +442,6 @@ func caseCancelAfterFinalFetch(_ root: URL, _ fixture: Fixture) async throws {
     try expect(!exists(stagingDirectory(root).appendingPathComponent(".runtime-extract", isDirectory: true)),
                "temporary extraction data survived cancellation")
 
-    // A second installer call should finish from the verified staged files without refetching.
     let requestCount = await transport.totalRequests()
     try await installer.install { _ in }
     try expect(await transport.totalRequests() == requestCount,
@@ -569,7 +566,6 @@ func caseNetworkExhausted(_ root: URL, _ fixture: Fixture) async throws {
     }) {
         try await installer.install { _ in }
     }
-    // One attempt plus maxNetworkRetries (3) retries, all against the first file.
     let requests = await transport.totalRequests()
     try expect(requests == 4, "\(requests) requests were made, expected 4 (1 attempt + 3 retries)")
 }
