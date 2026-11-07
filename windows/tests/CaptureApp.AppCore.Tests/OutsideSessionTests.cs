@@ -241,7 +241,6 @@ public sealed class OutsideSessionTests
         Assert.False(plain.OutsideSession);
         Assert.Equal(session, plain.Destination);
 
-        // Without a session the outside launch matches the plain one.
         var idle = new QuickNoteState(null, pinOnSave: true, outsideSession: true);
         Assert.False(idle.OutsideSession);
         Assert.Null(idle.Destination);

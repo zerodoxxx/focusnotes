@@ -67,7 +67,6 @@ public sealed class UnsavedCapturesTests
 
         var retry = Assert.IsType<CaptureJob>(await ledger.FindRetryAsync(job => job.Prepared.Capture.Content == CaptureContent.Text("retryneedle")));
         Assert.Equal(failed.Prepared.Capture.Id, retry.Prepared.Capture.Id);
-        // The retry is claimed, so no second caller can take it.
         Assert.Null(await ledger.FindRetryAsync(job => job.Prepared.Capture.Content == CaptureContent.Text("retryneedle")));
         await ledger.Commit(retry.Prepared.Capture.Id, Task.FromResult(retry), job => pipeline.Commit(job));
         await ledger.DrainAsync(job => pipeline.Commit(job), () => false);

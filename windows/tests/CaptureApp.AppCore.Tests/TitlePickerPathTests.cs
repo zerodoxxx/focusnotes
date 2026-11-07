@@ -43,7 +43,6 @@ public sealed class TitlePickerPathTests
         var picks = new CaptureCoordinator(pipeline, new HeadlessCaptureHost()).PickerChoices(suggestions);
         string? ValueOf(string id) => picks.ValueOf(suggestions.Single(s => s.Path == id));
 
-        // Unique root notes and unique sessions keep their bare title.
         Assert.Null(ValueOf("Unique.md"));
         Assert.Null(ValueOf("Team standup.md"));
         Assert.Null(ValueOf("Sessions/2026-10-13 Retro.md"));
@@ -65,7 +64,6 @@ public sealed class TitlePickerPathTests
         }
 
         Assert.Null(picks.DestinationOf("Ideas"));
-        // Extensionless values also route to the same note by title.
         foreach (var (id, value) in expected.Where(p => !p.Value.EndsWith(".md", StringComparison.Ordinal)))
         {
             Assert.Equal(Path.GetFullPath(vault.NoteLocation(id).Url), Path.GetFullPath(Router.Destination(value, null, notes, vault).Url));

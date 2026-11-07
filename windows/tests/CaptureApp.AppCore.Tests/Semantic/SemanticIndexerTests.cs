@@ -119,7 +119,6 @@ public sealed class SemanticIndexerTests : IDisposable
             Assert.Equal(new[] { "a.md#t" }, store.Keys());
         }
 
-        // Power returns: the false-to-true change schedules a pass after the debounce.
         gate = true;
         indexer.ImageEmbeddingAllowedChanged(this, true);
         time.Advance(Debounce);
@@ -172,7 +171,6 @@ public sealed class SemanticIndexerTests : IDisposable
         await Task.Delay(100);
         Assert.Empty(embedder.DocumentBatches);
         time.Advance(TimeSpan.FromSeconds(0.2));
-        // Second failure schedules the 15 s retry.
         await Wait.Until(() => time.PendingTimers == 1, "the second retry timer");
         time.Advance(TimeSpan.FromSeconds(14.9));
         await Task.Delay(100);
