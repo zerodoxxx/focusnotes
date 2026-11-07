@@ -7,7 +7,8 @@ namespace CaptureApp.Embed.Tests;
 /// Fails CI when the C# manifest drifts from Sources/EmbedKit/ModelManifest.swift.
 public sealed partial class ManifestSyncTests
 {
-    [GeneratedRegex("""ModelArtifact\(path: "([^"]+)", url: "\\\(hfBase\)/([^"]+)",\s*sha256: "([0-9a-f]{64})", size: (\d+)\)""")]
+    // The path is a string literal or a `static let` constant declared in the same file.
+    [GeneratedRegex("""ModelArtifact\(path: (?:"([^"]+)"|([A-Za-z_]\w*)), url: "\\\(hfBase\)/([^"]+)",\s*sha256: "([0-9a-f]{64})", size: (\d+)\)""")]
     private static partial Regex SwiftArtifact();
 
     [GeneratedRegex("""BundledLicense\(resourceName: "([^"]+)",\s*sha256: "([0-9a-f]{64})",\s*installedName: "([^"]+)"\)""")]
@@ -27,9 +28,7 @@ public sealed partial class ManifestSyncTests
         Assert.Equal(revision, manifest.HuggingFaceRevision);
         Assert.Equal($"https://huggingface.co/{repo}/resolve/{revision}", hfBase);
 
-        var expected = SwiftArtifact().Matches(swift)
-            .Select(m => new ModelArtifact(m.Groups[1].Value, $"{hfBase}/{m.Groups[2].Value}", m.Groups[3].Value, long.Parse(m.Groups[4].Value)))
-            .ToList();
+        var expected = SwiftArtifacts(swift, hfBase);
         Assert.Equal(10, expected.Count);
         Assert.Equal(expected, manifest.ModelFiles);
 
@@ -39,6 +38,37 @@ public sealed partial class ManifestSyncTests
         var swiftModelId = Regex.Match(File.ReadAllText(Path.Combine(Repo.Root(), "Sources", "EmbedKit", "Embedder.swift")), @"modelID = ""([^""]+)""").Groups[1].Value;
         Assert.Contains(revision, swiftModelId);
         Assert.Equal(Embedder.ModelID, swiftModelId);
+    }
+
+    private static List<ModelArtifact> SwiftArtifacts(string swift, string hfBase) =>
+        SwiftArtifact().Matches(swift)
+            .Select(m => new ModelArtifact(SwiftPath(swift, m), $"{hfBase}/{m.Groups[3].Value}", m.Groups[4].Value, long.Parse(m.Groups[5].Value)))
+            .ToList();
+
+    private static string SwiftPath(string swift, Match artifact)
+    {
+        if (artifact.Groups[1].Success) return artifact.Groups[1].Value;
+        var name = artifact.Groups[2].Value;
+        var constant = Regex.Match(swift, "static let " + Regex.Escape(name) + " = \"([^\"]+)\"");
+        Assert.True(constant.Success, $"ModelArtifact path constant {name} is not a string literal in ModelManifest.swift");
+        return constant.Groups[1].Value;
+    }
+
+    [Fact]
+    public void ConstantBackedArtifactPathsResolveToTheirLiterals()
+    {
+        const string swift = """
+            static let textPath = "onnx/a.onnx"
+            ModelArtifact(path: textPath, url: "\(hfBase)/onnx/a.onnx",
+                          sha256: "%%", size: 1),
+            ModelArtifact(path: "b.json", url: "\(hfBase)/b.json", sha256: "%%", size: 2),
+            ModelArtifact(path: missingPath, url: "\(hfBase)/c.json", sha256: "%%", size: 3),
+            """;
+        var source = swift.Replace("%%", new string('0', 64));
+        var resolvable = source[..source.IndexOf("ModelArtifact(path: missingPath", StringComparison.Ordinal)];
+
+        Assert.Equal(new[] { "onnx/a.onnx", "b.json" }, SwiftArtifacts(resolvable, "base").Select(a => a.Path));
+        Assert.ThrowsAny<Exception>(() => SwiftArtifacts(source, "base"));
     }
 
     [Fact]
