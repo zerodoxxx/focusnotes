@@ -37,7 +37,7 @@ internal static class Program
                     break;
                 case "--idle-seconds":
                     if (++i >= args.Length || !double.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out idle)
-                        || !double.IsFinite(idle) || idle <= 0 || idle > 86_400)
+                        || !double.IsFinite(idle) || idle <= 0 || idle > EmbedProtocol.MaxTimeoutSeconds)
                     {
                         throw EmbeddingException.Invalid("Invalid idle timeout");
                     }
@@ -81,9 +81,9 @@ internal static class Program
     }
 
     /// Windows asserts all three background controls took effect; elsewhere there is nothing to assert.
-    private static int SelfTest(BackgroundMode.Status? background)
+    private static int SelfTest(BackgroundReport? background)
     {
-        var report = EmbedResponse.Create("self-test", 256, ecoQos: background?.EcoQos, belowNormal: background?.BelowNormal, backgroundMode: background?.BackgroundMode);
+        var report = EmbedResponse.Create("self-test", EmbedRequest.DefaultDimensions, background: background);
         using var stdout = Console.OpenStandardOutput();
         stdout.Write(EmbedProtocol.EncodeLine(report));
         stdout.Flush();
@@ -111,7 +111,7 @@ internal static class Program
         }
     }
 
-    private static async Task ServeAsync(string directory, double idle, BackgroundMode.Status? background)
+    private static async Task ServeAsync(string directory, double idle, BackgroundReport? background)
     {
         var embedders = new Dictionary<int, Embedder>();
         try
@@ -189,7 +189,7 @@ internal static class Program
         return line;
     }
 
-    private static EmbedResponse Handle(byte[] line, string directory, Dictionary<int, Embedder> embedders, BackgroundMode.Status? background)
+    private static EmbedResponse Handle(byte[] line, string directory, Dictionary<int, Embedder> embedders, BackgroundReport? background)
     {
         EmbedRequest? request = null;
         try
@@ -240,14 +240,12 @@ internal static class Program
                     throw EmbeddingException.Invalid($"Unknown operation: {request.Operation}");
             }
 
-            var isStatus = request.Operation == "status";
             return EmbedResponse.Create(request.Id, request.Dimensions, vectors, visionLoaded: embedder.VisionLoaded,
-                ecoQos: isStatus ? background?.EcoQos : null, belowNormal: isStatus ? background?.BelowNormal : null,
-                backgroundMode: isStatus ? background?.BackgroundMode : null);
+                background: request.Operation == "status" ? background : null);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            return EmbedResponse.Create(request?.Id ?? "", request?.Dimensions ?? 256, error: error.Message,
+            return EmbedResponse.Create(request?.Id ?? "", request?.Dimensions ?? EmbedRequest.DefaultDimensions, error: error.Message,
                 visionLoaded: embedders.Values.Any(embedder => embedder.VisionLoaded));
         }
     }

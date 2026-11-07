@@ -34,10 +34,10 @@ public sealed class EmbedClient : IEmbedService, IAsyncDisposable
     private readonly LatestQueryQueue latestQueries = new();
 
     /// helperExecutable is the EmbedHelper exe, or its .dll (launched through the dotnet host).
-    public EmbedClient(string helperExecutable, string modelsDirectory, int dimensions = 256, double idleSeconds = 60, double requestTimeout = 120)
+    public EmbedClient(string helperExecutable, string modelsDirectory, int dimensions = EmbedRequest.DefaultDimensions, double idleSeconds = 60, double requestTimeout = 120)
     {
-        if (!EmbedRequest.SupportedDimensions.Contains(dimensions) || !double.IsFinite(idleSeconds) || idleSeconds <= 0 || idleSeconds > 86_400
-            || !double.IsFinite(requestTimeout) || requestTimeout <= 0 || requestTimeout > 86_400)
+        if (!EmbedRequest.SupportedDimensions.Contains(dimensions) || !double.IsFinite(idleSeconds) || idleSeconds <= 0 || idleSeconds > EmbedProtocol.MaxTimeoutSeconds
+            || !double.IsFinite(requestTimeout) || requestTimeout <= 0 || requestTimeout > EmbedProtocol.MaxTimeoutSeconds)
         {
             throw EmbeddingException.Invalid("Invalid client configuration");
         }
@@ -408,6 +408,7 @@ internal sealed class HelperTransport(string executable, string directory, doubl
         }
         catch (IOException)
         {
+            // The helper may already have closed its pipe; disposal is best-effort.
         }
 
         Process? stopping;
@@ -429,6 +430,7 @@ internal sealed class HelperTransport(string executable, string directory, doubl
             }
             catch (InvalidOperationException)
             {
+                // The process exited between HasExited and Kill.
             }
             finally
             {

@@ -7,6 +7,7 @@ namespace CaptureApp.Embed;
 public sealed class EmbedRequest
 {
     public static readonly int[] SupportedDimensions = [128, 256, 512, 768];
+    public const int DefaultDimensions = 256;
 
     [JsonPropertyName("id")] public string Id { get; init; } = Guid.NewGuid().ToString().ToUpperInvariant();
     [JsonPropertyName("operation")] public string Operation { get; init; } = "";
@@ -14,7 +15,7 @@ public sealed class EmbedRequest
     [JsonPropertyName("texts")] public List<string>? Texts { get; init; }
     [JsonPropertyName("title")] public string? Title { get; init; }
     [JsonPropertyName("imagePNG")] public string? ImagePng { get; init; }
-    [JsonPropertyName("dimensions")] public int Dimensions { get; init; } = 256;
+    [JsonPropertyName("dimensions")] public int Dimensions { get; init; } = DefaultDimensions;
 }
 
 public sealed class EmbedResponse
@@ -33,7 +34,7 @@ public sealed class EmbedResponse
     [JsonPropertyName("backgroundMode")] public bool? BackgroundMode { get; init; }
 
     public static EmbedResponse Create(string id, int dimensions, IEnumerable<float[]>? vectors = null, string? error = null,
-        int? processId = null, bool visionLoaded = false, bool? ecoQos = null, bool? belowNormal = null, bool? backgroundMode = null) => new()
+        int? processId = null, bool visionLoaded = false, BackgroundReport? background = null) => new()
     {
         Id = id,
         Dimensions = dimensions,
@@ -41,15 +42,21 @@ public sealed class EmbedResponse
         Error = error,
         ProcessId = processId ?? Environment.ProcessId,
         VisionLoaded = visionLoaded,
-        EcoQos = ecoQos,
-        BelowNormal = belowNormal,
-        BackgroundMode = backgroundMode
+        EcoQos = background?.EcoQos,
+        BelowNormal = background?.BelowNormal,
+        BackgroundMode = background?.BackgroundMode
     };
 }
+
+/// Windows background-mode controls reported by the helper.
+public readonly record struct BackgroundReport(bool EcoQos, bool BelowNormal, bool BackgroundMode);
 
 public static class EmbedProtocol
 {
     public const int MaxLineBytes = 64 * 1024 * 1024;
+
+    /// Upper bound for idle and request timeouts.
+    public const double MaxTimeoutSeconds = 86_400;
 
     private static readonly JsonSerializerOptions Options = new()
     {
