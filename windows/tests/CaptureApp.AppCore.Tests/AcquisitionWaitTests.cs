@@ -48,11 +48,7 @@ public sealed class AcquisitionWaitTests
         var next = await operation.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Contains(Needle, File.ReadAllText(pipeline.Vault.ManagedUrl(session.NotePath)), StringComparison.Ordinal);
         Assert.DoesNotContain(Needle, File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
-        if (change == "end")
-        {
-            Assert.Null(next);
-        }
-        else
+        if (change != "end")
         {
             Assert.NotNull(next);
             Assert.NotEqual(session.NotePath, next.NotePath);

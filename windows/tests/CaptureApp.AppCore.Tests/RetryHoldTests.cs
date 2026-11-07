@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using CaptureApp.AppCore.Shell;
+using CaptureApp.AppCore.Tests.Semantic;
 using CaptureApp.Core;
 using Xunit;
 
@@ -15,7 +16,7 @@ public sealed class RetryHoldTests
     public async Task FailedTitleKeepsTheCapturePendingThroughTheErrorToast(string title)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var inboxBefore = File.ReadAllText(pipeline.Vault.InboxUrl);
@@ -50,7 +51,7 @@ public sealed class RetryHoldTests
     public async Task AmbiguousTitleKeepsTheCaptureAndAnExplicitNameSavesIt()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         File.WriteAllText(Path.Combine(pipeline.Vault.Root, "Ideas.md"), "# Ideas\n");
@@ -76,7 +77,7 @@ public sealed class RetryHoldTests
     public async Task EscapeKeepsAHeldCaptureAndShowsItsWarningAgain()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
@@ -103,7 +104,7 @@ public sealed class RetryHoldTests
     public async Task QuitSavesAHeldCaptureToItsStagedDefault()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
@@ -119,7 +120,7 @@ public sealed class RetryHoldTests
     public async Task NewerCaptureSavesAHeldCaptureToItsDefaultFirst()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
@@ -139,24 +140,11 @@ public sealed class RetryHoldTests
     {
         var commit = coordinator.CommitPending(title, true) ?? throw new InvalidOperationException("Capture was not pending.");
         await Assert.ThrowsAnyAsync<Exception>(() => commit);
-        await WaitUntil(() => coordinator.PendingWithRetryWarning?.Id == capture.Id && Toasts(host).Any(toast => toast.Title == warning));
+        await Wait.Until(() => coordinator.PendingWithRetryWarning?.Id == capture.Id && Toasts(host).Any(toast => toast.Title == warning), "the retry warning");
     }
 
     private static AppToast[] Toasts(HeadlessCaptureHost host)
     {
         lock (host.Toasts) { return host.Toasts.ToArray(); }
     }
-
-    private static async Task WaitUntil(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!condition())
-        {
-            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the retry warning.");
-            await Task.Delay(10);
-        }
-    }
-
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 }
