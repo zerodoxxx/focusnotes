@@ -150,6 +150,36 @@ public sealed class StateStoreTests
     }
 
     [Fact]
+    public void UnreadablePinStoreRejectsMutationsWithoutErasingPins()
+    {
+        using var temp = new TempDirectory();
+        var store = new NotePinStore(temp.Path);
+        store.Set("a.md", true);
+        store.Set("b.md", true);
+        WithUnreadablePinStore(store.Url, () =>
+        {
+            var toggleFailure = Record.Exception(() => store.Toggle("c.md"));
+            Assert.True(toggleFailure is IOException or UnauthorizedAccessException, toggleFailure?.ToString());
+            var setFailure = Record.Exception(() => store.Set("c.md", true));
+            Assert.True(setFailure is IOException or UnauthorizedAccessException, setFailure?.ToString());
+        });
+        Assert.Equal(new[] { "a.md", "b.md" }, store.Paths().Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void UnreadablePinStoreReadsAsEmptyForQueries()
+    {
+        using var temp = new TempDirectory();
+        var store = new NotePinStore(temp.Path);
+        store.Set("a.md", true);
+        WithUnreadablePinStore(store.Url, () =>
+        {
+            Assert.False(store.IsPinned("a.md"));
+            Assert.Empty(store.Paths());
+        });
+    }
+
+    [Fact]
     public void JournalCanRecoverOCRTextWhenAnImagePayloadWasLost()
     {
         using var temp = new TempDirectory();
@@ -170,6 +200,29 @@ public sealed class StateStoreTests
         Assert.Equal(CaptureContentKind.Text, recovered.Prepared.Capture.Content.Kind);
         Assert.Equal("recovered OCR text", recovered.Prepared.Capture.Content.Value);
         Assert.Null(recovered.Png);
+    }
+
+    private static void WithUnreadablePinStore(string url, Action body)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using (new FileStream(url, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                body();
+            }
+            return;
+        }
+
+        // Advisory flock() locks do not block reads on macOS, so permissions simulate the unreadable store.
+        File.SetUnixFileMode(url, UnixFileMode.None);
+        try
+        {
+            body();
+        }
+        finally
+        {
+            File.SetUnixFileMode(url, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     private static async Task WaitUntil(Func<bool> predicate, CancellationToken cancellationToken)
