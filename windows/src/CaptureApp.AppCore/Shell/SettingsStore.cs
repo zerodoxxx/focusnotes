@@ -17,6 +17,8 @@ public sealed class SettingsStore(string settingsPath)
     public const string UpdatesChoiceSection = "updatesChoice";
     public const string DisabledShortcutsSection = "disabledShortcuts";
 
+    private const string ClipboardFallbackKey = "clipboardFallback";
+
     public string Path { get; } = System.IO.Path.GetFullPath(settingsPath);
 
     /// True when a settings file exists (a corrupt file is quarantined first, so it reads as absent).
@@ -32,11 +34,11 @@ public sealed class SettingsStore(string settingsPath)
     public bool? ClipboardFallback
     {
         get => SectionedJsonFile.ReadSection(Path, CaptureSection) is JsonObject section
-               && section["clipboardFallback"] is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag : null;
+               && section[ClipboardFallbackKey] is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag : null;
         set => SectionedJsonFile.Update(Path, CaptureSection, existing =>
         {
             var section = existing as JsonObject ?? [];
-            section["clipboardFallback"] = value is { } flag ? JsonValue.Create(flag) : null;
+            section[ClipboardFallbackKey] = value is { } flag ? JsonValue.Create(flag) : null;
             return section;
         });
     }

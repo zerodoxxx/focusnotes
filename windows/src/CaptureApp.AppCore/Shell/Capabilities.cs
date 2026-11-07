@@ -25,7 +25,7 @@ public sealed record CapabilityInputs(
 
 public static class Capabilities
 {
-    public const string FinishSetupReason = "Setup isn't finished yet";
+    public const string FinishSetupReason = Strings.FinishSetupReason;
 
     public static IReadOnlyList<CapabilityStatus> Evaluate(CapabilityInputs input)
     {
@@ -34,7 +34,7 @@ public static class Capabilities
             : input.FailedShortcuts > 0
                 ? new CapabilityStatus(CapabilityId.Shortcuts, CapabilityState.Unavailable, Strings.MenuShortcutsUnavailable(input.FailedShortcuts))
                 : input.RegisteredShortcuts == 0 && input.DisabledShortcuts > 0
-                    ? new CapabilityStatus(CapabilityId.Shortcuts, CapabilityState.Off, "You turned the shortcuts off")
+                    ? new CapabilityStatus(CapabilityId.Shortcuts, CapabilityState.Off, Strings.ShortcutsTurnedOff)
                     : new CapabilityStatus(CapabilityId.Shortcuts, CapabilityState.Available);
 
         var selection = input.ConsentAnswered
@@ -45,7 +45,7 @@ public static class Capabilities
             ? new CapabilityStatus(CapabilityId.ClipboardFallback, CapabilityState.Unavailable, FinishSetupReason)
             : input.ClipboardFallback == true
                 ? new CapabilityStatus(CapabilityId.ClipboardFallback, CapabilityState.Available)
-                : new CapabilityStatus(CapabilityId.ClipboardFallback, CapabilityState.Off, "You turned the clipboard fallback off");
+                : new CapabilityStatus(CapabilityId.ClipboardFallback, CapabilityState.Off, Strings.ClipboardFallbackTurnedOff);
 
         var area = input.ConsentAnswered
             ? new CapabilityStatus(CapabilityId.AreaCapture, CapabilityState.Available)
@@ -53,19 +53,19 @@ public static class Capabilities
 
         var folder = input.FolderWritable == false
             ? new CapabilityStatus(CapabilityId.NotesFolder, CapabilityState.Unavailable,
-                "The notes folder can't be written to; captures are kept safely until it works again")
+                Strings.NotesFolderNotWritableReason)
             : new CapabilityStatus(CapabilityId.NotesFolder, CapabilityState.Available);
 
         var login = input.StartAtLoginChosen == false
-            ? new CapabilityStatus(CapabilityId.StartAtLogin, CapabilityState.Off, "You turned start at login off")
+            ? new CapabilityStatus(CapabilityId.StartAtLogin, CapabilityState.Off, Strings.StartAtLoginTurnedOff)
             : input.StartAtLoginChosen == true && !input.RunKeyPresent
-                ? new CapabilityStatus(CapabilityId.StartAtLogin, CapabilityState.Unavailable, "Start at login is no longer registered")
+                ? new CapabilityStatus(CapabilityId.StartAtLogin, CapabilityState.Unavailable, Strings.StartAtLoginNoLongerRegistered)
                 : new CapabilityStatus(CapabilityId.StartAtLogin, CapabilityState.Available);
 
         var updates = !input.UpdatesServiceEnabled
-            ? new CapabilityStatus(CapabilityId.Updates, CapabilityState.Unavailable, "Updates aren't available in this install")
+            ? new CapabilityStatus(CapabilityId.Updates, CapabilityState.Unavailable, Strings.UpdatesUnavailable)
             : input.UpdatesChoice == UpdatesChoice.Manual
-                ? new CapabilityStatus(CapabilityId.Updates, CapabilityState.Off, "Updates are checked only when you ask")
+                ? new CapabilityStatus(CapabilityId.Updates, CapabilityState.Off, Strings.UpdatesCheckedOnRequest)
                 : new CapabilityStatus(CapabilityId.Updates, CapabilityState.Available);
 
         return [shortcuts, selection, fallback, area, folder, login, updates];
