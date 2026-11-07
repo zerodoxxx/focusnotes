@@ -92,15 +92,26 @@ func checkNotesFolder() async throws {
         throw SelfTestFailure("Resetting preferences reassigned existing vault state")
     }
     let marker = base.appendingPathComponent("legacy-vault-root.json")
-    for contents in ["{ invalid", "null", "\"\"", "{\"configuredPath\":\"relative\"}"] {
+    for contents in ["{ invalid", "null", "\"\""] {
         try Data(contents.utf8).write(to: marker)
-        do {
+        try await expectRejection(DecodingError.self, "Invalid state mapping was accepted", matching: { error in
+            switch error {
+            case .dataCorrupted, .valueNotFound, .typeMismatch: return true
+            default: return false
+            }
+        }) {
             _ = try NotesFolder.stateDirectory(for: other, base: base)
-            throw SelfTestFailure("Invalid state mapping was accepted")
-        } catch is SelfTestFailure { throw SelfTestFailure("Invalid state mapping was accepted") }
-        catch {}
+        }
         guard try String(contentsOf: marker, encoding: .utf8) == contents else {
             throw SelfTestFailure("Invalid state mapping was overwritten")
         }
+    }
+    let relative = "{\"configuredPath\":\"relative\"}"
+    try Data(relative.utf8).write(to: marker)
+    try await expectRejection(CocoaError.self, "Invalid state mapping was accepted", matching: { $0.code == .fileReadCorruptFile }) {
+        _ = try NotesFolder.stateDirectory(for: other, base: base)
+    }
+    guard try String(contentsOf: marker, encoding: .utf8) == relative else {
+        throw SelfTestFailure("Invalid state mapping was overwritten")
     }
 }
