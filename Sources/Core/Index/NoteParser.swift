@@ -201,8 +201,10 @@ public enum NoteParser {
         return (id, (date, app.isEmpty ? nil : app))
     }
 
+    private static let headerFieldSeparator = " \(CaptureFormat.headerSeparator) "
+
     private static func parseHeader(_ header: String, calendar: Calendar) -> (date: Date, app: String?, window: String?)? {
-        let parts = header.components(separatedBy: " · ")
+        let parts = header.components(separatedBy: headerFieldSeparator)
         let bytes = Array(parts[0].utf8)
         guard bytes.count == 16, bytes[4] == 45, bytes[7] == 45, bytes[10] == 32, bytes[13] == 58 else { return nil }
         func number(_ range: Range<Int>) -> Int? {
@@ -225,7 +227,7 @@ public enum NoteParser {
             return value.isEmpty ? nil : value
         }
         let app = parts.count > 1 ? cleaned(parts[1]) : nil
-        let window = parts.count > 2 ? cleaned(parts.dropFirst(2).joined(separator: " · ")) : nil
+        let window = parts.count > 2 ? cleaned(parts.dropFirst(2).joined(separator: headerFieldSeparator)) : nil
         return (date, app, window)
     }
 

@@ -42,12 +42,19 @@ public enum CaptureFormat {
         identityPrefix(for: capture) + markerSuffix
     }
 
+    /// Splits a block at its first newline; `body` keeps that newline.
+    static func splitMarkerLine(_ block: String) -> (markerLine: Substring, body: Substring) {
+        let end = block.firstIndex(of: "\n") ?? block.endIndex
+        return (block[..<end], block[end...])
+    }
+
     /// Notes and subheadings stand alone; only plain captures are grouped under a source heading.
     static func groupsBySource(_ capture: Capture) -> Bool {
         MarkerKind(capture) == .capture
     }
 
-    private static let separator = "\u{00B7}"
+    /// Separates header fields (date · app · window).
+    static let headerSeparator = "\u{00B7}"
     static let ellipsis = "\u{2026}"
     private static let windowTitleLimit = 80
 
@@ -309,7 +316,7 @@ public enum CaptureFormat {
 
     private static func cleanPart(_ value: String?) -> String {
         guard let value else { return "" }
-        let replaced = value.replacingOccurrences(of: separator, with: "-")
+        let replaced = value.replacingOccurrences(of: headerSeparator, with: "-")
         return NoteTitle.cleanTitle(replaced)
     }
 

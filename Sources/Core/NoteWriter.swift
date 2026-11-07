@@ -45,7 +45,7 @@ public actor NoteWriter {
         let location = try vault.managedLocation(of: note)
         try prepareParentDirectory(for: location)
         let block = captureBlock(capture, location: location, includeSourceHeading: false)
-        let header = CaptureFormat.noteHeader(title: title) + "\n"
+        let header = headerLine(title: title)
 
         try NoteFile.append(block: block, header: header, root: location.anchor, relativePath: location.relativePath,
                             to: location.url, cache: &appendCache, identityPrefix: CaptureFormat.identityPrefix(for: capture),
@@ -68,8 +68,8 @@ public actor NoteWriter {
         let block = captureBlock(capture, location: location, includeSourceHeading: false)
         let marker = CaptureFormat.bareMarker(for: capture)
         let savedNoteMarker = noteMarkerIsIdentity && CaptureFormat.MarkerKind(capture) == .note
-            ? String(block.prefix(while: { $0 != "\n" })) : nil
-        try NoteFile.append(block: block, header: CaptureFormat.noteHeader(title: destination.title) + "\n",
+            ? String(CaptureFormat.splitMarkerLine(block).markerLine) : nil
+        try NoteFile.append(block: block, header: headerLine(title: destination.title),
                             root: location.anchor, relativePath: location.relativePath, to: location.url,
                             cache: &appendCache, identityPrefix: CaptureFormat.identityPrefix(for: capture), unlessMarkerExists: marker,
                             savedNoteMarker: savedNoteMarker, sourceHeading: headingSource(capture),
@@ -101,8 +101,12 @@ public actor NoteWriter {
     private func legacyBlocks(_ capture: Capture, block: String) -> [String] {
         guard CaptureFormat.groupsBySource(capture) else { return [] }
         // An upgrade may replay a job already saved by the old writer.
-        let body = block.drop(while: { $0 != "\n" })
+        let body = CaptureFormat.splitMarkerLine(block).body
         return [CaptureFormat.bareMarker(for: capture) + body]
+    }
+
+    private func headerLine(title: String) -> String {
+        CaptureFormat.noteHeader(title: title) + "\n"
     }
 
     private func headingSource(_ capture: Capture) -> String? {
