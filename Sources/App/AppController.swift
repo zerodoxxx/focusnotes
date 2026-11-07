@@ -587,8 +587,6 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
-    /// any other capture saves to its default destination.
     private func settleUnchosenCapture(_ id: UUID, announce: Bool, retryTitle: String = "Choose where to save") {
         guard captures.isPending(id) else { return }
         if captures.needsRetryChoice, let capture = captures.pending {
@@ -635,7 +633,6 @@ final class AppController: NSObject, NSMenuDelegate {
                 guard controller.captures.isPending(capture.id),
                       let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
                 controller.enqueue { controller in
-                    // An explicit choice saves even if the editor can't close; the save shows no panel.
                     await controller.closePanels()
                     guard controller.captures.isPending(capture.id) else { return }
                     _ = controller.captures.commitPending(pick: controller.pipeline.pick(for: candidate), announce: true)
@@ -854,7 +851,6 @@ final class AppController: NSObject, NSMenuDelegate {
         try await pipeline.endSession()
         activeSession = nil
         refreshStatus()
-        // The session has ended; an unreadable count only drops the toast subtitle.
         let count: Int?
         do { count = try await pipeline.index.captureCount(notePath: session.notePath) }
         catch {
@@ -895,7 +891,6 @@ final class AppController: NSObject, NSMenuDelegate {
                 let draft = restored.text
                 let editor = NoteEditorPanel()
                 controller.editor = editor
-                // Outside launch only matters with a session; otherwise it is a plain quick note.
                 let state = QuickNoteState(destination: sessionDestination, pinOnSave: restored.pinOnSave, folder: folder,
                                            outsideSession: requestedOutside && sessionDestination != nil)
                 let calendar = pipeline.calendar
