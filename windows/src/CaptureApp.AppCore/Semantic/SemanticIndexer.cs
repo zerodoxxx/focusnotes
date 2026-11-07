@@ -186,14 +186,14 @@ public sealed class SemanticIndexer
 
     public async Task WarmAsync()
     {
-        if (!IsEnabled)
-        {
-            return;
-        }
-
         try
         {
-            await Resources().Client.PingAsync().ConfigureAwait(false);
+            if (ActiveResources(CancellationToken.None) is not { } resources)
+            {
+                return;
+            }
+
+            await resources.Client.PingAsync().ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
@@ -380,16 +380,6 @@ public sealed class SemanticIndexer
         source = null;
     }
 
-    private (IEmbedService Client, IVectorStore Store) Resources()
-    {
-        lock (gate)
-        {
-            client ??= clientFactory();
-            store ??= storeFactory();
-            return (client, store);
-        }
-    }
-
     private (IEmbedService Client, IVectorStore Store)? ActiveResources(CancellationToken cancellationToken)
     {
         lock (gate)
@@ -398,9 +388,11 @@ public sealed class SemanticIndexer
             {
                 return null;
             }
-        }
 
-        return Resources();
+            client ??= clientFactory();
+            store ??= storeFactory();
+            return (client, store);
+        }
     }
 
     private bool IsActive()

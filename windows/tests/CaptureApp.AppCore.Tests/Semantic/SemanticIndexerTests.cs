@@ -218,6 +218,46 @@ public sealed class SemanticIndexerTests : IDisposable
     }
 
     [Fact]
+    public async Task NoClientIsCreatedOnceDisableHasReturned()
+    {
+        var store = Store(Path.Combine(temp.Path, "vectors.sqlite"));
+        var disabledReturned = false;
+        var violations = 0;
+        for (var i = 0; i < 2000; i++)
+        {
+            Volatile.Write(ref disabledReturned, false);
+            var iterationSource = new FakeSource();
+            iterationSource.Blocks.Add(FakeSource.Text($"n{i}.md#1", "A", "alpha"));
+            var indexer = new SemanticIndexer(iterationSource, () =>
+            {
+                if (Volatile.Read(ref disabledReturned))
+                {
+                    Interlocked.Increment(ref violations);
+                }
+
+                return new FakeEmbedder();
+            }, () => store, true, () => true, time);
+
+            using var start = new Barrier(2);
+            var flush = Task.Run(async () =>
+            {
+                start.SignalAndWait();
+                await indexer.FlushAsync();
+            });
+            var disable = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                indexer.SetEnabled(false);
+                Volatile.Write(ref disabledReturned, true);
+            });
+            await Task.WhenAll(flush, disable);
+            await indexer.StopAsync();
+        }
+
+        Assert.Equal(0, violations);
+    }
+
+    [Fact]
     public async Task SearchRanksSemanticTextAndImagesAndStripsTheOcrSuffix()
     {
         source.Assets["assets/one.png"] = new byte[11];
