@@ -25,7 +25,7 @@ public sealed class Embedder : IDisposable
     private InferenceSession? vision;
     private ImagePreprocessor? processor;
 
-    public Embedder(string modelsDirectory, int dimensions = 256)
+    public Embedder(string modelsDirectory, int dimensions = EmbedRequest.DefaultDimensions)
     {
         if (!EmbedRequest.SupportedDimensions.Contains(dimensions))
         {

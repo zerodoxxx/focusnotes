@@ -7,6 +7,7 @@ namespace CaptureApp.Embed;
 public sealed class EmbedRequest
 {
     public static readonly int[] SupportedDimensions = [128, 256, 512, 768];
+    public static readonly int MaxDimensions = SupportedDimensions.Max();
     public const int DefaultDimensions = 256;
 
     [JsonPropertyName("id")] public string Id { get; init; } = Guid.NewGuid().ToString().ToUpperInvariant();
