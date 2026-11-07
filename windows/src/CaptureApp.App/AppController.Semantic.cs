@@ -33,11 +33,10 @@ internal sealed partial class AppController
     private void InitializeSemantic()
     {
         var models = ModelsDirectory;
-        var modelFiles = ModelManifest.Current.RequiredFiles.Where(file => file.StartsWith("onnx/", StringComparison.Ordinal))
-            .Select(file => Path.Combine(models, file.Replace('/', Path.DirectorySeparatorChar))).ToArray();
+        var modelFiles = ModelManifest.Current.EmbeddingModelFiles.Select(file => Path.Combine(models, file.Path.Replace('/', Path.DirectorySeparatorChar))).ToArray();
         semantic = new SemanticIndexer(new VaultSemanticSource(pipeline.Index, pipeline.Vault),
             () => new EmbedClient(HelperPath(), models),
-            () => new VectorStore(Path.Combine(pipeline.StateDirectory, "vectors.sqlite"), modelFiles: modelFiles),
+            () => new VectorStore(Path.Combine(pipeline.StateDirectory, "vectors.sqlite"), modelFiles: modelFiles, log: message => log.Error(message)),
             ModelsInstalled(models), () => power?.IsImageEmbeddingAllowed ?? true, log: new AppLog(stateDirectory, "semantic"));
         Coordinator.Semantic = semantic;
         EnsurePowerMonitor();

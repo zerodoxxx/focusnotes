@@ -21,6 +21,9 @@ public static class GemmaModelConfig
     /// Text containing any of these ids is rejected because images must go through the vision path.
     public static readonly IReadOnlySet<long> ImagePlaceholderTokenIds = new HashSet<long> { 258880, 258881, 258884 };
 
+    /// max_soft_tokens values the Gemma image processor accepts.
+    public static readonly IReadOnlySet<int> ImageSoftTokenBudgets = new HashSet<int> { 70, 140, 280, 560, 1120 };
+
     /// Flattened RGB 16x16 patch; ImagePreprocessor only accepts patch size 16.
     public const int VisionPatchWidth = 768;
 

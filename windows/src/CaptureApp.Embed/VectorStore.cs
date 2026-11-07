@@ -26,18 +26,21 @@ public interface IVectorStore
 /// Serialized access and a reusable row-major cache.
 public sealed class VectorStore : IVectorStore, IDisposable
 {
+    private const string FilesField = ";files=";
     private static readonly object InitializeGate = new();
     private static bool initialized;
 
     private readonly SqliteConnection connection;
+    private readonly Action<string>? log;
     private readonly object gate = new();
     private (string[] Keys, float[] Vectors)? cache;
     private long dataVersion = -1;
 
     /// Pass the text and vision ONNX graph/data files to stamp the store against their identities.
     /// Omitting them retains an existing file-size stamp while still validating model ID and dimensions.
-    public VectorStore(string path, string modelId = Embedder.ModelID, int dimensions = 256, IReadOnlyList<string>? modelFiles = null)
+    public VectorStore(string path, string modelId = Embedder.ModelID, int dimensions = EmbedRequest.DefaultDimensions, IReadOnlyList<string>? modelFiles = null, Action<string>? log = null)
     {
+        this.log = log;
         if (!EmbedRequest.SupportedDimensions.Contains(dimensions) || modelId.Length == 0 || modelId.Contains('\0'))
         {
             throw EmbeddingException.Invalid("Invalid vector store configuration");
@@ -307,6 +310,8 @@ public sealed class VectorStore : IVectorStore, IDisposable
         command.ExecuteNonQuery();
     }
 
+    private static string FormatIdentity(string modelId, int dimensions, string files) => $"model={modelId};dimensions={dimensions}{FilesField}{files}";
+
     private static string Identity(string modelId, int dimensions, IReadOnlyList<string> modelFiles)
     {
         var files = modelFiles.Select(path =>
@@ -319,14 +324,14 @@ public sealed class VectorStore : IVectorStore, IDisposable
 
             return $"{info.Name}={info.Length}";
         }).OrderBy(name => name, StringComparer.Ordinal);
-        return $"model={modelId};dimensions={dimensions};files={string.Join(",", files)}";
+        return FormatIdentity(modelId, dimensions, string.Join(",", files));
     }
 
     private static string IdentityKeepingFiles(string modelId, int dimensions, string? storedIdentity)
     {
-        var marker = storedIdentity?.IndexOf(";files=", StringComparison.Ordinal) ?? -1;
-        var files = marker >= 0 ? storedIdentity![(marker + ";files=".Length)..] : "";
-        return $"model={modelId};dimensions={dimensions};files={files}";
+        var marker = storedIdentity?.IndexOf(FilesField, StringComparison.Ordinal) ?? -1;
+        var files = marker >= 0 ? storedIdentity![(marker + FilesField.Length)..] : "";
+        return FormatIdentity(modelId, dimensions, files);
     }
 
     private T Locked<T>(Func<T> body)
@@ -369,8 +374,9 @@ public sealed class VectorStore : IVectorStore, IDisposable
         {
             Exec(sql);
         }
-        catch (SqliteException)
+        catch (SqliteException error)
         {
+            log?.Invoke($"Vector store {sql} failed: {error.Message}");
         }
     }
 }
