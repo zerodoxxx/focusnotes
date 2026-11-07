@@ -134,10 +134,9 @@ internal sealed class SessionRenameTransaction
         }
         catch (Exception error) when (error is JsonException or NotSupportedException)
         {
-            var corrupt = Path.Combine(journal.DirectoryPath, "corrupt");
-            Directory.CreateDirectory(corrupt);
+            var corrupt = CorruptFiles.CreateDirectory(journal.DirectoryPath);
             var stem = Path.GetFileNameWithoutExtension(intentPath);
-            var target = File.Exists(Path.Combine(corrupt, stem + ".json")) ? stem + "-" + Guid.NewGuid().ToString("N") : stem;
+            var target = CorruptFiles.Stem(corrupt, stem, ".json");
             File.Move(intentPath, Path.Combine(corrupt, target + ".json"));
             logger.Error($"Corrupt session rename intent quarantined: {error.Message}");
             return null;

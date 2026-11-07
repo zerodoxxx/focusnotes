@@ -101,10 +101,10 @@ public static class SectionedJsonFile
     {
         try
         {
-            var directory = Path.Combine(Path.GetDirectoryName(fullPath)!, "corrupt");
-            Directory.CreateDirectory(directory);
+            var directory = CorruptFiles.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            var extension = Path.GetExtension(fullPath);
             var target = Path.Combine(directory,
-                Path.GetFileNameWithoutExtension(fullPath) + "-" + Guid.NewGuid().ToString("N") + Path.GetExtension(fullPath));
+                CorruptFiles.Stem(directory, Path.GetFileNameWithoutExtension(fullPath), extension, alwaysUnique: true) + extension);
             File.Move(fullPath, target);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)

@@ -172,12 +172,9 @@ public sealed class CaptureJournal
     {
         lock (gate)
         {
-            var corrupt = Path.Combine(DirectoryPath, "corrupt");
-            System.IO.Directory.CreateDirectory(corrupt);
+            var corrupt = CorruptFiles.CreateDirectory(DirectoryPath);
             var stem = Path.GetFileNameWithoutExtension(recordPath);
-            var targetStem = File.Exists(Path.Combine(corrupt, stem + ".json"))
-                ? stem + "-" + Guid.NewGuid().ToString("N")
-                : stem;
+            var targetStem = CorruptFiles.Stem(corrupt, stem, ".json");
             foreach (var extension in new[] { ".json", ".png" })
             {
                 var source = Path.Combine(DirectoryPath, stem + extension);
