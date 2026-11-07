@@ -103,8 +103,7 @@ public sealed class CapturePipeline : IDisposable
         ThrowIfDisposed();
         var captureId = id ?? Guid.NewGuid();
         var created = createdAt ?? clock.GetUtcNow();
-        var stamp = CaptureFormat.LocalStamp(created, "yyyy-MM-dd-HHmmss", TimeZone);
-        var asset = $"{Vault.AssetsDirectoryName}/{stamp}-{captureId.ToString("D").ToLowerInvariant()}.png";
+        var asset = Vault.AssetPath(Vault.AssetStamp(created, TimeZone), captureId.ToString("D").ToLowerInvariant());
         var capture = new Capture(captureId, created, CaptureContent.Image(asset), source);
         return new(Service.Resolve(capture, new(Target(destination, noteTitle)), TimeZone), png, ocr);
     }

@@ -32,6 +32,8 @@ public sealed class Vault
     public const string MarkdownExtension = ".md";
     public static bool IsMarkdown(string path) => Path.GetExtension(path).Equals(MarkdownExtension, StringComparison.OrdinalIgnoreCase);
     public static bool IsAssetPath(string relativePath) => relativePath.Split('/')[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase);
+    public static string AssetPath(string stamp, string suffix) => $"{AssetsDirectoryName}/{stamp}-{suffix}.png";
+    public static string AssetStamp(DateTimeOffset createdAt, TimeZoneInfo timeZone) => CaptureFormat.LocalStamp(createdAt, "yyyy-MM-dd-HHmmss", timeZone);
     public static string UrlUnder(string root, string relativePath) => Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
     public static string[] PathComponents(string path)
     {

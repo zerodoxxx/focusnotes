@@ -336,10 +336,10 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
     {
         lock (gate)
         {
-            var stamp = CaptureFormat.LocalStamp(createdAt ?? clock.GetUtcNow(), "yyyy-MM-dd-HHmmss", timeZone);
+            var stamp = Vault.AssetStamp(createdAt ?? clock.GetUtcNow(), timeZone);
             while (true)
             {
-                var path = $"{Vault.AssetsDirectoryName}/{stamp}-{RandomNumberGenerator.GetInt32(65536):x4}.png";
+                var path = Vault.AssetPath(stamp, $"{RandomNumberGenerator.GetInt32(65536):x4}");
                 if (NoteFile.CreateAsset(png, vault.Root, path))
                 {
                     return path;
