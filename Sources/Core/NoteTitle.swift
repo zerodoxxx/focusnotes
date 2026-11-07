@@ -101,6 +101,11 @@ public enum NoteTitle {
         component == "." || component == ".."
     }
 
+    /// A non-empty path component other than `.` and `..`.
+    static func isNamedComponent<S: StringProtocol>(_ component: S) -> Bool {
+        !component.isEmpty && component != "." && component != ".."
+    }
+
     static func isOwnerFileName(_ name: String) -> Bool {
         name.hasPrefix("~$")
     }

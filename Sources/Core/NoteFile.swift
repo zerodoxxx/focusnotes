@@ -252,7 +252,7 @@ enum NoteFile {
             throw POSIXError(.EPERM)
         }
         let components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        guard !components.isEmpty, components.allSatisfy({ NoteTitle.isNamedComponent($0) }) else {
             throw POSIXError(.EPERM)
         }
         return components

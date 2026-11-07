@@ -427,7 +427,7 @@ public struct Vault: Sendable {
             throw NotePathNameError.tooLong
         }
         guard pathName.components.allSatisfy({
-            !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\0")
+            NoteTitle.isNamedComponent($0) && !$0.contains("/") && !$0.contains("\0")
         }) else {
             throw NotePathNameError.invalidComponent
         }
@@ -447,7 +447,7 @@ public struct Vault: Sendable {
         }
         let pathComponents = url.path.split(separator: "/", omittingEmptySubsequences: false)
         guard pathComponents.first == "",
-              pathComponents.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+              pathComponents.dropFirst().allSatisfy({ NoteTitle.isNamedComponent($0) }) else {
             throw CocoaError(.fileWriteInvalidFileName)
         }
         let standardized = url.standardizedFileURL
@@ -493,7 +493,7 @@ public struct Vault: Sendable {
     private func validateManagedPath(_ path: String) throws {
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard !components.isEmpty,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+              components.allSatisfy({ NoteTitle.isNamedComponent($0) }),
               !path.contains("\0") else {
             throw CocoaError(.fileWriteInvalidFileName)
         }
@@ -587,6 +587,11 @@ public struct Vault: Sendable {
         return locations.sorted { $0.id < $1.id }
     }
 
+    /// External watch paths also reject backslashes and NUL.
+    private static func isSafeWatchComponent<S: StringProtocol>(_ component: S) -> Bool {
+        NoteTitle.isNamedComponent(component) && !component.contains("\\") && !component.contains("\0")
+    }
+
     /// Opens a registered external note's immediate parent directory through
     /// the retained HOME anchor, rejecting symlinks at every path component.
     /// The returned descriptor is owned by the caller and suitable for vnode
@@ -597,7 +602,7 @@ public struct Vault: Sendable {
             components = []
         } else {
             let values = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-            guard values.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+            guard values.allSatisfy({ Self.isSafeWatchComponent($0) }) else {
                 return nil
             }
             components = values
@@ -641,7 +646,7 @@ public struct Vault: Sendable {
         guard location.scope == .home else { return nil }
         let components = location.relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard let name = components.last,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+              components.allSatisfy({ Self.isSafeWatchComponent($0) }) else {
             return nil
         }
         let parentPath = components.dropLast().joined(separator: "/")
