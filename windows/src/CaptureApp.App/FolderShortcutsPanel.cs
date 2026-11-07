@@ -81,8 +81,7 @@ internal sealed class FolderShortcutsPanel : StackPanel
 
     private void Record(Row row)
     {
-        controller.PauseHotkeys();
-        try
+        SettingsActions.WithHotkeysPaused(controller, () =>
         {
             var recorder = new ChordRecorder("Folder Shortcut", chord => controller.ValidateFolderChord(row.Id, chord, Proposed())) { Owner = Window.GetWindow(this) };
             if (recorder.ShowDialog() == true && recorder.Chord is { } chord)
@@ -91,8 +90,7 @@ internal sealed class FolderShortcutsPanel : StackPanel
                 row.Record.Content = chord.DisplayString;
                 message.Text = "Save Folder Shortcuts to apply this change.";
             }
-        }
-        finally { controller.RegisterHotkeys(); }
+        });
     }
 
     private void Save()
