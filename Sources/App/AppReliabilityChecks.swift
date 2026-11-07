@@ -18,6 +18,7 @@ func checkAppReliability() async throws {
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
     try await checkSessionRenameSingleDestination()
+    try await checkSessionRenameRecoveryInstallsIntent()
     try await checkSessionRenameCrashBoundaries()
     try await checkSessionRenameAbandonment()
     try await checkSessionPickerEscapeRestoresSelection()
@@ -668,6 +669,41 @@ private func checkSessionRenameSingleDestination() async throws {
     let restored = await SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: Date.init).current()
     guard await sessions.current() == outcome.session, restored == outcome.session else {
         throw SelfTestFailure("Session rename installed a different session than its intent and outcome")
+    }
+}
+
+/// Recovery installs the persisted intent's session, not one re-derived from its name and the current clock.
+private func checkSessionRenameRecoveryInstallsIntent() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-recover-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let clock = AdvancingClock()
+    func transaction() -> (SessionStore, SessionRenameTransaction) {
+        let sessions = SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: { clock.now() })
+        return (sessions, SessionRenameTransaction(vault: pipeline.vault, stateDirectory: state, sessions: sessions, journal: pipeline.selfCheck.journal,
+                                                   pins: pipeline.pins, index: pipeline.index, semantic: pipeline.semantic, logger: pipeline.logger))
+    }
+    let (sessions, renames) = transaction()
+    let source = try await sessions.start(name: "archive/Standup")
+    try Data("# Standup\nbody\n".utf8).write(to: pipeline.vault.root.appendingPathComponent(source.notePath))
+    let candidate = SessionCandidate(name: source.name, notePath: source.notePath, modifiedAt: .distantPast)
+    // The persisted destination no longer matches what its name derives (e.g. an earlier build chose the filename).
+    let derived = try await sessions.renameDestination(candidate, to: "Daily sync")
+    var intended = try await sessions.renameDestination(candidate, to: "Daily sync earlier")
+    intended.name = derived.name
+    // Interrupted before the file step: only the intent is persisted.
+    let intent = try await renames.begin(oldPath: source.notePath, session: intended, followingCaptures: [])
+    // A restart recovers with a fresh store whose clock has moved on.
+    let (restartedSessions, restarted) = transaction()
+    let completed = try await restarted.recover(allowFileRename: true)
+    let installedURL = pipeline.vault.root.appendingPathComponent(intent.session.notePath)
+    guard completed, try await restarted.pending() == nil,
+          await restartedSessions.current() == intent.session,
+          FileManager.default.fileExists(atPath: installedURL.path),
+          !FileManager.default.fileExists(atPath: pipeline.vault.root.appendingPathComponent(derived.notePath).path),
+          !FileManager.default.fileExists(atPath: pipeline.vault.root.appendingPathComponent(source.notePath).path) else {
+        throw SelfTestFailure("Rename recovery installed a session other than the persisted intent's")
     }
 }
 
