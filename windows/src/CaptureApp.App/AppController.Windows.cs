@@ -132,7 +132,7 @@ internal sealed partial class AppController
     internal bool TrySave(Action save)
     {
         try { save(); return true; }
-        catch (Exception error) when (SettingsFailures.IsSaveError(error))
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             ReportSaveFailure(error);
             return false;

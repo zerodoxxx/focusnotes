@@ -10,7 +10,7 @@ public static class ExplorerShell
         return Process.Start(new ProcessStartInfo
         {
             FileName = "explorer.exe",
-            Arguments = $"/select,{ShellPath.Quote(path, nameof(path))}",
+            Arguments = $"/select,{ShellPath.Quote(path, nameof(path), "Windows paths cannot contain a quote character.")}",
             UseShellExecute = true
         });
     }

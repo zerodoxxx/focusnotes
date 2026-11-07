@@ -222,7 +222,7 @@ public struct Vault: Sendable {
     public init(root: URL, externalNoteRegistryURL: URL? = nil, homeDirectoryURL: URL? = nil) {
         let resolved = root.standardizedFileURL.resolvingSymlinksInPath()
         self.root = resolved
-        rootAnchor = VaultDirectoryAnchor(url: resolved)
+        rootAnchor = VaultDirectoryAnchor(url: root)
         let resolvedHome = (homeDirectoryURL ?? FileManager.default.homeDirectoryForCurrentUser)
             .standardizedFileURL.resolvingSymlinksInPath()
         homeRoot = resolvedHome

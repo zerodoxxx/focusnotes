@@ -53,7 +53,7 @@ internal sealed class SettingsWindow : Window
                 loginMessage.Text = "";
                 if (!controller.ApplyStartAtLogin(login.IsChecked == true)) { login.IsChecked = controller.LoginItem.IsEnabled; }
             }
-            catch (Exception error) when (SettingsFailures.IsLoginItemError(error))
+            catch (Exception error) when (error is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException)
             {
                 loginMessage.Text = $"Couldn't update start at login: {error.Message}";
                 login.IsChecked = controller.LoginItem.IsEnabled;
