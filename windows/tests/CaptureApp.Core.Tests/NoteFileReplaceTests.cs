@@ -33,7 +33,17 @@ public sealed class NoteFileReplaceTests
     private static void Replace(string temporary, string target, Action<string, string>? replace = null, Action<string, string>? move = null)
     {
         var lost = false;
-        NoteFile.ReplaceFile(temporary, target, FileMetadata.At(target)!, ref lost, replace, move);
+        try
+        {
+            NoteFile.ReplaceHook.Value = replace;
+            NoteFile.MoveHook.Value = move;
+            NoteFile.ReplaceFile(temporary, target, FileMetadata.At(target)!, ref lost);
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
     }
 
     [Fact]
@@ -108,9 +118,17 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
-            (_, d) => { File.Delete(d); throw Lost(); },
-            (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); }));
+        try
+        {
+            NoteFile.ReplaceHook.Value = (_, d) => { File.Delete(d); throw Lost(); };
+            NoteFile.MoveHook.Value = (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); };
+            Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost));
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
         Assert.True(lost);
         NoteFile.CleanupTemporary(temporary, target, before, lost);
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
@@ -125,8 +143,16 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
-            (_, d) => { Swap(d, "other"); throw Lost(); }));
+        try
+        {
+            NoteFile.ReplaceHook.Value = (_, d) => { Swap(d, "other"); throw Lost(); };
+            Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost));
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
         Assert.True(lost);
         NoteFile.CleanupTemporary(temporary, target, before, lost);
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
@@ -151,7 +177,12 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         File.Delete(target);
-        NoteFile.CleanupTemporary(temporary, target, before, true, (_, _) => throw new IOException("locked"));
+        try
+        {
+            NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+            NoteFile.CleanupTemporary(temporary, target, before, true);
+        }
+        finally { NoteFile.MoveHook.Value = null; }
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
         NoteFile.SweepStaleTemporaries(e.Base, TimeSpan.Zero);
         Assert.Equal("new", File.ReadAllText(target));
@@ -197,7 +228,11 @@ public sealed class NoteFileReplaceTests
         public Hooks()
         {
             NoteFile.ReplaceHook.Value = (_, d) => { File.Delete(d); throw Lost(); };
-            NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+            NoteFile.MoveHook.Value = (source, destination) =>
+            {
+                if (Path.GetFileName(destination).StartsWith(TempNames.RecoveredPrefix, StringComparison.Ordinal)) { File.Move(source, destination, false); return; }
+                throw new IOException("locked");
+            };
         }
 
         public void Dispose() { NoteFile.ReplaceHook.Value = null; NoteFile.MoveHook.Value = null; }

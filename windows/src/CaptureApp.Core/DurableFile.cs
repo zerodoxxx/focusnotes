@@ -18,7 +18,7 @@ public static class DurableFile
                 stream.Flush(true);
             }
 
-            RetryWhileLocked(() => (NoteFile.MoveHook.Value ?? ((source, target) => File.Move(source, target, true)))(temporary, fullPath), fullPath);
+            RetryWhileLocked(() => NoteFile.Move(temporary, fullPath, true), fullPath);
         }
         finally
         {
@@ -32,7 +32,7 @@ public static class DurableFile
     // Access denied on a read-only `target` is permanent, so it fails at once instead of stalling the caller.
     public static void RetryWhileLocked(Action change, string? target = null)
     {
-        var until = Environment.TickCount64 + FileRetry.DurableBudgetMs;
+        var until = Environment.TickCount64 + FileRetry.LockedRetryBudgetMs;
         while (true)
         {
             try
@@ -43,7 +43,7 @@ public static class DurableFile
             catch (Exception error) when (Environment.TickCount64 < until && IsTransient(error, OperatingSystem.IsWindows())
                                           && !(error is UnauthorizedAccessException && target is not null && IsReadOnly(target)))
             {
-                Thread.Sleep(FileRetry.DurablePollMs);
+                Thread.Sleep(FileRetry.LockedRetryPollMs);
             }
         }
     }

@@ -137,6 +137,12 @@ public static partial class NoteFile
         catch (Exception) { }
     }
 
+    internal static void Move(string source, string destination, bool overwrite)
+    {
+        if (MoveHook.Value is { } move) { move(source, destination); return; }
+        File.Move(source, destination, overwrite);
+    }
+
     // Decodes the target name from an on-disk ".recovered-" name; null unless it is a plain, valid file name.
     private static string? RecoveredTarget(string name)
     {
@@ -166,7 +172,7 @@ public static partial class NoteFile
         var targetName = Path.GetFileName(target);
         var directory = Path.GetDirectoryName(target)!;
         string safe;
-        try { safe = SafePath(root, Path.GetRelativePath(root, target).Replace(Path.DirectorySeparatorChar, '/')); }
+        try { safe = SafePath(root, CaptureFormat.RelativePath(root, target)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
         if (!string.Equals(safe, target, StringComparison.Ordinal) || !ValidTargetName(targetName)) { return true; }
         lock (Gate(safe))
@@ -175,7 +181,7 @@ public static partial class NoteFile
             var candidates = RecoveredCandidates(directory, targetName);
             if (candidates is null || candidates.Count == 0) { return true; }
             // Only the newest copy is ever restored; if that move fails, keep everything for a later attempt.
-            try { (MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(candidates[0], safe); }
+            try { Move(candidates[0], safe, false); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 Report($"Could not restore {targetName} from {candidates[0]}: {error}");
@@ -234,7 +240,7 @@ public static partial class NoteFile
 
     internal static FileStream OpenExclusive(string path, FileMode mode, FileAccess access)
     {
-        var until = Environment.TickCount64 + FileRetry.ExclusiveOpenBudgetMs;
+        var until = Environment.TickCount64 + FileRetry.LockedRetryBudgetMs;
         while (true)
         {
             var metadata = FileMetadata.At(path);
@@ -273,7 +279,7 @@ public static partial class NoteFile
             }
             catch (IOException error) when (error is not VaultFileException && Environment.TickCount64 < until && FileErrors.IsSharingViolation(error))
             {
-                Thread.Sleep(FileRetry.ExclusiveOpenPollMs);
+                Thread.Sleep(FileRetry.LockedRetryPollMs);
             }
         }
     }
@@ -449,14 +455,13 @@ public static partial class NoteFile
     // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
     // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
     // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
-    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
-        Action<string, string>? keep = null)
+    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost)
     {
         if (!File.Exists(temporary)) { return; }
         if (!targetLost && (replaced is null || TargetIntact(target, replaced))) { File.Delete(temporary); return; }
         var name = Path.GetFileName(temporary);
         var kept = Path.Combine(Path.GetDirectoryName(temporary)!, RecoveredName(name, targetLost ? Path.GetFileName(target) : null));
-        try { (keep ?? ((t, d) => File.Move(t, d, false)))(temporary, kept); }
+        try { Move(temporary, kept, false); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
@@ -483,31 +488,30 @@ public static partial class NoteFile
     internal static string RecoveredName(string pendingName, string? restorableTarget)
     {
         var bytes = restorableTarget is null ? [] : Utf8.GetBytes(restorableTarget);
-        return TempNames.RecoveredPrefix + pendingName[TempNames.PendingPrefix.Length..] + (bytes.Length is > 0 and <= 100 ? "-" + Convert.ToHexStringLower(bytes) : "");
+        return TempNames.RecoveredPrefix + pendingName[TempNames.PendingPrefix.Length..] + (bytes.Length is > 0 and <= TempNames.MaxRestorableNameBytes ? "-" + Convert.ToHexStringLower(bytes) : "");
     }
 
     // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
     // targetLost is set before the fallback so a racing target creation can't make cleanup delete the lone copy.
     // `expected` is the target's identity before the replace; a delete-pending or different file there counts as lost.
-    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost,
-        Action<string, string>? replace = null, Action<string, string>? move = null)
+    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost)
     {
-        try { (replace ?? ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
+        try { (ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
         catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !TargetIntact(target, expected) && File.Exists(temporary))
         {
             targetLost = true;
             const int attempts = FileRetry.MoveFallbackAttempts;
             for (var attempt = 1; ; attempt++)
             {
-                try { (move ?? MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(temporary, target); return; }
+                try { Move(temporary, target, false); return; }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < attempts && !File.Exists(target))
                 {
-                    System.Diagnostics.Trace.TraceError($"Move fallback attempt {attempt} failed: {error}");
+                    Report($"Move fallback attempt {attempt} failed: {error}");
                     Thread.Sleep(FileRetry.MoveFallbackDelayMs);
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    System.Diagnostics.Trace.TraceError($"Move fallback failed: {error}");
+                    Report($"Move fallback failed: {error}");
                     System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(original).Throw();
                 }
             }
@@ -557,10 +561,8 @@ public static partial class NoteFile
 
 public static class FileRetry
 {
-    public const int DurableBudgetMs = 10000;
-    public const int DurablePollMs = 2;
-    public const int ExclusiveOpenBudgetMs = 10000;
-    public const int ExclusiveOpenPollMs = 2;
+    public const int LockedRetryBudgetMs = 10000;
+    public const int LockedRetryPollMs = 2;
     public const int SectionedJsonRetries = 4;
     public const int SectionedJsonDelayMs = 20;
     public const int MoveFallbackAttempts = 3;
@@ -571,9 +573,11 @@ internal static class TempNames
 {
     internal const string PendingPrefix = ".pending-";
     internal const string RecoveredPrefix = ".recovered-";
-    private static readonly System.Text.RegularExpressions.Regex PendingName = new(@"^\.pending-[0-9a-f]{32}$");
+    internal const int MaxRestorableNameBytes = 100;
+    private static readonly System.Text.RegularExpressions.Regex PendingName =
+        new("^" + System.Text.RegularExpressions.Regex.Escape(PendingPrefix) + "[0-9a-f]{32}$");
     internal static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
-        new(@"^\.recovered-(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2,200})\z");
+        new("^" + System.Text.RegularExpressions.Regex.Escape(RecoveredPrefix) + "(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2," + 2 * MaxRestorableNameBytes + "})\\z");
 
     internal static bool IsPending(string name) => PendingName.IsMatch(name);
 }

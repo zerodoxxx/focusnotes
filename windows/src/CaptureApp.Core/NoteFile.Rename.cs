@@ -42,6 +42,13 @@ public static partial class NoteFile
             FileMetadata? replaced = null;
             var targetLost = false;
             var published = opened;
+
+            void MoveOriginal(string from, string to)
+            {
+                if (OperatingSystem.IsWindows()) { RenameByHandle(original.SafeFileHandle, to); }
+                else { File.Move(from, to, false); }
+            }
+
             try
             {
                 using (var output = OpenExclusive(temporary, FileMode.CreateNew, FileAccess.ReadWrite))
@@ -58,8 +65,7 @@ public static partial class NoteFile
                 EnsureRenameTarget(source, target);
                 if (!string.Equals(source, target, StringComparison.Ordinal))
                 {
-                    if (OperatingSystem.IsWindows()) { RenameByHandle(original.SafeFileHandle, target); }
-                    else { File.Move(source, target, false); }
+                    MoveOriginal(source, target);
                     moved = true;
                     published = FileMetadata.Of(original);
                 }
@@ -87,8 +93,7 @@ public static partial class NoteFile
                         EnsureOriginal(target, published);
                         if (FileMetadata.At(source) is null)
                         {
-                            if (OperatingSystem.IsWindows()) { RenameByHandle(original.SafeFileHandle, source); }
-                            else { File.Move(target, source, false); }
+                            MoveOriginal(target, source);
                         }
                         else { throw new IOException("The old session name is occupied; rollback cannot replace it."); }
                     }
@@ -105,7 +110,7 @@ public static partial class NoteFile
                 catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
                 {
                     // The durable staging identity allows later cleanup. Preserve the transaction's real error.
-                    System.Diagnostics.Trace.TraceError($"Session staging cleanup failed: {cleanup}");
+                    Report($"Session staging cleanup failed: {cleanup}");
                 }
             }
         }
