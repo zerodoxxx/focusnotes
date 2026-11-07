@@ -93,10 +93,7 @@ internal sealed partial class AppController
 
     private ModelInstaller Installer()
     {
-        if (installer is not null) { return installer; }
-        var created = new ModelInstaller(ModelsDirectory, ModelInstaller.DefaultBundledResources);
-        created.RecoverInterruptedCommit();
-        return installer = created;
+        return installer ??= new ModelInstaller(ModelsDirectory, ModelInstaller.DefaultBundledResources, log: message => log.Error(message));
     }
 
     internal bool ModelsAreInstalled => ModelsInstalled(ModelsDirectory);

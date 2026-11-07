@@ -23,10 +23,12 @@ public sealed class ModelInstaller
     private readonly IModelTransport transport;
     private readonly Func<string, long> freeSpace;
     private readonly Func<int, TimeSpan> retryDelay;
+    private readonly Action<string>? log;
     private int installing;
 
+    /// Heals an interrupted commit before returning, so the models directory is safe to read.
     public ModelInstaller(string modelsDirectory, string bundledResources, ModelManifest? manifest = null, IModelTransport? transport = null,
-        Func<string, long>? freeSpace = null, Func<int, TimeSpan>? retryDelay = null)
+        Func<string, long>? freeSpace = null, Func<int, TimeSpan>? retryDelay = null, Action<string>? log = null)
     {
         this.modelsDirectory = Path.GetFullPath(modelsDirectory);
         this.bundledResources = bundledResources;
@@ -34,13 +36,15 @@ public sealed class ModelInstaller
         this.transport = transport ?? new HttpModelTransport();
         this.freeSpace = freeSpace ?? VolumeFreeSpace;
         this.retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
+        this.log = log;
+        RemoveStaleBackups(Path.GetDirectoryName(this.modelsDirectory)!);
     }
 
     /// The license files ship next to the app, under ModelLicenses.
     public static string DefaultBundledResources => Path.Combine(AppContext.BaseDirectory, "ModelLicenses");
 
     /// Sibling of the models directory where downloads accumulate until they verify.
-    public string StagingDirectory => Path.Combine(Path.GetDirectoryName(modelsDirectory)!, "models.download");
+    public string StagingDirectory => StagingLayout.Download(Path.GetDirectoryName(modelsDirectory)!);
 
     /// True when an earlier download left files behind that the next install call can resume.
     public bool HasPartialDownload => Directory.Exists(StagingDirectory) && Directory.EnumerateFileSystemEntries(StagingDirectory).Any();
@@ -107,9 +111,6 @@ public sealed class ModelInstaller
             throw ModelInstallException.Unavailable("The free space on this volume is unknown.");
         }
     }
-
-    /// Heals an interrupted commit. Safe to call on every launch, before anything reads the models directory.
-    public void RecoverInterruptedCommit() => RemoveStaleBackups(Path.GetDirectoryName(modelsDirectory)!);
 
     private async Task PerformInstallAsync(Action<Progress> progress, CancellationToken cancellationToken)
     {
@@ -212,7 +213,7 @@ public sealed class ModelInstaller
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (Directory.EnumerateFiles(staging, "*.part", SearchOption.AllDirectories).Any())
+        if (Directory.EnumerateFiles(staging, StagingLayout.PartPattern, SearchOption.AllDirectories).Any())
         {
             throw ModelInstallException.Io("an incomplete download is still present");
         }
@@ -294,7 +295,7 @@ public sealed class ModelInstaller
         if (Directory.Exists(modelsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            backup = Path.Combine(parent, "models.old-" + Guid.NewGuid());
+            backup = StagingLayout.NewBackup(parent);
             Directory.Move(modelsDirectory, backup);
         }
 
@@ -311,8 +312,9 @@ public sealed class ModelInstaller
                 {
                     Directory.Move(backup, modelsDirectory);
                 }
-                catch (IOException)
+                catch (IOException restoreError)
                 {
+                    log?.Invoke($"Model install rollback could not restore {backup}: {restoreError.Message}");
                 }
             }
 
@@ -335,7 +337,7 @@ public sealed class ModelInstaller
             return;
         }
 
-        var backups = Directory.EnumerateDirectories(parent, "models.old-*")
+        var backups = Directory.EnumerateDirectories(parent, StagingLayout.BackupPattern)
             .OrderByDescending(Directory.GetCreationTimeUtc).ToList();
         if (backups.Count == 0)
         {
@@ -389,7 +391,7 @@ public sealed class ModelInstaller
         _ => false
     };
 
-    private string PartPath(string name) => Path.Combine(StagingDirectory, name + ".part");
+    private string PartPath(string name) => StagingLayout.Part(StagingDirectory, name);
 
     private static void ReplaceByCopy(string destination, string source)
     {
@@ -423,6 +425,22 @@ public sealed class ModelInstaller
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
         }
+    }
+
+    /// Names of the staging entries. Creation and cleanup both go through here so they cannot drift apart.
+    private static class StagingLayout
+    {
+        public const string DownloadDirectory = "models.download";
+        public const string PartSuffix = ".part";
+        public const string BackupPrefix = "models.old-";
+        public const string PartPattern = "*" + PartSuffix;
+        public const string BackupPattern = BackupPrefix + "*";
+
+        public static string Download(string parent) => Path.Combine(parent, DownloadDirectory);
+
+        public static string Part(string stagingDirectory, string name) => Path.Combine(stagingDirectory, name + PartSuffix);
+
+        public static string NewBackup(string parent) => Path.Combine(parent, BackupPrefix + Guid.NewGuid());
     }
 
     /// Shares one progress callback between the transport and the installer, and limits it to about

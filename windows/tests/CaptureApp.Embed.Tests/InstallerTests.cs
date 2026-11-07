@@ -434,7 +434,7 @@ public sealed class InstallerTests
         Directory.CreateDirectory(backup);
         File.WriteAllText(Path.Combine(backup, "kept.txt"), "x");
 
-        fixture.Installer().RecoverInterruptedCommit();
+        fixture.Installer();
 
         Assert.True(File.Exists(Path.Combine(fixture.Models, "kept.txt")));
         Assert.False(Directory.Exists(backup));
