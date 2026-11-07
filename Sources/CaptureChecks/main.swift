@@ -202,6 +202,7 @@ func checkHotkeys() throws {
         Hotkey(keyCode: 8, modifiers: [.control, .shift]), Hotkey(keyCode: 1, modifiers: [.control, .shift]),
         Hotkey(keyCode: 45, modifiers: [.control, .shift])
     ]
+    try require(defaults.count == expectedDefinitions.count && defaults.count == expected.count, "Production hotkey list has \(defaults.count) entries, expected \(expectedDefinitions.count)")
     for (index, hotkey) in defaults.enumerated() {
         try require(hotkey == expectedDefinitions[index] && hotkey.displayString == expected[index],
                     "Wrong production hotkey definition: \(hotkey.displayString)")
@@ -234,7 +235,7 @@ func checkHotkeys() throws {
     if case .failure(let error) = otherCenter.register(testHotkey, id: 2, handler: {}) {
         throw CheckFailure.failed("Unregistered test shortcut was not released: \(error)")
     }
-    print("Hotkeys: PASS (nine production definitions, temporary conflict and unregister).")
+    print("Hotkeys: PASS (ten production definitions, temporary conflict and unregister).")
 }
 
 @MainActor
