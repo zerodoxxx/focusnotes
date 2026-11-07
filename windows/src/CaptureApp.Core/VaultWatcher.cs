@@ -692,7 +692,6 @@ public sealed class VaultWatcher : IDisposable
         or System.ComponentModel.Win32Exception or NotSupportedException;
 
     internal int StreamGenerationForChecks { get { lock (gate) { return streamGeneration; } } }
-    internal int ParentWatcherCountForChecks { get { lock (gate) { return parents.Count; } } }
     internal int PollingFallbackCountForChecks { get { lock (gate) { return fallbackIds.Count; } } }
     internal bool HasPollingTimerForChecks { get { lock (gate) { return fallbackTimer is not null; } } }
     internal IReadOnlySet<string> ParentPathsForChecks { get { lock (gate) { return parents.Keys.ToFrozenSet(PathComparer); } } }
