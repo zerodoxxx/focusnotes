@@ -398,9 +398,11 @@ public sealed class Vault
         return full.StartsWith(prefix, PathIdentity.Comparison) ? full[prefix.Length..].Replace(Path.DirectorySeparatorChar, '/') : null;
     }
 
+    public static bool IsFileUrl(string path) => path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+
     public static string DecodeFilePath(string path)
     {
-        if (!path.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        if (!IsFileUrl(path))
         {
             return path;
         }

@@ -67,6 +67,8 @@ public static class Strings
     public const string RenameSessionMissingHint = "This session no longer exists. Choose another session.";
     public const string RenameSessionChangedHint = "This session changed. Select it again before renaming.";
     public const string CouldNotRenameSession = "Couldn't rename session";
+    public const string SessionRenamePendingDetail = "State updates will retry before the next save.";
+    public static string SessionRenamePending(string name) => $"Session rename pending · {name}";
     public const string SubheadingPlaceholder = "Subheading";
     public const string AddSubheadingTitle = "Add subheading";
     public const string RecentSection = "Recent";

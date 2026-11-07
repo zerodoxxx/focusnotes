@@ -557,7 +557,7 @@ public sealed class CaptureCoordinator
     {
         var vault = Pipeline.Vault;
         var rules = vault.NamingRules;
-        static bool IsHome(NoteSuggestion s) => s.Path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+        static bool IsHome(NoteSuggestion s) => Vault.IsFileUrl(s.Path);
         static bool IsRoot(NoteSuggestion s) => s.Kind == NoteKind.Note && !IsHome(s) && !s.Path.Contains('/');
         var roots = suggestions.Where(IsRoot).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
         var sessions = suggestions.Where(s => s.Kind == NoteKind.Session).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
@@ -577,13 +577,13 @@ public sealed class CaptureCoordinator
                 var home = IsHome(suggestion);
                 var url = home ? Vault.DecodeFilePath(suggestion.Path) : vault.UrlForRelativePath(suggestion.Path);
                 var relative = home ? Vault.RelativeUnder(url, vault.HomeRoot) : suggestion.Path;
-                if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
+                if (relative is null || !Vault.IsMarkdown(relative)) { continue; }
                 // The file name with .md is unique among the offered values. Nested, HOME and session notes use their
                 // extensionless path instead when the Router resolves it to the same name.
                 var value = home ? "/" + relative : relative;
                 if (!IsRoot(suggestion))
                 {
-                    var stem = relative[..^3];
+                    var stem = relative[..^Vault.MarkdownExtension.Length];
                     var path = home ? "/" + stem : stem;
                     if (RoundTrips(path, stem, rules)) { value = path; }
                 }
@@ -650,7 +650,7 @@ public sealed class CaptureCoordinator
             ActiveSession = outcome.Session;
             host.StatusChanged();
             if (outcome.IdentityUpdatePending)
-                ShowToast(new(AppToastStyle.Warning, $"Session rename pending · {outcome.Session.Name}", "State updates will retry before the next save."));
+                ShowToast(new(AppToastStyle.Warning, Strings.SessionRenamePending(outcome.Session.Name), Strings.SessionRenamePendingDetail));
             else ShowToast(new(AppToastStyle.Session, Strings.SessionStarted(outcome.Session.Name, true),
                 Strings.SessionCapturesGoHere(host.SessionBinding)));
             return outcome;
