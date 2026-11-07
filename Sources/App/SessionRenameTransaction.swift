@@ -125,19 +125,21 @@ actor SessionRenameTransaction {
                   let target = try? vault.fileSnapshot(relativePath: renamed.notePath, includingContents: false),
                   recorded.isInstalled(target) else { throw renameError }
             // The file is installed; report success and let recovery finish identity updates.
-            do {
-                try await recover(allowFileRename: false)
-                return SessionRenameOutcome(session: renamed, identityUpdatePending: false)
-            } catch {
-                logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(renameError), privacy: .public); \(AppErrorLog.summary(error), privacy: .public))")
-                return SessionRenameOutcome(session: renamed, identityUpdatePending: true)
-            }
+            return await finishIdentityUpdate(renamed, after: renameError)
         }
+        return await finishIdentityUpdate(renamed, after: nil)
+    }
+
+    private func finishIdentityUpdate(_ renamed: Session, after renameError: (any Error)?) async -> SessionRenameOutcome {
         do {
             try await recover(allowFileRename: false)
             return SessionRenameOutcome(session: renamed, identityUpdatePending: false)
         } catch {
-            logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(error), privacy: .public))")
+            if let renameError {
+                logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(renameError), privacy: .public); \(AppErrorLog.summary(error), privacy: .public))")
+            } else {
+                logger.error("Session renamed; identity update pending (\(AppErrorLog.summary(error), privacy: .public))")
+            }
             return SessionRenameOutcome(session: renamed, identityUpdatePending: true)
         }
     }

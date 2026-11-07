@@ -59,7 +59,7 @@ actor CaptureJournal {
     func captureIDs(targeting oldPath: String, vault: Vault, among jobs: [CaptureJob]) throws -> [UUID] {
         let currentJobs = try jobs.map { try redirected($0) }
         var ids = Set(currentJobs.filter {
-            (try? vault.noteID(for: $0.prepared.destination.url)) == oldPath
+            Self.targets($0.prepared.destination.url, oldPath, vault: vault)
         }.map { $0.prepared.capture.id })
         for url in try recordURLs() {
             let data = try Data(contentsOf: url)
@@ -67,7 +67,7 @@ actor CaptureJournal {
                 Self.logger.error("Skipped corrupt capture record while matching a rename")
                 continue
             }
-            if (try? vault.noteID(for: record.prepared.destination.url)) == oldPath {
+            if Self.targets(record.prepared.destination.url, oldPath, vault: vault) {
                 ids.insert(record.prepared.capture.id)
             }
         }
@@ -75,6 +75,10 @@ actor CaptureJournal {
     }
 
     private static func key(for id: UUID) -> String { id.uuidString.lowercased() }
+
+    private static func targets(_ url: URL, _ oldPath: String, vault: Vault) -> Bool {
+        (try? vault.noteID(for: url)) == oldPath
+    }
 
     private static func removeIfPresent(_ url: URL) throws {
         do { try FileManager.default.removeItem(at: url) }
