@@ -127,9 +127,6 @@ public sealed class CapturePipeline : IDisposable
     private static CaptureTarget? Target(Destination? destination, string? noteTitle) =>
         destination is not null ? new CaptureTarget.Resolved(destination) : noteTitle is not null ? new CaptureTarget.Title(noteTitle) : null;
 
-    public CaptureJob WithDestination(CaptureJob job, Destination destination) => PrepareLocked(() =>
-        job with { Prepared = job.Prepared with { Destination = destination } });
-
     private CaptureJob PrepareLocked(Func<CaptureJob> prepare)
     {
         lock (captureGate)

@@ -13,7 +13,6 @@ public sealed class VaultMonitor : IDisposable
     private readonly VaultWatcher watcher;
     private readonly SearchIndex index;
     private readonly AppLog logger;
-    private readonly Func<Task>? beforeIndexSyncForTesting;
     private readonly Func<Task>? afterIndexSyncForTesting;
     private Task? worker;
     private bool notesDirty;
@@ -33,11 +32,10 @@ public sealed class VaultMonitor : IDisposable
     }
 
     public VaultMonitor(Vault vault, SearchIndex index, string stateDirectory, double latency = 1.0,
-        Func<Task>? beforeIndexSyncForTesting = null, Func<Task>? afterIndexSyncForTesting = null)
+        Func<Task>? afterIndexSyncForTesting = null)
     {
         this.index = index;
         logger = new(stateDirectory, "vault-monitor");
-        this.beforeIndexSyncForTesting = beforeIndexSyncForTesting;
         this.afterIndexSyncForTesting = afterIndexSyncForTesting;
         watcher = new(vault, OnChanged, latency);
     }
@@ -150,11 +148,6 @@ public sealed class VaultMonitor : IDisposable
             {
                 if (request.Notes)
                 {
-                    if (beforeIndexSyncForTesting is not null)
-                    {
-                        await beforeIndexSyncForTesting().ConfigureAwait(false);
-                    }
-
                     await Task.Run(index.Sync).ConfigureAwait(false);
                     if (afterIndexSyncForTesting is not null)
                     {
