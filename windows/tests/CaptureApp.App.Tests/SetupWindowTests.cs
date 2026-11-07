@@ -56,6 +56,7 @@ public sealed class SetupWindowTests
                 WiringTests.OutsideCaptureEscapeUsesTitlePickerCancellation(app);
                 NotesFolderChecks.Run(app);
                 ShortcutCountTests.CapabilityTableKeepsShortcutsOnWhileSomeStayEnabled(app);
+                ShortcutResetChecks.ResetReportsUnreadableShortcutData(app);
 
                 var gallery = Environment.GetEnvironmentVariable("FOCUSNOTES_SETUP_GALLERY_OUT");
                 if (!string.IsNullOrWhiteSpace(gallery))
