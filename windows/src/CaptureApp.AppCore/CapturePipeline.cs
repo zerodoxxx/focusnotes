@@ -127,27 +127,22 @@ public sealed class CapturePipeline : IDisposable
     private static CaptureTarget? Target(Destination? destination, string? noteTitle) =>
         destination is not null ? new CaptureTarget.Resolved(destination) : noteTitle is not null ? new CaptureTarget.Title(noteTitle) : null;
 
-    private CaptureJob PrepareLocked(Func<CaptureJob> prepare)
+    private CaptureJob PrepareLocked(Func<CaptureJob> prepare) => Locked(() =>
     {
-        lock (captureGate)
-        {
-            ThrowIfDisposed();
-            RecoverPendingRename();
-            var job = Journal.Resolve(prepare());
-            Unsaved.Prepared(job.Prepared.Capture.Id, job.Prepared.Destination);
-            return job;
-        }
-    }
+        var job = Journal.Resolve(prepare());
+        Unsaved.Prepared(job.Prepared.Capture.Id, job.Prepared.Destination);
+        return job;
+    });
 
     public void Stage(CaptureJob job)
     {
-        lock (captureGate) { ThrowIfDisposed(); RecoverPendingRename(); Journal.Store(job); }
+        Locked(() => Journal.Store(job));
     }
 
     /// Removes a journal record through the same gate as <see cref="Stage"/>.
     internal void Discard(Guid id)
     {
-        lock (captureGate) { ThrowIfDisposed(); RecoverPendingRename(); Journal.Remove(id); }
+        Locked(() => Journal.Remove(id));
     }
 
     /// <param name="onNoteSaved">Called for typed notes with whether the pin intent failed (the Mac's showNoteSaveFeedback).</param>
@@ -212,23 +207,16 @@ public sealed class CapturePipeline : IDisposable
 
     public string? ExistingTitle(string markdown, CaptureIntent intent) => Service.ExistingTitle(markdown, intent, TimeZone);
 
-    public Session StartSession(string name) => ChangeSession(() => Sessions.Start(name));
+    public Session StartSession(string name) => Locked(() => Sessions.Start(name));
 
-    public Session StartFolderSession(NoteFolder folder, string name) => ChangeSession(() => Sessions.StartInFolder(folder, name));
+    public Session StartFolderSession(NoteFolder folder, string name) => Locked(() => Sessions.StartInFolder(folder, name));
 
-    public Session ResumeSession(SessionCandidate candidate) => ChangeSession(() => Sessions.Resume(candidate));
+    public Session ResumeSession(SessionCandidate candidate) => Locked(() => Sessions.Resume(candidate));
 
     public void EndSession()
     {
-        lock (captureGate)
-        {
-            ThrowIfDisposed();
-            RecoverPendingRename();
-            Sessions.End();
-        }
+        Locked(() => Sessions.End());
     }
-
-    private Session ChangeSession(Func<Session> change) => Locked(change);
 
     private T Locked<T>(Func<T> read)
     {
@@ -237,6 +225,16 @@ public sealed class CapturePipeline : IDisposable
             ThrowIfDisposed();
             RecoverPendingRename();
             return read();
+        }
+    }
+
+    private void Locked(Action action)
+    {
+        lock (captureGate)
+        {
+            ThrowIfDisposed();
+            RecoverPendingRename();
+            action();
         }
     }
 
@@ -301,15 +299,17 @@ public sealed class CapturePipeline : IDisposable
     public byte[] AssetData(string assetPath)
     {
         var snapshot = Vault.FileSnapshot(assetPath);
-        return snapshot?.Contents ?? throw new FileNotFoundException("The vault asset was not found.", assetPath);
+        return snapshot?.Contents ?? throw MissingAsset(assetPath);
     }
 
     public string AssetUrl(string assetPath)
     {
         _ = Vault.FileSnapshot(assetPath, includingContents: false)
-            ?? throw new FileNotFoundException("The vault asset was not found.", assetPath);
+            ?? throw MissingAsset(assetPath);
         return Vault.UrlForRelativePath(assetPath);
     }
+
+    private static FileNotFoundException MissingAsset(string assetPath) => new("The vault asset was not found.", assetPath);
 
     public async Task StopWatcherAsync() => await Monitor.StopAsync().ConfigureAwait(false);
 

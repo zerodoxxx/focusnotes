@@ -44,7 +44,7 @@ public sealed class CaptureJournal
         {
             job = Resolve(job);
             Directory.CreateDirectory(DirectoryPath);
-            var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
+            var stem = Stem(job.Prepared.Capture.Id);
             if (job.Png is not null)
             {
                 DurableFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
@@ -87,7 +87,7 @@ public sealed class CaptureJournal
             if (record.Prepared is null || record.Prepared.Capture is null || record.Prepared.Destination is null)
                 throw new RecordException("The journal record is missing capture or destination data.");
             var stem = Path.GetFileNameWithoutExtension(recordPath);
-            if (!string.Equals(stem, record.Prepared.Capture.Id.ToString("D").ToLowerInvariant(), StringComparison.Ordinal))
+            if (!string.Equals(stem, Stem(record.Prepared.Capture.Id), StringComparison.Ordinal))
             {
                 throw new RecordException("The journal filename does not match its capture identity.");
             }
@@ -153,7 +153,7 @@ public sealed class CaptureJournal
             foreach (var id in ids) redirects[id] = destination;
             foreach (var id in ids)
             {
-                var path = Path.Combine(DirectoryPath, id.ToString("D").ToLowerInvariant() + ".json");
+                var path = Path.Combine(DirectoryPath, Stem(id) + ".json");
                 if (!File.Exists(path)) continue;
                 try { Store(Resolve(Load(path))); }
                 catch (RecordException error)
@@ -165,8 +165,10 @@ public sealed class CaptureJournal
         }
     }
 
-    private static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
+    internal static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
         Path.GetFullPath(right).Normalize(), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static string Stem(Guid id) => id.ToString("D").ToLowerInvariant();
 
     public void Quarantine(string recordPath)
     {
@@ -192,7 +194,7 @@ public sealed class CaptureJournal
     {
         lock (gate)
         {
-            var stem = id.ToString("D").ToLowerInvariant();
+            var stem = Stem(id);
             DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".json")));
             DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".png")));
             // Keep redirects for this instance: an older commit can still retry its prepared object
