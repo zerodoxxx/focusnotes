@@ -158,20 +158,22 @@ public sealed class InstallerTests
             {
                 foreach (var client in clients)
                 {
-                    try { client.Dispose(); } catch (Exception) { }
+                    client.Dispose();
                 }
             }
 
-            try { loop.Wait(TimeSpan.FromSeconds(2)); } catch (Exception) { }
+            try { loop.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException error) when (error.Flatten().InnerExceptions.All(IsShutdown)) { }
             Task[] pending;
             lock (clients)
             {
                 pending = [.. handlers];
             }
 
-            try { Task.WaitAll(pending, TimeSpan.FromSeconds(2)); } catch (Exception) { }
+            try { Task.WaitAll(pending, TimeSpan.FromSeconds(2)); } catch (AggregateException error) when (error.Flatten().InnerExceptions.All(IsShutdown)) { }
             stop.Dispose();
         }
+
+        private static bool IsShutdown(Exception e) => e is OperationCanceledException or ObjectDisposedException or System.Net.Sockets.SocketException or IOException;
     }
 
     private sealed class Fixture : IDisposable

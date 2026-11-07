@@ -61,6 +61,6 @@ public sealed partial class ManifestSyncTests
             Assert.Contains("ModelManifest.cs", File.ReadAllText(Path.Combine(Repo.Root(), "windows", "scripts", script)));
         }
 
-        Assert.Equal(10, Regex.Matches(File.ReadAllText(Path.Combine(Repo.Root(), "windows", "src", "CaptureApp.ModelInstall", "ModelManifest.cs")), """Artifact\("[^"]+", "[0-9a-f]{64}", \d+\)""").Count);
+        Assert.Equal(ModelManifest.Current.ModelFiles.Count, Regex.Matches(File.ReadAllText(Path.Combine(Repo.Root(), "windows", "src", "CaptureApp.ModelInstall", "ModelManifest.cs")), """Artifact\("[^"]+", "[0-9a-f]{64}", \d+\)""").Count);
     }
 }

@@ -139,7 +139,12 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
             {
                 value = new
                 {
-                    error = error.Kind == SessionStoreError.Ambiguous ? "ambiguousSession" : "candidateNoLongerExists"
+                    error = error.Kind switch
+                    {
+                        SessionStoreError.Ambiguous => "ambiguousSession",
+                        SessionStoreError.CandidateNoLongerExists => "candidateNoLongerExists",
+                        _ => throw new InvalidOperationException($"Unmapped session store error {error.Kind}"),
+                    }
                 };
             }
 
