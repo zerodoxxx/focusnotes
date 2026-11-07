@@ -923,7 +923,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
                 editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
-                        let blank = QuickNoteState.isBlank(text)
+                        let blank = CaptureFormat.isBlank(text)
                         try pipeline.drafts.flushScheduledStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder)
                         if blank {
                             state.dropPinOnSaveForBlankDraft()
@@ -937,7 +937,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                     },
                     onNew: { [weak controller, weak editor] text in
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if CaptureFormat.isBlank(text) {
                             do { try state.restoreSessionDestination(sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
@@ -953,7 +953,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onOpenAsNote: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do {
-                                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                if !CaptureFormat.isBlank(text) {
                                     if let saved = try await save(text, controller: controller) {
                                         if !controller.isTerminating { controller.openNote(saved.destination.url) }
                                         return
@@ -1007,7 +1007,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onError: { [weak controller] error in controller?.report(error, title: AppController.draftKeptOpenTitle) },
                     titleForText: { TypedNote(markdown: $0, createdAt: Date(), calendar: calendar).title },
                     onScheduleDraft: { [weak controller, weak editor] text in
-                        let blank = QuickNoteState.isBlank(text)
+                        let blank = CaptureFormat.isBlank(text)
                         pipeline.drafts.scheduleStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder) { [weak controller] error in
                             Task { @MainActor in controller?.report(error, title: AppController.draftKeptOpenTitle) }
                         }
@@ -1105,7 +1105,7 @@ final class AppController: NSObject, NSMenuDelegate {
             panel.present(query: { [weak controller] query in
                 guard let controller else { return [] }
                 do {
-                    let empty = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let empty = CaptureFormat.isBlank(query)
                     let hits: [SearchHit]
                     if empty {
                         hits = try await pipeline.index.recent(limit: 20)

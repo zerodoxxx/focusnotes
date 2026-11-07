@@ -157,7 +157,7 @@ actor CaptureJournal {
         if record.hasPNG {
             do { png = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("png")) }
             catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
-                guard let text = record.ocr, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                guard let text = record.ocr, !CaptureFormat.isBlank(text) else {
                     throw RecordError.corrupt
                 }
                 let original = record.prepared.capture

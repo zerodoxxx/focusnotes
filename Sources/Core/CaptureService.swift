@@ -189,7 +189,7 @@ public actor CaptureService {
 
         let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
         // A title-only note has no body, so its text (the title line) is appended instead.
-        let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasBody = !CaptureFormat.isBlank(note.body)
         let appendCapture = hasBody ? noteCapture : capture
         let appendsToMatch = !newNote && !note.isGeneratedTitle
         if appendsToMatch {

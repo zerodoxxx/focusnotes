@@ -197,7 +197,7 @@ final class CaptureCommitQueue {
     func addNote(_ rawText: String, destination: Destination?, pinOnSave: Bool, newNote: Bool, outsideSession: Bool, folder: NoteFolder?,
                  onNoteSaved: @escaping @MainActor @Sendable (SavedCapture, Bool, Bool, String?) -> Void) async throws -> SavedCapture? {
         let text = CaptureFormat.noteBody(rawText)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard !CaptureFormat.isBlank(text) else { return nil }
         await commitEarlierCaptures(waitingForThem: true)
         let pipeline = pipeline
         var retry: Task<CaptureJob, Error>?

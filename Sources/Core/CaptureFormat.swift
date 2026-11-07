@@ -48,7 +48,7 @@ public enum CaptureFormat {
     }
 
     private static let separator = "\u{00B7}"
-    private static let ellipsis = "\u{2026}"
+    static let ellipsis = "\u{2026}"
     private static let windowTitleLimit = 80
 
     public static func noteHeader(title: String) -> String {
@@ -333,8 +333,8 @@ public enum CaptureFormat {
         return body
     }
 
-    static func isBlank(_ line: String) -> Bool {
-        line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    public static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Returns a relative path from `directory` to `target`, without reading either path.

@@ -110,7 +110,7 @@ final class NoteDraftStore: @unchecked Sendable {
                 else {
                     try lock.withLock {
                         var draft = try read()
-                        guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        guard !CaptureFormat.isBlank(draft.text) else { return }
                         draft.pinOnSave = pin
                         try write(draft)
                     }
@@ -215,7 +215,7 @@ final class NoteDraftStore: @unchecked Sendable {
 
     private func writeSnapshot(_ pending: PendingWrite) throws {
         try lock.withLock {
-            if pending.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try remove(); return }
+            if CaptureFormat.isBlank(pending.text) { try remove(); return }
             let pin = try pending.pinOnSave ?? read().pinOnSave
             try write(NoteDraftSnapshot(text: pending.text, pinOnSave: pin, folder: pending.folder))
         }

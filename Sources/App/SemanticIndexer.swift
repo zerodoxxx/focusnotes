@@ -197,7 +197,7 @@ actor SemanticIndexer {
         let existing = Set(try store.keys())
         let fingerprints = try store.fingerprints()
         var expected = Set(blocks.map(\.key))
-        for block in blocks where block.kind == .image && !block.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        for block in blocks where block.kind == .image && !CaptureFormat.isBlank(block.ocrText) {
             expected.insert(Self.ocrKey(for: block.key))
         }
         try store.remove(keys: Array(existing.subtracting(expected)))
@@ -208,7 +208,7 @@ actor SemanticIndexer {
             guard await isEnabled() else { return }
             if block.kind == .image {
                 guard Self.imagesAllowed else { continue }
-                if !block.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                if !CaptureFormat.isBlank(block.ocrText),
                    fingerprints[Self.ocrKey(for: block.key)] != EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle) {
                     if batch.first?.title != block.noteTitle || batch.count == 16 {
                         try await embedBatch(batch, client: client, store: store); batch.removeAll()

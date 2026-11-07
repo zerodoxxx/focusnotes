@@ -90,7 +90,7 @@ public enum NoteTitle {
         if !title[end].isWhitespace, let boundary = prefix.lastIndex(of: " ") {
             prefix = String(prefix[..<boundary])
         }
-        return prefix.trimmingCharacters(in: .whitespaces) + "…"
+        return prefix.trimmingCharacters(in: .whitespaces) + CaptureFormat.ellipsis
     }
 
     static func leafName(of path: String) -> String {

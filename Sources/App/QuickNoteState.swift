@@ -46,11 +46,10 @@ final class QuickNoteState {
     }
     /// The pin intent a draft write stores; a blank draft carries none.
     func pinOnSave(forDraft text: String) -> Bool {
-        Self.isBlank(text) ? false : pinOnSave
+        CaptureFormat.isBlank(text) ? false : pinOnSave
     }
     /// Forgets the intent after a blank draft was stored; the draft file needs no update.
     func dropPinOnSaveForBlankDraft() { pinOnSave = false }
-    static func isBlank(_ text: String) -> Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     func toggleOutsideSession(sessionDestination: Destination, drafts: NoteDraftStore) throws {
         try resetPinOnSave(in: drafts)
         outsideSession.toggle()
