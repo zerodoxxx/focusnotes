@@ -120,31 +120,27 @@ final class NoteDraftStore: @unchecked Sendable {
         }
     }
     func clear(ifMatching text: String, folder: NoteFolder? = nil) throws {
-        try mutationLock.withLock {
-            let (generation, pending) = supersedeScheduledWrite()
-            try persistenceQueue.sync {
-                if let pending { try writeSnapshot(pending) }
-                try lock.withLock {
-                    let draft = try read()
-                    if Self.matches(draft, text: text, folder: folder) { try remove() }
-                }
-                clearPendingWrite(ifCurrent: generation)
-            }
+        try withSupersededScheduledWrite {
+            let draft = try read()
+            if Self.matches(draft, text: text, folder: folder) { try remove() }
         }
     }
     /// Apply the current intent before consuming the matching draft. Recovery never
     /// takes intent from a replaced/discarded draft; interactive saves supply their call's intent.
     func completeSave(matching text: String, pinOnSave: Bool?, folder: NoteFolder? = nil, applyPin: (Bool) -> Void) throws {
+        try withSupersededScheduledWrite {
+            let draft = try read()
+            let matches = Self.matches(draft, text: text, folder: folder)
+            applyPin(pinOnSave ?? (matches && draft.pinOnSave))
+            if matches { try remove() }
+        }
+    }
+    private func withSupersededScheduledWrite(_ body: () throws -> Void) throws {
         try mutationLock.withLock {
             let (generation, pending) = supersedeScheduledWrite()
             try persistenceQueue.sync {
                 if let pending { try writeSnapshot(pending) }
-                try lock.withLock {
-                    let draft = try read()
-                    let matches = Self.matches(draft, text: text, folder: folder)
-                    applyPin(pinOnSave ?? (matches && draft.pinOnSave))
-                    if matches { try remove() }
-                }
+                try lock.withLock(body)
                 clearPendingWrite(ifCurrent: generation)
             }
         }
