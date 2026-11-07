@@ -420,7 +420,7 @@ public sealed class CaptureCoordinator
 
                 if (held)
                 {
-                    log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
+                    LogFailure(Strings.CouldNotSaveCapture, error);
                     // A commit that failed during quit restored the hold after the drain's last implicit commit: save it to its default now.
                     if (IsTerminating) { _ = CommitPending(); }
                     else if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
@@ -735,9 +735,11 @@ public sealed class CaptureCoordinator
         return true;
     }
 
+    private void LogFailure(string title, Exception error) => log.Error($"{title} ({error.GetType().Name}): {error}");
+
     public void Report(Exception error, string title)
     {
-        log.Error($"{title} ({error.GetType().Name}): {error}");
+        LogFailure(title, error);
         ShowToast(new(AppToastStyle.Warning, title));
     }
 
@@ -757,7 +759,7 @@ public sealed class CaptureCoordinator
 
         var registry = error as ExternalNoteRegistryException;
         var (title, subtitle) = Strings.ExternalRegistry(registry?.Kind, registry?.Version, forSave);
-        log.Error($"{title} ({error.GetType().Name}): {error}");
+        LogFailure(title, error);
         ShowToast(new(AppToastStyle.Warning, title, subtitle));
     }
 

@@ -68,12 +68,14 @@ public sealed class QuickNoteState
     {
         if (sessionDestination is null) return;
         OutsideSession = !OutsideSession;
-        Destination = OutsideSession ? null : sessionDestination;
+        FollowSession(sessionDestination);
     }
 
     public void ReturnToSession(Destination? sessionDestination)
     {
         OutsideSession = DefaultOutsideSession;
-        Destination = OutsideSession ? null : sessionDestination;
+        FollowSession(sessionDestination);
     }
+
+    private void FollowSession(Destination? sessionDestination) => Destination = OutsideSession ? null : sessionDestination;
 }

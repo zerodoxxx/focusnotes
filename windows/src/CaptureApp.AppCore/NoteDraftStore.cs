@@ -100,15 +100,9 @@ public sealed class NoteDraftStore : IDisposable
 
     public void SetPinOnSave(bool pin)
     {
-        lock (gate)
+        FlushPendingThen(hadPending =>
         {
-            ThrowIfDisposed();
-            var writeGeneration = SupersedeScheduledWrite(updatingPin: pin);
-            if (pendingWrite is { } pending)
-            {
-                WriteSnapshot(pending);
-            }
-            else
+            if (!hadPending)
             {
                 var draft = Read();
                 if (!string.IsNullOrWhiteSpace(draft.Text))
@@ -116,44 +110,26 @@ public sealed class NoteDraftStore : IDisposable
                     Write(draft with { PinOnSave = pin });
                 }
             }
-
-            ClearPendingWrite(writeGeneration);
-        }
+        }, updatingPin: pin);
     }
 
     public void ClearIfMatching(string text, NoteFolder? folder = null)
     {
-        lock (gate)
+        FlushPendingThen(_ =>
         {
-            ThrowIfDisposed();
-            var writeGeneration = SupersedeScheduledWrite();
-            if (pendingWrite is { } pending)
-            {
-                WriteSnapshot(pending);
-            }
-
             var draft = Read();
             if (Matches(draft, text, folder))
             {
                 Remove();
             }
-
-            ClearPendingWrite(writeGeneration);
-        }
+        });
     }
 
     /// Applies the save's explicit intent or the intent on the matching current draft, then consumes it.
     public void CompleteSave(string matchingText, bool? pinOnSave, Action<bool> applyPin, NoteFolder? folder = null)
     {
-        lock (gate)
+        FlushPendingThen(_ =>
         {
-            ThrowIfDisposed();
-            var writeGeneration = SupersedeScheduledWrite();
-            if (pendingWrite is { } pending)
-            {
-                WriteSnapshot(pending);
-            }
-
             var draft = Read();
             var matches = Matches(draft, matchingText, folder);
             applyPin(pinOnSave ?? (matches && draft.PinOnSave));
@@ -161,7 +137,23 @@ public sealed class NoteDraftStore : IDisposable
             {
                 Remove();
             }
+        });
+    }
 
+    private void FlushPendingThen(Action<bool> body, bool? updatingPin = null)
+    {
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            var writeGeneration = SupersedeScheduledWrite(updatingPin: updatingPin);
+            var hadPending = false;
+            if (pendingWrite is { } pending)
+            {
+                WriteSnapshot(pending);
+                hadPending = true;
+            }
+
+            body(hadPending);
             ClearPendingWrite(writeGeneration);
         }
     }

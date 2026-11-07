@@ -8,6 +8,7 @@ namespace CaptureApp.AppCore;
 public sealed class SingleInstance : IAsyncDisposable
 {
     private const string ShowCommand = "show";
+    private const string LogName = "single-instance";
 
     private readonly FileStream lockFile;
     private readonly CancellationTokenSource stopping = new();
@@ -24,7 +25,7 @@ public sealed class SingleInstance : IAsyncDisposable
         this.lockFile = lockFile;
         this.onShow = onShow;
         PipeName = pipeName;
-        logger = new(stateDirectory, "single-instance");
+        logger = new(stateDirectory, LogName);
         pipeServer = Task.Run(ListenAsync);
     }
 
@@ -51,7 +52,7 @@ public sealed class SingleInstance : IAsyncDisposable
             try
             {
                 await SendShowAsync(pipeName, cancellationToken).ConfigureAwait(false);
-                new AppLog(fullPath, "single-instance").Notice($"Instance lock held ({lockError.Message}); sent show to the running instance.");
+                new AppLog(fullPath, LogName).Notice($"Instance lock held ({lockError.Message}); sent show to the running instance.");
                 return null;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
