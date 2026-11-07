@@ -28,3 +28,13 @@ app_signing_cn() { printf '%s Release Signing' "$1"; }
 
 # app_signing_keychain APPNAME
 app_signing_keychain() { printf '%s/Library/Keychains/%s-signing.keychain-db' "$HOME" "$1"; }
+
+# app_env_value FILE KEY: prints the first KEY= value (the rule MSBuild uses), or nothing.
+app_env_value() { sed -n "s/^$2=//p" "$1" | head -n 1; }
+
+# The designated requirement in Config/signing-requirement.txt: written once, parsed on import.
+# app_signing_requirement BUNDLE_ID SHA1
+app_signing_requirement() { printf 'identifier "%s" and certificate leaf = H"%s"\n' "$1" "$2"; }
+
+# app_signing_requirement_hash FILE: prints the certificate SHA-1 from a requirement file.
+app_signing_requirement_hash() { sed -n 's/.*H"\([0-9a-f]\{40\}\)".*/\1/p' "$1"; }
