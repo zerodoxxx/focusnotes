@@ -99,19 +99,13 @@ private actor VaultRefresh {
             externalRegistryRecoveryHandler?()
         }
         let notes = change.needsFullSync || !change.notesChanged.isEmpty
-        let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Self.isKnownAssetPath)
+        let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Vault.isAssetPath)
         let fullAssetValidation = change.needsFullSync || (!change.assetsChanged.isEmpty && !pathsAreKnownAssets)
         // A new/edited note can introduce an image reference that also needs OCR.
         enqueue(notes: notes,
                 assets: change.needsFullSync || notes || !change.assetsChanged.isEmpty,
                 fullAssetValidation: fullAssetValidation,
                 changedAssetPaths: change.assetsChanged)
-    }
-
-    private static func isKnownAssetPath(_ path: String) -> Bool {
-        let components = path.split(separator: "/", omittingEmptySubsequences: false)
-        return !path.hasPrefix("/") && components.count >= 2 && components[0] == Vault.assetsDirectoryName
-            && !components.contains(where: { $0 == "." || $0 == ".." || $0.isEmpty })
     }
 
     func run(notes: Bool, assets: Bool, fullAssetValidation: Bool = false) async {

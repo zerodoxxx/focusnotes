@@ -206,6 +206,13 @@ public struct Vault: Sendable {
     public static let sessionsDirectoryName = "Sessions"
     public static let assetsDirectoryName = "assets"
 
+    public static func isAssetPath(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !path.hasPrefix("/") && components.count >= 2
+            && components[0].caseInsensitiveCompare(Self.assetsDirectoryName) == .orderedSame
+            && !components.contains(where: { $0 == "." || $0 == ".." || $0.isEmpty })
+    }
+
     public let root: URL
     let rootAnchor: VaultDirectoryAnchor
     let homeRoot: URL

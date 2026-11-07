@@ -83,7 +83,19 @@ func checkVault() throws {
     try checkRootAnchorAdoptsExternalCreation()
     try checkNoteNameResolution()
     try checkCaseInsensitiveAssetsExclusion()
+    try checkAssetPathClassification()
     print("Vault checks passed.")
+}
+
+private func checkAssetPathClassification() throws {
+    try require(Vault.isAssetPath("assets/a.png"), "assets/ paths must be asset paths")
+    try require(Vault.isAssetPath("Assets/a.png"), "Assets/ paths must be asset paths, matching Vault.classify")
+    try require(Vault.isAssetPath("ASSETS/sub/a.png"), "ASSETS/ paths must be asset paths, matching Vault.classify")
+    try require(!Vault.isAssetPath("assets"), "a bare assets directory is not an asset path")
+    try require(!Vault.isAssetPath("/assets/a.png"), "absolute paths are not asset paths")
+    try require(!Vault.isAssetPath("assets/../a.png"), "parent traversal is not an asset path")
+    try require(!Vault.isAssetPath("assets//a.png"), "empty components are not asset paths")
+    try require(!Vault.isAssetPath("notes/a.png"), "paths outside assets are not asset paths")
 }
 
 private func checkCaseInsensitiveAssetsExclusion() throws {
