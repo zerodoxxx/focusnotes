@@ -290,8 +290,7 @@ final class CaptureCommitQueue {
         let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard await beforeWaiting() else { return false }
         let tail = commitTail
-        _ = try? await pendingCommit?.value
-        _ = try? await processedCommit?.value
+        await awaitEarlierCommits(pendingCommit, processedCommit)
         _ = try? await tail?.value
         return true
     }
@@ -334,6 +333,10 @@ final class CaptureCommitQueue {
     private func commitEarlierCaptures(waitingForThem: Bool) async {
         let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard waitingForThem else { return }
+        await awaitEarlierCommits(pendingCommit, processedCommit)
+    }
+
+    private func awaitEarlierCommits(_ pendingCommit: Task<SavedCapture, Error>?, _ processedCommit: Task<SavedCapture, Error>?) async {
         _ = try? await pendingCommit?.value
         _ = try? await processedCommit?.value
     }

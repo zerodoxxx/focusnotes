@@ -316,10 +316,6 @@ struct CapturePipeline: Sendable {
         try Self.assetData(path, vault: vault)
     }
 
-    func assetURL(_ path: String) throws -> URL {
-        try Self.assetURL(path, vault: vault)
-    }
-
     private static func assetData(_ path: String, vault: Vault) throws -> Data {
         guard let snapshot = try vault.fileSnapshot(relativePath: path), let contents = snapshot.contents else {
             throw CocoaError(.fileReadNoSuchFile)
@@ -327,7 +323,7 @@ struct CapturePipeline: Sendable {
         return contents
     }
 
-    private static func assetURL(_ path: String, vault: Vault) throws -> URL {
+    static func assetURL(_ path: String, vault: Vault) throws -> URL {
         let url = vault.root.appendingPathComponent(path).standardizedFileURL.resolvingSymlinksInPath()
         guard !path.hasPrefix("/"), url.path.hasPrefix(vault.root.path + "/") else {
             throw CocoaError(.fileReadInvalidFileName)
@@ -348,7 +344,7 @@ struct CapturePipeline: Sendable {
         // Returns at the deadline without waiting for Vision to stop.
         guard let recognized = await withDeadline(.now + .milliseconds(1500), { await recognition.value }) else {
             return PendingCapture(id: id, createdAt: createdAt, trigger: .region, content: .image(png: png, ocr: nil),
-                                  source: Self.source(context), subtitle: "Image", deferredOCR: recognition)
+                                  source: Self.source(context), subtitle: Self.imageSubtitle(), deferredOCR: recognition)
         }
         let result = recognized ?? OCRResult(text: "", lines: [], imageSize: .zero)
         let classification = CaptureClassifier.classify(result)
@@ -359,7 +355,7 @@ struct CapturePipeline: Sendable {
             trigger: .region,
             content: classification.decision == .text ? .text(result.text) : .image(png: png, ocr: recognized?.text),
             source: Self.source(context),
-            subtitle: classification.decision == .text ? "Text · \(preview)" : (preview.isEmpty ? "Image" : "Image · \(preview)")
+            subtitle: classification.decision == .text ? "Text · \(preview)" : Self.imageSubtitle(preview: preview)
         )
     }
 
@@ -369,6 +365,11 @@ struct CapturePipeline: Sendable {
 
     static func source(_ context: FrontmostContext) -> CaptureSource {
         CaptureSource(appName: context.appName, windowTitle: context.windowTitle, url: context.url)
+    }
+
+    static func imageSubtitle(preview: String? = nil) -> String {
+        guard let preview, !preview.isEmpty else { return "Image" }
+        return "Image · \(preview)"
     }
 
     static func firstLine(_ text: String) -> String {

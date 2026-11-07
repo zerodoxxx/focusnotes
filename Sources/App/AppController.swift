@@ -422,7 +422,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     switch try await RegionCapturer.capture(context: context) {
                     case .captured(let capture):
                         let fallback = PendingCapture(trigger: .region, content: .image(png: capture.pngData, ocr: nil),
-                                                      source: CapturePipeline.source(capture.context), subtitle: "Image")
+                                                      source: CapturePipeline.source(capture.context), subtitle: CapturePipeline.imageSubtitle())
                         recordAcquiredImage(fallback)
                         return fallback
                     case .cancelled: break

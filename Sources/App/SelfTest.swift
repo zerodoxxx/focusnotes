@@ -876,7 +876,7 @@ extension AppController {
               jobs.allSatisfy({ $0.prepared.destination.url.pathComponents == note.pathComponents }) else { throw SelfTestFailure("Failed captures were not journaled") }
         guard let imageJob = jobs.first(where: { $0.png != nil }),
               case .image(let imagePath) = imageJob.prepared.capture.content else { throw SelfTestFailure("Image journal record missing") }
-        try Data(png.prefix(3)).write(to: original.assetURL(imagePath))
+        try Data(png.prefix(3)).write(to: CapturePipeline.assetURL(imagePath, vault: original.vault))
         try FileManager.default.removeItem(at: note)
         try header.write(to: note)
         _ = try await original.selfCheck.sessions.start(name: "Replacement session")
