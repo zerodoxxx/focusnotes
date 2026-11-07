@@ -8,7 +8,6 @@ namespace CaptureApp.ModelInstall;
 /// staging directory and resume on the next call. The models directory is replaced only after everything verifies.
 public sealed class ModelInstaller
 {
-    /// Bytes completed out of the total download size.
     public readonly record struct Progress(long CompletedBytes, long TotalBytes)
     {
         public double Fraction => TotalBytes > 0 ? Math.Min(1, (double)CompletedBytes / TotalBytes) : 1;
@@ -75,7 +74,6 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Deletes the installed models and any partial download.
     public void Remove()
     {
         if (Volatile.Read(ref installing) != 0)
@@ -99,7 +97,6 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Free bytes available to the current user on the volume that holds the path.
     public static long VolumeFreeSpace(string path)
     {
         try
@@ -118,7 +115,7 @@ public sealed class ModelInstaller
         var parent = Path.GetDirectoryName(modelsDirectory)!;
         var total = manifest.TotalDownloadBytes;
 
-        // Step 1: staging directory (also creates the parent) and cleanup of backups left by a crash.
+        // Staging directory (also creates the parent) and cleanup of backups left by a crash.
         Directory.CreateDirectory(staging);
         RemoveStaleBackups(parent);
 
@@ -131,7 +128,7 @@ public sealed class ModelInstaller
             }
         }
 
-        // Step 2: work list. Files that already verify are reused and count as completed.
+        // Files that already verify are reused and count as completed.
         var downloads = new List<ModelArtifact>();
         var completed = 0L;
         // .part files of files that no longer need downloading. Removed only after the space check passes.
@@ -158,7 +155,6 @@ public sealed class ModelInstaller
             downloads.Add(artifact);
         }
 
-        // Step 3: disk pre-flight, counting bytes already present in .part files as downloaded.
         // Read-only: nothing is deleted until the space check has passed.
         var remainingBytes = downloads.Sum(item => item.Size - PartialBytes(PartPath(item.Path), item.Size));
         var required = remainingBytes + SpaceHeadroom;
@@ -176,7 +172,6 @@ public sealed class ModelInstaller
         var throttle = new ProgressThrottle(total, progress);
         throttle.Report(completed, force: true);
 
-        // Step 4: downloads in manifest order.
         foreach (var item in downloads)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -189,7 +184,6 @@ public sealed class ModelInstaller
             completed += item.Size;
         }
 
-        // Step 5: bundled license files, verified before they are copied in.
         foreach (var license in manifest.Licenses)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -202,7 +196,7 @@ public sealed class ModelInstaller
             ReplaceByCopy(Path.Combine(staging, license.InstalledName), source);
         }
 
-        // Step 6: everything the app needs is present, and nothing is half-written.
+        // Everything the app needs is present, and nothing is half-written.
         foreach (var name in manifest.RequiredFiles.Concat(manifest.Licenses.Select(license => license.InstalledName)))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -218,7 +212,7 @@ public sealed class ModelInstaller
             throw ModelInstallException.Io("an incomplete download is still present");
         }
 
-        // Step 7: atomic commit. The old directory is kept until the new one is in place. This is the final
+        // The old directory is kept until the new one is in place. This is the final
         // cancellation point before the swap: verified downloads stay in staging and the installed set stays untouched.
         if (!Directory.Exists(staging))
         {
@@ -228,11 +222,9 @@ public sealed class ModelInstaller
         cancellationToken.ThrowIfCancellationRequested();
         Commit(staging, cancellationToken);
 
-        // Step 8: final progress.
         throttle.Report(total, force: true);
     }
 
-    /// Downloads one file, resuming from its .part file, with retries on network errors.
     private async Task FetchAsync(ModelArtifact item, Action<long> progress, CancellationToken cancellationToken)
     {
         var part = PartPath(item.Path);
@@ -282,12 +274,11 @@ public sealed class ModelInstaller
                 throw ModelInstallException.ChecksumMismatch(item.Path);
             }
 
-            // Corrupt bytes: download the file again from the start, once.
             checksumRetried = true;
         }
     }
 
-    /// Swaps the staged directory in for the models directory. On failure the old directory is restored.
+    /// On failure the old directory is restored.
     private void Commit(string staging, CancellationToken cancellationToken)
     {
         var parent = Path.GetDirectoryName(modelsDirectory)!;
@@ -376,7 +367,7 @@ public sealed class ModelInstaller
         return Convert.ToHexString(SHA256.HashData(stream)).Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// Bytes already in the partial file. Read-only: 0 when the file is missing or larger than expected.
+    /// Read-only: 0 when the file is missing or larger than expected.
     private static long PartialBytes(string part, long expectedSize)
     {
         var info = new FileInfo(part);
@@ -427,7 +418,7 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Names of the staging entries. Creation and cleanup both go through here so they cannot drift apart.
+    /// Creation and cleanup both go through here so they cannot drift apart.
     private static class StagingLayout
     {
         public const string DownloadDirectory = "models.download";
@@ -443,8 +434,6 @@ public sealed class ModelInstaller
         public static string NewBackup(string parent) => Path.Combine(parent, BackupPrefix + Guid.NewGuid());
     }
 
-    /// Shares one progress callback between the transport and the installer, and limits it to about
-    /// ten calls per second unless forced.
     private sealed class ProgressThrottle(long total, Action<Progress> callback)
     {
         private readonly object gate = new();
