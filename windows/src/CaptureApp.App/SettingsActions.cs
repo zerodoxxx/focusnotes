@@ -16,7 +16,6 @@ internal static class SettingsActions
         manual.IsChecked = controller.Settings.UpdatesChoice == UpdatesChoice.Manual;
     }
 
-    /// Runs a shortcut recorder with the global hotkeys released, then registers them again.
     public static void WithHotkeysPaused(AppController controller, Action action)
     {
         controller.PauseHotkeys();
