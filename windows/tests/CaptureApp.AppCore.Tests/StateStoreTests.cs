@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using CaptureApp.AppCore;
@@ -207,9 +209,22 @@ public sealed class StateStoreTests
     {
         if (OperatingSystem.IsWindows())
         {
-            using (new FileStream(url, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            // Deny only reading: a sharing lock would also block the store's temp-file replace, so an
+            // unguarded mutation would fail anyway instead of overwriting the pins.
+            var file = new FileInfo(url);
+            var denyRead = new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.ReadData, AccessControlType.Deny);
+            var security = file.GetAccessControl();
+            security.AddAccessRule(denyRead);
+            file.SetAccessControl(security);
+            try
             {
                 body();
+            }
+            finally
+            {
+                security = file.GetAccessControl();
+                security.RemoveAccessRule(denyRead);
+                file.SetAccessControl(security);
             }
             return;
         }
