@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 
 if [[ $# -gt 1 ]]; then
     printf 'Usage: %s [debug|release]\n' "$0" >&2
@@ -18,20 +19,9 @@ case "$CONFIGURATION" in
         ;;
 esac
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-        BUNDLE_PREFIX) BUNDLE_PREFIX="$value" ;;
-        VERSION) VERSION="$value" ;;
-        BUILD) BUILD="$value" ;;
-        MIN_MACOS) MIN_MACOS="$value" ;;
-        GITHUB_REPO) GITHUB_REPO="$value" ;;
-        SPARKLE_PUBLIC_ED_KEY) SPARKLE_PUBLIC_ED_KEY="$value" ;;
-    esac
-done < "$ROOT_DIR/Config/app.env"
+app_env_load "$ROOT_DIR/Config/app.env" APPNAME BUNDLE_PREFIX VERSION BUILD MIN_MACOS GITHUB_REPO SPARKLE_PUBLIC_ED_KEY
 
-APPNAME_LOWER="$(printf '%s' "$APPNAME" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed 's/[^a-z0-9-]/-/g')"
-BUNDLE_ID="$BUNDLE_PREFIX.$APPNAME_LOWER"
+BUNDLE_ID="$(app_bundle_id "$BUNDLE_PREFIX" "$APPNAME")"
 BUNDLE_PATH="$ROOT_DIR/build/$APPNAME.app"
 CONTENTS_PATH="$BUNDLE_PATH/Contents"
 PLIST_PATH="$CONTENTS_PATH/Info.plist"
@@ -157,11 +147,11 @@ fi
 # Signing. SIGN_ADHOC=1 forces an ad-hoc signature. Otherwise an explicit
 # SIGN_IDENTITY is used as-is (with SIGN_KEYCHAIN if given); with neither set, the
 # dedicated release keychain is used when it exists. Anything else is ad-hoc.
-DEFAULT_SIGN_KEYCHAIN="$HOME/Library/Keychains/$APPNAME-signing.keychain-db"
+DEFAULT_SIGN_KEYCHAIN="$(app_signing_keychain "$APPNAME")"
 if [[ "${SIGN_ADHOC:-0}" == 1 ]]; then
     SIGN_IDENTITY=""
 elif [[ -z "${SIGN_IDENTITY:-}" && -f "$DEFAULT_SIGN_KEYCHAIN" ]]; then
-    SIGN_IDENTITY="$APPNAME Release Signing"
+    SIGN_IDENTITY="$(app_signing_cn "$APPNAME")"
     SIGN_KEYCHAIN="$DEFAULT_SIGN_KEYCHAIN"
 fi
 

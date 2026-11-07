@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/app-path-safety.XXXXXX")"
 TEMP_ROOT="$(cd "$TEMP_ROOT" && pwd -P)"
 trap 'rm -rf "$TEMP_ROOT"' EXIT
@@ -11,8 +12,9 @@ FAKE_BIN="$TEMP_ROOT/fake-bin"
 SWIFT_BIN="$TEMP_ROOT/swift-bin"
 MOCK_LOG="$TEMP_ROOT/mock.log"
 export FIXTURE
-mkdir -p "$FIXTURE/scripts" "$FIXTURE/Config" "$FIXTURE/assets/icons" "$FIXTURE/licenses" "$FAKE_BIN" "$SWIFT_BIN" "$TEMP_ROOT/outside.app" "$TEMP_ROOT/home"
+mkdir -p "$FIXTURE/scripts" "$FIXTURE/scripts/lib" "$FIXTURE/Config" "$FIXTURE/assets/icons" "$FIXTURE/licenses" "$FAKE_BIN" "$SWIFT_BIN" "$TEMP_ROOT/outside.app" "$TEMP_ROOT/home"
 cp "$SCRIPT_DIR/build-app.sh" "$SCRIPT_DIR/run-app.sh" "$SCRIPT_DIR/check-app-path.py" "$FIXTURE/scripts/"
+cp "$SCRIPT_DIR/lib/app-env.sh" "$FIXTURE/scripts/lib/"
 touch "$SWIFT_BIN/App" "$SWIFT_BIN/EmbedHelper"
 touch "$FIXTURE/assets/icons/AppIcon.icns" "$FIXTURE/assets/icons/MenuBarIcon.pdf" "$FIXTURE/assets/icons/MenuBarIcon-active.pdf"
 touch "$FIXTURE/licenses/Apache-2.0.txt" "$FIXTURE/licenses/EmbeddingGemma2-NOTICE.txt" "$FIXTURE/LICENSE" "$FIXTURE/THIRD_PARTY_NOTICES.md"
@@ -105,12 +107,7 @@ fail() {
     exit 1
 }
 
-CURRENT_APPNAME=""
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    if [[ "$key" == "APPNAME" ]]; then
-        CURRENT_APPNAME="$value"
-    fi
-done < "$SCRIPT_DIR/../Config/app.env"
+CURRENT_APPNAME="$(APPNAME=""; app_env_load "$SCRIPT_DIR/../Config/app.env" APPNAME; printf '%s' "$APPNAME")"
 [[ -n "$CURRENT_APPNAME" ]] || fail "Config/app.env does not define APPNAME"
 
 # A traversal name must fail before Swift runs and preserve the path it would
