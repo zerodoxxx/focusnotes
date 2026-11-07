@@ -72,6 +72,9 @@ public sealed class CaptureCoordinator
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
     public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
+    /// The capture a hotkey press reopens the title picker for: the staged toast's or retry warning's capture, same trigger, toast still shown, in a session.
+    public PendingCapture? PickerReopenTarget(CaptureTrigger trigger, bool fromHotkey, bool outsideSession, bool stagedToastVisible) =>
+        !outsideSession && fromHotkey && (PendingWithToast ?? PendingWithRetryWarning) is { } pending && pending.Trigger == trigger && stagedToastVisible ? pending : null;
     internal Task? CommitTail => Pipeline.Unsaved.Tail;
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
@@ -232,7 +235,7 @@ public sealed class CaptureCoordinator
         // Resolve the outside fallback before preparation: title matching can pick
         // another Inbox, and preparing then overriding still performs routing work.
         if (destination is null && noteTitle is null && capture.OutsideSession)
-            destination = new(Pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+            destination = Router.InboxDestination(Pipeline.Vault);
         return capture.Png is not null
             ? Pipeline.PrepareImage(capture.Png, capture.Source, noteTitle, capture.Ocr, capture.Id, capture.CreatedAt, destination)
             : Pipeline.PrepareText(capture.Content.Value, capture.Source, noteTitle, null, capture.Id, capture.CreatedAt, destination);
@@ -622,7 +625,7 @@ public sealed class CaptureCoordinator
 
     public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
     {
-        var parent = "Sessions/" + new NoteFolder(folder).RawValue;
+        var parent = Vault.SessionsDirectoryName + "/" + new NoteFolder(folder).RawValue;
         return (await SuggestionSnapshotAsync(true).ConfigureAwait(false)).Where(s =>
             string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
     }

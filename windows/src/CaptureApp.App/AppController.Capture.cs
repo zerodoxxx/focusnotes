@@ -35,7 +35,7 @@ internal sealed partial class AppController
         }
 
         // The staged toast, or a retry-pending capture's warning, reopens the picker.
-        if (!outsideSession && fromHotkey && (Coordinator.PendingWithToast ?? Coordinator.PendingWithRetryWarning) is { } pending && pending.Trigger == trigger && host.StagedToastVisible)
+        if (Coordinator.PickerReopenTarget(trigger, fromHotkey, outsideSession, host.StagedToastVisible) is { } pending)
         {
             ShowTitlePicker(pending.Id);
             return;
