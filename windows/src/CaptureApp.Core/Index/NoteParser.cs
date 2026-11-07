@@ -17,6 +17,7 @@ public sealed record ParsedNote(string Title, IReadOnlyList<ParsedBlock> Blocks)
 public static class NoteParser
 {
     private const int ChunkLength = 2000;
+    private static readonly string NoteMarkerPattern = "^" + Regex.Escape(CaptureFormat.NoteMarkerPrefix) + "([0-9a-fA-F-]{36}) at=(.+)" + Regex.Escape(CaptureFormat.MarkerSuffix) + "$";
     private sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
     private sealed record Marker(Guid Id, DateTimeOffset? Date, string? App);
     public static ParsedNote Parse(string contents, string notePath, string titleFallback, TimeZoneInfo timeZone, string? assetRootUrl = null)
@@ -239,7 +240,7 @@ public static class NoteParser
 
     private static Marker? ParseNoteMarker(string line)
     {
-        var match = Regex.Match(line, @"^<!-- note:([0-9a-fA-F-]{36}) at=(.+) -->$");
+        var match = Regex.Match(line, NoteMarkerPattern);
         return match.Success && Guid.TryParseExact(match.Groups[1].Value, "D", out var id) && TryStamp(match.Groups[2].Value, out var date) ? new(id, date, null) : null;
     }
 
@@ -265,7 +266,7 @@ public static class NoteParser
         return new(id, date, app.Length == 0 ? null : app);
     }
 
-    private static bool TryStamp(string text, out DateTimeOffset date) => DateTimeOffset.TryParseExact(text, ["yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss'Z'"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out date);
+    private static bool TryStamp(string text, out DateTimeOffset date) => DateTimeOffset.TryParseExact(text, [CaptureFormat.IsoOffsetStampPattern, CaptureFormat.IsoUtcStampPattern], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out date);
     private static (DateTimeOffset Date, string? App, string? Window)? ParseHeader(string text, TimeZoneInfo zone)
     {
         var parts = text.Split(" · ", StringSplitOptions.None);
@@ -323,7 +324,7 @@ public static class NoteParser
 
             try
             {
-                var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Vault.DecodeFilePath(notePath))!, link.Replace('/', Path.DirectorySeparatorChar)));
+                var resolved = Path.GetFullPath(Vault.UrlUnder(Path.GetDirectoryName(Vault.DecodeFilePath(notePath))!, link));
                 var relative = Vault.RelativeUnder(resolved, Vault.DecodeFilePath(assetRoot));
                 return relative is null ? null : Vault.AssetsDirectoryName + "/" + relative;
             }

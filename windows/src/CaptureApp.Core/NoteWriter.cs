@@ -23,7 +23,7 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             foreach (var prefix in new[]
             {
                 CaptureFormat.MarkerPrefix,
-                "<!-- note:",
+                CaptureFormat.NoteMarkerPrefix,
                 CaptureFormat.SubheadingMarkerPrefix
             }
 

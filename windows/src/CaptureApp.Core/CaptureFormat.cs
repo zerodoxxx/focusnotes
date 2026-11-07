@@ -6,12 +6,15 @@ namespace CaptureApp.Core;
 public static class CaptureFormat
 {
     public const string MarkerPrefix = "<!-- capture:";
+    public const string NoteMarkerPrefix = "<!-- note:";
     public const string MarkerSuffix = " -->";
     public const int CaptureIdLength = 36;
     public const string SubheadingMarkerPrefix = "<!-- subheading:";
     public const string SourceLinkPrefix = "[Source](<";
     public const string ImageLinkPrefix = "![](";
     public const string IsoStampPattern = "yyyy-MM-dd'T'HH:mm:ss";
+    public const string IsoUtcStampPattern = IsoStampPattern + "'Z'";
+    public const string IsoOffsetStampPattern = IsoStampPattern + "zzz";
     public static string CaptureMarker(Guid id) => $"{MarkerPrefix}{id:D}{MarkerSuffix}";
     public static string MarkerKeyword(CaptureContentKind kind) => kind == CaptureContentKind.Note ? "note:" : kind == CaptureContentKind.Subheading ? "subheading:" : "capture:";
     public static bool IsHeadingKind(CaptureContentKind kind) => kind is CaptureContentKind.Note or CaptureContentKind.Subheading;
@@ -27,7 +30,7 @@ public static class CaptureFormat
         var stamp = LocalStamp(capture.CreatedAt, IsoStampPattern, timeZone);
         if (capture.Content.Kind == CaptureContentKind.Note)
         {
-            return $"<!-- note:{id} at={stamp} -->\n\n{NoteBody(capture.Content.Value)}\n";
+            return $"{NoteMarkerPrefix}{id} at={stamp}{MarkerSuffix}\n\n{NoteBody(capture.Content.Value)}\n";
         }
 
         var body = capture.Content.Kind == CaptureContentKind.Image ? ImageBody(capture.Content.Value, noteRelativeDir, assetPathPrefix) : TextBody(capture.Content.Value);
