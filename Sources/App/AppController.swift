@@ -85,7 +85,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             String(ProcessInfo.processInfo.processIdentifier),
             Bundle.main.bundlePath,
         ]
-        try? process.run()
+        do { try process.run() } catch {
+            Logger(subsystem: AppInfo.bundleIdentifier, category: "startup")
+                .error("Relaunch helper failed to launch (\(AppErrorLog.summary(error), privacy: .public))")
+        }
     }
 }
 
@@ -1136,11 +1139,11 @@ final class AppController: NSObject, NSMenuDelegate {
                 switch action {
                 case .primary: return { [weak controller] in controller?.copy(hit) }
                 case .open: return { [weak controller] in
-                    do { _ = NSWorkspace.shared.open(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
+                    do { controller?.openNote(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
                     catch { controller?.report(error, title: "Couldn't open note") }
                 }
                 case .reveal: return { [weak controller] in
-                    do { NSWorkspace.shared.activateFileViewerSelecting([try pipeline.vault.noteLocation(forID: hit.notePath).url]) }
+                    do { controller?.revealNote(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
                     catch { controller?.report(error, title: "Couldn't reveal note") }
                 }
                 }
@@ -1226,6 +1229,10 @@ final class AppController: NSObject, NSMenuDelegate {
         retryWarningShown = false
         pendingToastID = nil
         onToast?(value)
+        presentToast(value)
+    }
+
+    private func presentToast(_ value: Toast) {
         if presentsUI, !isTerminating { toast.show(value) }
     }
 
@@ -1252,20 +1259,20 @@ final class AppController: NSObject, NSMenuDelegate {
                             hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
         onToast?(warning)
         retryWarningShown = true
-        if presentsUI, !isTerminating { toast.show(warning) }
+        presentToast(warning)
     }
 
     private func showPreviousCaptureNotice(_ text: String) {
         let notice = Toast(style: .success, title: text)
         onToast?(notice)
-        if presentsUI, !isTerminating { toast.show(notice) }
+        presentToast(notice)
     }
 
     private func showPreviousCaptureRecoveryNotice(destination: Destination?) {
         let location = destination.map { "Recovery will retry: \($0.title)." } ?? "Recovery will retry the staged capture."
         let warning = Toast(style: .warning, title: "Couldn't save the previous capture", subtitle: location)
         onToast?(warning)
-        if presentsUI, !isTerminating { toast.show(warning) }
+        presentToast(warning)
     }
 
     private func reportExternalRegistryProblem(_ error: Error, forSave: Bool) {
