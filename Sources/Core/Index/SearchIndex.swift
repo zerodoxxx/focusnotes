@@ -118,7 +118,7 @@ public actor SearchIndex {
     }
 
     public func reindex(note: URL) throws {
-        guard note.pathExtension.lowercased() == "md", let location = try? vault.managedLocation(of: note) else {
+        guard Vault.isNoteFile(note), let location = try? vault.managedLocation(of: note) else {
             throw IndexError.invalidNote
         }
         let path = location.note.id

@@ -139,7 +139,7 @@ enum NoteFile {
             var noteSnapshot: VaultFileSnapshot? = nil
             var noteIsChanging = false
             if includeNoteMetadata, !isDirectory, !name.hasPrefix("."),
-               !name.hasPrefix("~$"), URL(fileURLWithPath: name).pathExtension.lowercased() == "md" {
+               !name.hasPrefix("~$"), Vault.isNoteFile(atPath: name) {
                 do {
                     noteSnapshot = try managedNoteMetadata(in: directories.descriptor, name: name)
                 } catch let error as POSIXError where error.code == .EAGAIN {

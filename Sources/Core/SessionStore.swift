@@ -174,7 +174,7 @@ public actor SessionStore {
         }
 
         let existing = matches.first
-        let notePath = existing?.notePath ?? "\(directory)/\(stem).md"
+        let notePath = existing?.notePath ?? "\(directory)/\(Vault.noteFileName(stem))"
         return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
     }
 
@@ -220,7 +220,7 @@ public actor SessionStore {
         do {
             _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
         } catch { throw SessionStoreError.invalidRename }
-        var renamed = Session(name: title, notePath: directory + "/" + stem + ".md", startedAt: now())
+        var renamed = Session(name: title, notePath: directory + "/" + Vault.noteFileName(stem), startedAt: now())
         renamed.resumed = true
         return renamed
     }

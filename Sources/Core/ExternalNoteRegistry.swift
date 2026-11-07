@@ -377,7 +377,7 @@ public final class ExternalNoteRegistry: @unchecked Sendable {
 
     private static func isSafeRelativeMarkdownPath(_ path: String) -> Bool {
         guard !path.isEmpty, path.utf8.count <= 4096, !path.hasPrefix("/"), !path.contains("\0"),
-              URL(fileURLWithPath: path).pathExtension.lowercased() == "md" else { return false }
+              Vault.isNoteFile(atPath: path) else { return false }
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         return !components.isEmpty && components.allSatisfy { component in
             !component.isEmpty && !NoteTitle.isDotComponent(String(component)) &&

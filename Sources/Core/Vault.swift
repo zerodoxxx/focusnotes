@@ -198,6 +198,10 @@ enum VaultPathKind: Equatable {
 /// Explicitly registered HOME notes are listed separately.
 public struct Vault: Sendable {
     public static let inboxFileName = "Inbox.md"
+    static let noteExtension = "md"
+    static func noteFileName(_ stem: String) -> String { "\(stem).\(noteExtension)" }
+    static func isNoteFile(_ url: URL) -> Bool { url.pathExtension.lowercased() == noteExtension }
+    static func isNoteFile(atPath path: String) -> Bool { isNoteFile(URL(fileURLWithPath: path)) }
     public static let inboxTitle = "Inbox"
     public static let sessionsDirectoryName = "Sessions"
     public static let assetsDirectoryName = "assets"
@@ -315,10 +319,10 @@ public struct Vault: Sendable {
     public func uniqueNoteURL(forTitle title: String, excluding reserved: Set<URL> = []) -> URL {
         let stem = NoteTitle.fileStem(for: title)
         let fm = FileManager.default
-        var candidate = root.appendingPathComponent("\(stem).md")
+        var candidate = root.appendingPathComponent(Self.noteFileName(stem))
         var suffix = 2
         while fm.fileExists(atPath: candidate.path) || reserved.contains(candidate) {
-            candidate = root.appendingPathComponent("\(stem) \(suffix).md")
+            candidate = root.appendingPathComponent(Self.noteFileName("\(stem) \(suffix)"))
             suffix += 1
         }
         return candidate
@@ -348,7 +352,7 @@ public struct Vault: Sendable {
     public func deferredNoteLocation(for pathName: NotePathName) throws -> VaultNoteLocation {
         try validate(pathName)
         let root = pathName.scope == .vault ? self.root : homeRoot
-        let noteRelativePath = "\(pathName.relativePath).md"
+        let noteRelativePath = Self.noteFileName(pathName.relativePath)
         let url = append(relativePath: noteRelativePath, to: root)
         if pathName.scope == .home,
            let vaultRelativePath = relativePath(url, under: self.root) {
@@ -390,7 +394,7 @@ public struct Vault: Sendable {
             components[index] = existing
         }
 
-        let requestedFileName = "\(pathName.leafName).md"
+        let requestedFileName = Self.noteFileName(pathName.leafName)
         let existingFileName = try matchingName(requestedFileName, in: parent, anchor: anchor)
         let leafFileName = existingFileName ?? requestedFileName
         let canonicalRelativePath = (parent + [leafFileName]).joined(separator: "/")
@@ -699,7 +703,7 @@ public struct Vault: Sendable {
                 throw POSIXError(.EPERM)
             }
             guard managed.note.id == id,
-                  URL(fileURLWithPath: managed.relativePath).pathExtension.lowercased() == "md" else {
+                  Self.isNoteFile(atPath: managed.relativePath) else {
                 throw POSIXError(.EPERM)
             }
             return managed
@@ -710,7 +714,7 @@ public struct Vault: Sendable {
         let managed = try managedLocation(of: url)
         guard managed.scope == .vault, managed.relativePath == id,
               managed.note.id == id,
-              URL(fileURLWithPath: managed.relativePath).pathExtension.lowercased() == "md" else {
+              Self.isNoteFile(atPath: managed.relativePath) else {
             throw POSIXError(.EPERM)
         }
         return managed
@@ -784,7 +788,7 @@ public struct Vault: Sendable {
         if components[0].caseInsensitiveCompare(Self.assetsDirectoryName) == .orderedSame {
             return components.count >= 2 ? .asset : .ignored
         }
-        return URL(fileURLWithPath: leaf).pathExtension.lowercased() == "md" ? .note : .ignored
+        return Self.isNoteFile(atPath: leaf) ? .note : .ignored
     }
 
     /// Title from a leading `# ` line within the first 4 KB, else the file stem.
