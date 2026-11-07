@@ -149,7 +149,7 @@ extension AppController {
             guard blocks.filter({ $0.kind != .image }).allSatisfy({ keys.contains($0.key) }) else {
                 throw SelfTestFailure("Text backfill missed captures")
             }
-            semanticImageVectors = keys.filter { $0 == imageHit.embeddingKey || $0 == imageHit.embeddingKey + "#ocr" }.count
+            semanticImageVectors = keys.filter { $0 == imageHit.embeddingKey || $0 == SemanticIndexer.ocrKey(for: imageHit.embeddingKey) }.count
             if SemanticIndexer.imagesAllowed && semanticImageVectors != 2 {
                 throw SelfTestFailure("Image and OCR vectors were not both indexed")
             }

@@ -84,14 +84,14 @@ func checkNotesFolder() async throws {
         throw SelfTestFailure("Restoring the original folder did not restore its state")
     }
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: original.path)
-    guard !leftovers.contains(where: { $0.hasPrefix(".focusnotes-write-test-") }) else {
+    guard !leftovers.contains(where: { $0.hasPrefix(NotesFolder.writeTestPrefix) }) else {
         throw SelfTestFailure("Notes folder validation left its probe behind")
     }
     defaults.removePersistentDomain(forName: suite)
     guard try NotesFolder.stateDirectory(for: other, base: base) == otherState else {
         throw SelfTestFailure("Resetting preferences reassigned existing vault state")
     }
-    let marker = base.appendingPathComponent("legacy-vault-root.json")
+    let marker = base.appendingPathComponent(NotesFolder.legacyVaultRootMarkerName)
     for contents in ["{ invalid", "null", "\"\""] {
         try Data(contents.utf8).write(to: marker)
         try await expectRejection(DecodingError.self, "Invalid state mapping was accepted", matching: { error in

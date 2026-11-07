@@ -1,6 +1,7 @@
 import AppKit
 import EmbedKit
 import ModelInstall
+import os
 
 /// Status-menu entry and consent dialogs for the opt-in semantic search model download.
 /// Nothing touches the network except an explicit Download or Resume choice.
@@ -24,6 +25,7 @@ final class SemanticModelsMenu {
     private var progress: ModelInstaller.Progress?
     private var installed = false
     private var installer: ModelInstaller?
+    private static var loggedInstallerFailure = false
 
     init(semantic: SemanticIndexer, target: AnyObject, download: Selector, remove: Selector,
          changed: @escaping @MainActor () -> Void,
@@ -106,7 +108,13 @@ final class SemanticModelsMenu {
         case .removing:
             return "Removing Models…"
         case .idle:
-            if (try? makeInstaller())?.hasPartialDownload == true {
+            let installer: ModelInstaller?
+            do { installer = try makeInstaller() }
+            catch {
+                Self.logInstallerFailureOnce(error)
+                installer = nil
+            }
+            if installer?.hasPartialDownload == true {
                 return "Resume Semantic Search…"
             }
             return "Enable Semantic Search…"
@@ -125,6 +133,13 @@ final class SemanticModelsMenu {
         let created = ModelInstaller(modelsDirectory: semantic.modelsDirectory, bundledResources: resources)
         installer = created
         return created
+    }
+
+    /// The title is rebuilt on every menu refresh, so a persistent failure is logged once per process.
+    private static func logInstallerFailureOnce(_ error: Error) {
+        guard !loggedInstallerFailure else { return }
+        loggedInstallerFailure = true
+        Logger(subsystem: AppInfo.bundleIdentifier, category: "models").error("Model installer unavailable (\(AppErrorLog.summary(error), privacy: .public))")
     }
 
     private func confirmDownload() {

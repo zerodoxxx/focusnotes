@@ -16,6 +16,9 @@ enum NotesFolder {
         let canonicalPath: String?
     }
 
+    static let legacyVaultRootMarkerName = "legacy-vault-root.json"
+    static let writeTestPrefix = ".focusnotes-write-test-"
+
     static func configuredRoot(defaults: UserDefaults = .standard) -> URL {
         if let path = defaults.string(forKey: OnboardingDefaults.vaultPath) {
             return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
@@ -32,7 +35,7 @@ enum NotesFolder {
         let reachable = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         let canonical = reachable ? root.standardizedFileURL.resolvingSymlinksInPath().path : nil
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let marker = base.appendingPathComponent("legacy-vault-root.json")
+        let marker = base.appendingPathComponent(legacyVaultRootMarkerName)
         let legacy: LegacyRoot
         do {
             let decoded = try JSONDecoder().decode(LegacyRoot.self, from: Data(contentsOf: marker))
@@ -71,7 +74,7 @@ enum NotesFolder {
         let folder = root.standardizedFileURL.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Exercise the write rather than relying only on permission bits or ACLs.
-        let probe = folder.appendingPathComponent(".focusnotes-write-test-\(UUID().uuidString)")
+        let probe = folder.appendingPathComponent(writeTestPrefix + UUID().uuidString)
         try Data().write(to: probe, options: .withoutOverwriting)
         defer { try? FileManager.default.removeItem(at: probe) }
         try FileManager.default.removeItem(at: probe)
