@@ -144,6 +144,9 @@ func checkManifestSync() throws {
     if manifest.totalDownloadBytes != 492_067_251 {
         mismatches.append("totalDownloadBytes: manifest=\(manifest.totalDownloadBytes) expected=492067251")
     }
+    if !Embedder.modelID.hasPrefix("\(manifest.huggingFaceRepo)@\(manifest.huggingFaceRevision):") {
+        mismatches.append("Embedder.modelID \(Embedder.modelID) does not start with \(manifest.huggingFaceRepo)@\(manifest.huggingFaceRevision):")
+    }
 
     guard mismatches.isEmpty else {
         for mismatch in mismatches { print("FAIL manifest sync: \(mismatch)") }

@@ -5,6 +5,9 @@ public enum EmbedProtocol {
     public static let supportedDimensions: [Int] = [128, 256, 512, 768]
     public static let defaultDimensions = 256
     public static let maxDimensions = supportedDimensions.max()!
+    public static let maxMessageBytes = 64 * 1024 * 1024
+    public static let defaultIdleSeconds: Double = 60
+    public static let maxIdleSeconds: Double = 86_400
 }
 
 /// One JSON object per line. All requests and responses carry the same ID.

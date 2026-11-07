@@ -10,9 +10,9 @@ public final class EmbedClient: Sendable {
     private let transport: HelperTransport
     private let latestQueries = LatestQueryQueue()
 
-    public init(helperExecutable: URL, modelsDirectory: URL, dimensions: Int = 256,
-                idleSeconds: Double = 60, requestTimeout: Double = 120) throws {
-        guard EmbedProtocol.supportedDimensions.contains(dimensions), idleSeconds.isFinite, idleSeconds > 0, idleSeconds <= 86_400,
+    public init(helperExecutable: URL, modelsDirectory: URL, dimensions: Int = EmbedProtocol.defaultDimensions,
+                idleSeconds: Double = EmbedProtocol.defaultIdleSeconds, requestTimeout: Double = 120) throws {
+        guard EmbedProtocol.supportedDimensions.contains(dimensions), idleSeconds.isFinite, idleSeconds > 0, idleSeconds <= EmbedProtocol.maxIdleSeconds,
               requestTimeout.isFinite, requestTimeout > 0, requestTimeout <= 86_400 else {
             throw EmbeddingError.invalid("Invalid client configuration")
         }
@@ -267,7 +267,7 @@ private final class HelperTransport: @unchecked Sendable {
 
     private func exchange(_ request: EmbedRequest, cancellation: TransportCancellation) throws -> EmbedResponse {
         var wire = try JSONEncoder().encode(request); wire.append(10)
-        guard wire.count <= 64 * 1024 * 1024 else { throw EmbeddingError.invalid("Request exceeds 64 MiB") }
+        guard wire.count <= EmbedProtocol.maxMessageBytes else { throw EmbeddingError.invalid("Request exceeds 64 MiB") }
         try start()
         try cancellation.check()
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(timeout * 1_000_000_000)
@@ -289,7 +289,7 @@ private final class HelperTransport: @unchecked Sendable {
             if count < 0 && [EAGAIN, EINTR].contains(errno) { continue }
             guard count > 0 else { throw EmbeddingError.transport("Helper stdout closed") }
             pending.append(contentsOf: bytes.prefix(count))
-            guard pending.count <= 64 * 1024 * 1024 else { throw EmbeddingError.transport("Helper response exceeds 64 MiB") }
+            guard pending.count <= EmbedProtocol.maxMessageBytes else { throw EmbeddingError.transport("Helper response exceeds 64 MiB") }
         }
         let newline = pending.firstIndex(of: 10)!
         let line = Data(pending[..<newline]); pending.removeSubrange(...newline)
