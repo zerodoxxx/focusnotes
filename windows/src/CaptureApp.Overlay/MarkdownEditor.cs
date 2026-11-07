@@ -47,7 +47,6 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
     public string Head(int length) => Inner.Document.GetText(0, Math.Min(length, Inner.Document.TextLength));
     /// <summary>True when the line reveals editable Markdown syntax; task markers always remain checkboxes.</summary>
     public bool IsSyntaxRevealed(int lineNumber) => lineNumber >= activeFirst && lineNumber <= activeLast;
-    /// <summary>Task checkboxes currently rendered in the laid-out lines.</summary>
     public int RenderedCheckboxes => Inner.TextArea.TextView.VisualLinesValid
         ? Inner.TextArea.TextView.VisualLines.Sum(line => line.Elements.OfType<InlineObjectElement>().Count(element => element.Element is CheckboxVisual))
         : 0;
@@ -421,7 +420,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         var doc = Inner.Document; var offset = line.Offset + index;
         if (line.IsDeleted || offset >= doc.TextLength) return;
         var replacement = doc.GetCharAt(offset) == ' ' ? "x" : " ";
-        doc.UndoStack.StartUndoGroup(); // One undo step per toggle.
+        doc.UndoStack.StartUndoGroup();
         try { doc.Replace(offset, 1, replacement); } finally { doc.UndoStack.EndUndoGroup(); }
     }
 
@@ -470,7 +469,6 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         if (string.IsNullOrEmpty(text)) return;
         Insert(text.ReplaceLineEndings("\n"));
     }
-    /// <summary>Insert text over the selection as one undo step.</summary>
     private void Insert(string text) => Replace(Inner.SelectionStart, Inner.SelectionLength, text);
 
     private bool TaskMarkerBackspace()
@@ -478,7 +476,6 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         if (Inner.SelectionLength > 0) return false;
         var doc = Inner.Document; var caret = Inner.CaretOffset; var line = doc.GetLineByOffset(caret);
         if (MarkdownParser.TaskMarkerLine().Match(doc.GetText(line)) is not { Success: true } match || caret != line.Offset + match.Length) return false;
-        // Delete "[ ] " and keep the list bullet.
         var start = line.Offset + match.Groups[1].Length + match.Groups[2].Length;
         Replace(start, MarkdownParser.EmptyTaskMarker.Length, "");
         return true;
@@ -551,7 +548,7 @@ public sealed class MarkdownEditor : Grid, ITypingSurface, IDisposable
         {
             if (produced) return -1;
             var line = CurrentContext.VisualLine.FirstDocumentLine;
-            if (owner.ModelFor(line).Kind == LineKind.Fence && !owner.IsLineActive(line)) return -1; // Collapsed delimiter.
+            if (owner.ModelFor(line).Kind == LineKind.Fence && !owner.IsLineActive(line)) return -1;
             return startOffset <= line.Offset ? line.Offset : -1;
         }
         public override VisualLineElement? ConstructElement(int offset)
