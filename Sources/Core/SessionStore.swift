@@ -11,6 +11,10 @@ public struct SessionRenameStage: Codable, Sendable {
     public let original: ManagedFileIdentity
     public let installed: ManagedFileIdentity
     public let temporaryName: String
+
+    public func temporaryPath(in session: Session) -> String {
+        (session.notePath as NSString).deletingLastPathComponent + "/" + temporaryName
+    }
 }
 
 public struct SessionRenameOutcome: Sendable {
@@ -249,8 +253,7 @@ public actor SessionStore {
     }
 
     public func cleanupRenameTemporary(_ stage: SessionRenameStage, in session: Session) throws {
-        let parent = (session.notePath as NSString).deletingLastPathComponent
-        try NoteFile.removeSessionTemporary(in: vault.rootAnchor, relativePath: parent + "/" + stage.temporaryName,
+        try NoteFile.removeSessionTemporary(in: vault.rootAnchor, relativePath: stage.temporaryPath(in: session),
                                             identities: [stage.original, stage.installed])
     }
 

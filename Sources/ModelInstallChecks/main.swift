@@ -1,4 +1,3 @@
-import CryptoKit
 import EmbedKit
 import Foundation
 import ModelInstall
@@ -26,10 +25,6 @@ final class Locked<Value>: @unchecked Sendable {
         defer { lock.unlock() }
         return body(&value)
     }
-}
-
-func sha256Hex(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 func deterministicBytes(count: Int, seed: UInt8) -> Data {
@@ -116,7 +111,7 @@ func makeFixture(in directory: URL) throws -> Fixture {
     for spec in modelSpecs {
         let bytes = deterministicBytes(count: spec.size, seed: spec.seed)
         let url = Fixture.servedURL(spec.path)
-        artifacts.append(ModelArtifact(path: spec.path, url: url, sha256: sha256Hex(bytes), size: Int64(bytes.count)))
+        artifacts.append(ModelArtifact(path: spec.path, url: url, sha256: FileDigest.sha256Hex(bytes), size: Int64(bytes.count)))
         served[url] = bytes
         finalFiles[spec.path] = bytes
     }
@@ -139,10 +134,10 @@ func makeFixture(in directory: URL) throws -> Fixture {
     let runtimeURL = Fixture.servedURL("runtime.tgz")
     served[runtimeURL] = archiveBytes
     let runtime = RuntimeArchive(
-        version: "9.9.9", url: runtimeURL, sha256: sha256Hex(archiveBytes), size: Int64(archiveBytes.count),
-        dylibMember: dylibMember, dylibSHA256: sha256Hex(dylib),
-        licenseMember: licenseMember, licenseSHA256: sha256Hex(runtimeLicense),
-        noticesMember: noticesMember, noticesSHA256: sha256Hex(runtimeNotices))
+        version: "9.9.9", url: runtimeURL, sha256: FileDigest.sha256Hex(archiveBytes), size: Int64(archiveBytes.count),
+        dylibMember: dylibMember, dylibSHA256: FileDigest.sha256Hex(dylib),
+        licenseMember: licenseMember, licenseSHA256: FileDigest.sha256Hex(runtimeLicense),
+        noticesMember: noticesMember, noticesSHA256: FileDigest.sha256Hex(runtimeNotices))
     finalFiles["libonnxruntime.dylib"] = dylib
     finalFiles["ORT-LICENSE"] = runtimeLicense
     finalFiles["ORT-ThirdPartyNotices.txt"] = runtimeNotices
@@ -155,8 +150,8 @@ func makeFixture(in directory: URL) throws -> Fixture {
     finalFiles["model-LICENSE.txt"] = bundledLicense
     finalFiles["model-NOTICE.txt"] = bundledNotice
     let licenses = [
-        BundledLicense(resourceName: "bundled-model-license.txt", sha256: sha256Hex(bundledLicense), installedName: "model-LICENSE.txt"),
-        BundledLicense(resourceName: "bundled-model-notice.txt", sha256: sha256Hex(bundledNotice), installedName: "model-NOTICE.txt"),
+        BundledLicense(resourceName: "bundled-model-license.txt", sha256: FileDigest.sha256Hex(bundledLicense), installedName: "model-LICENSE.txt"),
+        BundledLicense(resourceName: "bundled-model-notice.txt", sha256: FileDigest.sha256Hex(bundledNotice), installedName: "model-NOTICE.txt"),
     ]
 
     let manifest = ModelManifest(

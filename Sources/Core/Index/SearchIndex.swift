@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public struct SyncStats: Sendable, Equatable {
@@ -138,7 +137,7 @@ public actor SearchIndex {
 
     /// The fingerprint comes from the exact bytes OCR consumed, never a later file version.
     public nonisolated static func imageFingerprint(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        ContentDigest.sha256Hex(data)
     }
 
     @discardableResult

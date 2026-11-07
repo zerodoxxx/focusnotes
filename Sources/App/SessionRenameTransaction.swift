@@ -1,5 +1,4 @@
 import Core
-import CryptoKit
 import Foundation
 import os
 
@@ -58,7 +57,7 @@ actor SessionRenameTransaction {
             ManagedFileIdentity(snapshot) == installation?.installed
         }
         static func digest(_ contents: Data) -> String {
-            SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+            ContentDigest.sha256Hex(contents)
         }
     }
 
@@ -259,8 +258,7 @@ actor SessionRenameTransaction {
 
     private func cleanup(_ intent: Intent, completed: Bool = false) async throws {
         for stage in intent.previousInstallations + (intent.installation.map { [$0] } ?? []) {
-            let parent = (intent.session.notePath as NSString).deletingLastPathComponent
-            let path = parent + "/" + stage.temporaryName
+            let path = stage.temporaryPath(in: intent.session)
             do {
                 guard let temporary = try vault.fileSnapshot(relativePath: path, includingContents: false) else { continue }
                 let source = try vault.fileSnapshot(relativePath: intent.oldPath, includingContents: false)

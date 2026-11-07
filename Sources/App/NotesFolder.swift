@@ -1,5 +1,5 @@
 import AppKit
-import CryptoKit
+import Core
 import Foundation
 
 enum OnboardingDefaults {
@@ -58,7 +58,7 @@ enum NotesFolder {
             }
             return base
         }
-        let key = SHA256.hash(data: Data((canonical ?? path).utf8)).map { String(format: "%02x", $0) }.joined()
+        let key = ContentDigest.sha256Hex(Data((canonical ?? path).utf8))
         return base.appendingPathComponent("vaults", isDirectory: true).appendingPathComponent(key, isDirectory: true)
     }
 
