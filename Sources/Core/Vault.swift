@@ -284,7 +284,7 @@ public struct Vault: Sendable {
     /// create a duplicate note.
     private func listedPrefix(in anchor: VaultDirectoryAnchor, relativePath: String) -> Data? {
         do {
-            return try NoteFile.readManagedPrefix(4096, in: anchor, relativePath: relativePath)
+            return try NoteFile.readManagedPrefix(NoteTitle.titlePrefixBytes, in: anchor, relativePath: relativePath)
         } catch let error as POSIXError where error.code == .EAGAIN {
             return Data()
         } catch {
@@ -790,13 +790,6 @@ public struct Vault: Sendable {
     /// Title from a leading `# ` line within the first 4 KB, else the file stem.
     private func title(of url: URL, prefix: Data) -> String {
         let stem = url.deletingPathExtension().lastPathComponent
-        let lineData = prefix.prefix { $0 != 0x0A }
-        var firstLine = String(decoding: lineData, as: UTF8.self)
-        if firstLine.hasPrefix("\u{FEFF}") {
-            firstLine.removeFirst()
-        }
-        guard firstLine.hasPrefix("# ") else { return stem }
-        let title = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
-        return title.isEmpty ? stem : title
+        return NoteTitle.headingTitle(NoteTitle.firstLine(of: prefix)) ?? stem
     }
 }

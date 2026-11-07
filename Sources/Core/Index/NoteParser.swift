@@ -33,8 +33,7 @@ public enum NoteParser {
         var title = titleFallback
         var start = 0
         if lines[0].hasPrefix("# ") {
-            let cleaned = NoteTitle.cleanTitle(String(lines[0].dropFirst(2)))
-            if !cleaned.isEmpty { title = cleaned }
+            if let heading = NoteTitle.headingTitle(lines[0]) { title = heading }
             start = 1
         }
 

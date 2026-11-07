@@ -306,15 +306,10 @@ public actor SessionStore {
     private func readTitle(at notePath: String) throws -> String? {
         let read: Data?
         // A note that keeps changing while it is read falls back to its listed title.
-        do { read = try NoteFile.readManagedPrefix(4096, in: vault.rootAnchor, relativePath: notePath) }
+        do { read = try NoteFile.readManagedPrefix(NoteTitle.titlePrefixBytes, in: vault.rootAnchor, relativePath: notePath) }
         catch let error as POSIXError where error.code == .EAGAIN { return nil }
         guard let prefix = read else { return nil }
-        let firstLineData = prefix.prefix { $0 != 0x0A }
-        var firstLine = String(decoding: firstLineData, as: UTF8.self)
-        if firstLine.hasPrefix("\u{FEFF}") { firstLine.removeFirst() }
-        guard firstLine.hasPrefix("# ") else { return nil }
-        let title = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
-        return title.isEmpty ? nil : title
+        return NoteTitle.headingTitle(NoteTitle.firstLine(of: prefix))
     }
 
     private static func isDatedSession(_ existingStem: String, matching stem: String) -> Bool {

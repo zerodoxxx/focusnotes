@@ -57,6 +57,23 @@ public enum NoteTitle {
         title.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
+    /// Bytes read from a note's start when looking for its `# ` title.
+    static let titlePrefixBytes = 4096
+
+    /// First line of a raw note prefix (bytes before the first LF), without a leading BOM.
+    static func firstLine(of prefix: Data) -> String {
+        var line = String(decoding: prefix.prefix { $0 != 0x0A }, as: UTF8.self)
+        if line.hasPrefix("\u{FEFF}") { line.removeFirst() }
+        return line
+    }
+
+    /// Cleaned title of a `# ` heading line; nil when the line is not a heading or the title is empty.
+    static func headingTitle(_ line: String) -> String? {
+        guard line.hasPrefix("# ") else { return nil }
+        let title = cleanTitle(String(line.dropFirst(2)))
+        return title.isEmpty ? nil : title
+    }
+
     public static func matchKey(_ title: String) -> String {
         cleanTitle(title)
             .folding(
