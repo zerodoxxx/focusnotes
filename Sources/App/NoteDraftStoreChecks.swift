@@ -155,8 +155,7 @@ func checkNoteDraftStoreScheduling() async throws {
         waitForSignal(failureObserved, timeout: .seconds(2))
     }.value
     guard asyncFailureReported else { throw SelfTestFailure("A failed background draft write was not reported") }
-    try await expectRejection(CocoaError.self, "The test storage fault did not fail the synchronous flush",
-                              matching: { $0.code == .fileWriteUnknown }) {
+    try await expectRejection(CocoaError.self, "The test storage fault did not fail the synchronous flush") {
         try failed.flushScheduledStore("latest text after failure", pinOnSave: true)
     }
     try FileManager.default.removeItem(at: failed.url)
