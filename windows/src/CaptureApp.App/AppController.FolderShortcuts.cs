@@ -51,7 +51,7 @@ internal sealed partial class AppController
         var validation = HotkeyValidator.Validate(chord);
         if (!validation.IsValid) { return validation.Error; }
         if (!AltGrGuard.IsSafe(chord)) { return "This combination types a letter on an installed keyboard layout (AltGr)."; }
-        if (Bindings.Any(pair => pair.Value == chord && !Settings.DisabledShortcuts.Contains(pair.Key.ToString())))
+        if (Bindings.Any(pair => pair.Value == chord && !Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(pair.Key))))
             return "This combination is already used by a built-in shortcut.";
         if ((proposed ?? folderBindings).Any(binding => binding.Id != id && binding.Shortcut == chord))
             return "This combination is already used by another folder shortcut.";

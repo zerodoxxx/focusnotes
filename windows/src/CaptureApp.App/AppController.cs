@@ -162,7 +162,7 @@ internal sealed partial class AppController : IDisposable
     }
 
     public string BindingText(HotkeyAction action) =>
-        Settings.DisabledShortcuts.Contains(action.ToString()) ? "" : (Bindings.TryGetValue(action, out var chord) ? chord : HotkeyDefaults.For(action)).DisplayString;
+        Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(action)) ? "" : (Bindings.TryGetValue(action, out var chord) ? chord : HotkeyDefaults.For(action)).DisplayString;
 
     /// Called when a second instance asks the running one to show itself.
     public void ShowRequested() => dispatcher.BeginInvoke(() =>

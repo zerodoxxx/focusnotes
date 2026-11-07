@@ -75,7 +75,7 @@ internal sealed partial class AppController
     }
 
     internal bool IsRegistered(HotkeyAction action) => hotkeys is not null && Setup.ConsentAnswered && !failures.ContainsKey(action)
-                                                       && !Settings.DisabledShortcuts.Contains(action.ToString());
+                                                       && !Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(action));
 
     internal void PauseHotkeys() => hotkeys?.UnregisterAll();
 
@@ -95,7 +95,7 @@ internal sealed partial class AppController
 
         foreach (var (other, existing) in Bindings)
         {
-            if (other != action && existing == chord && !Settings.DisabledShortcuts.Contains(other.ToString()))
+            if (other != action && existing == chord && !Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(other)))
             {
                 return $"{existing.DisplayString} is already used by another shortcut.";
             }
@@ -114,7 +114,7 @@ internal sealed partial class AppController
             if (result.Succeeded)
             {
                 var set = Settings.DisabledShortcuts.ToHashSet(StringComparer.Ordinal);
-                if (set.Remove(action.ToString())) { TrySave(() => Settings.DisabledShortcuts = set); }
+                if (set.Remove(HotkeyActionNames.Of(action))) { TrySave(() => Settings.DisabledShortcuts = set); }
                 LoadBindings();
             }
 

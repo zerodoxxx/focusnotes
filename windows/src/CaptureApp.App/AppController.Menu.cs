@@ -57,7 +57,7 @@ internal sealed partial class AppController
         };
         foreach (var (action, handler) in handlers)
         {
-            if (disabled.Contains(action.ToString())) { continue; }
+            if (disabled.Contains(HotkeyActionNames.Of(action))) { continue; }
             var chord = Bindings[action];
             if (!AltGrGuard.IsSafe(chord))
             {

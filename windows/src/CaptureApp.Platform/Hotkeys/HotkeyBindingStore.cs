@@ -163,7 +163,7 @@ public sealed class HotkeyBindingStore
 }
 
 /// <summary>The persisted name of a built-in action in settings (shortcuts keys and disabled-shortcut entries).</summary>
-internal static class HotkeyActionNames
+public static class HotkeyActionNames
 {
-    internal static string Of(HotkeyAction action) => action.ToString();
+    public static string Of(HotkeyAction action) => action.ToString();
 }

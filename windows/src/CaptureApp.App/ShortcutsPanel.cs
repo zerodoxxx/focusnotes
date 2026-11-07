@@ -48,7 +48,7 @@ internal sealed class ShortcutsPanel : StackPanel
     }
 
     /// Every action is registered or explicitly disabled: the Required step 2 condition.
-    public bool AllResolved => Rows.All(row => controller.Settings.DisabledShortcuts.Contains(row.Action.ToString())
+    public bool AllResolved => Rows.All(row => controller.Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(row.Action))
                                                || !controller.ShortcutFailures.ContainsKey(row.Action) && controller.IsRegistered(row.Action));
 
     public void Refresh()
@@ -63,7 +63,7 @@ internal sealed class ShortcutsPanel : StackPanel
         {
             var (action, label) = Rows[i];
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var isDisabled = disabled.Contains(action.ToString());
+            var isDisabled = disabled.Contains(HotkeyActionNames.Of(action));
             string status;
             string brush = "Secondary";
             if (isDisabled) { status = "Turned off"; }
@@ -99,7 +99,7 @@ internal sealed class ShortcutsPanel : StackPanel
             return;
         }
         var set = controller.Settings.DisabledShortcuts.ToHashSet(StringComparer.Ordinal);
-        if (wasDisabled) { set.Remove(action.ToString()); } else { set.Add(action.ToString()); }
+        if (wasDisabled) { set.Remove(HotkeyActionNames.Of(action)); } else { set.Add(HotkeyActionNames.Of(action)); }
         if (!controller.TrySave(() => controller.Settings.DisabledShortcuts = set)) { Refresh(); return; }
         controller.RegisterHotkeys();
         message.Text = "";
