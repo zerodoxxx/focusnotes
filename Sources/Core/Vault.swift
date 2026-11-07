@@ -724,7 +724,7 @@ public struct Vault: Sendable {
                                                includingContents: includingContents)
     }
 
-    private func noteKind(for relativePath: String) -> NoteKind {
+    static func noteKind(for relativePath: String) -> NoteKind {
         if relativePath == Self.inboxFileName { return .inbox }
         if relativePath.hasPrefix("\(Self.sessionsDirectoryName)/") { return .session }
         return .note
@@ -768,7 +768,7 @@ public struct Vault: Sendable {
                 // metadata; full contents still require a descriptor read.
                 let snapshot = includeNoteMetadata ? entry.noteSnapshot : nil
                 notes.append(VaultNoteFile(id: path, url: root.appendingPathComponent(path),
-                                           kind: noteKind(for: path), snapshot: snapshot,
+                                           kind: Self.noteKind(for: path), snapshot: snapshot,
                                            isChanging: includeNoteMetadata && entry.noteIsChanging))
             }
         }

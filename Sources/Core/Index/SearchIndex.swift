@@ -126,7 +126,7 @@ public actor SearchIndex {
         if location.scope == .home {
             kind = .note
         } else {
-            kind = path == Vault.inboxFileName ? .inbox : (path.hasPrefix("Sessions/") ? .session : .note)
+            kind = Vault.noteKind(for: path)
         }
         guard let snapshot = try vault.fileSnapshot(noteID: path), let contents = snapshot.contents else {
             throw IndexError.invalidNote
@@ -200,10 +200,10 @@ public actor SearchIndex {
                 ORDER BY score, stamp DESC, b.id DESC LIMIT ?
             )
             SELECT \(Self.hitColumns),
-                CASE WHEN b.kind = 'image' AND instr(highlight(blocks_fts, 1, char(2), char(3)), char(2)) = 0
-                    THEN CASE WHEN instr(highlight(blocks_fts, 2, char(2), char(3)), char(2)) > 0
-                        THEN snippet(blocks_fts, 2, char(2), char(3), '…', 12) ELSE 'Image' END
-                    ELSE snippet(blocks_fts, 1, char(2), char(3), '…', 12) END
+                CASE WHEN b.kind = 'image' AND instr(highlight(blocks_fts, 1, char(\(Self.highlightOpen)), char(\(Self.highlightClose))), char(\(Self.highlightOpen))) = 0
+                    THEN CASE WHEN instr(highlight(blocks_fts, 2, char(\(Self.highlightOpen)), char(\(Self.highlightClose))), char(\(Self.highlightOpen))) > 0
+                        THEN snippet(blocks_fts, 2, char(\(Self.highlightOpen)), char(\(Self.highlightClose)), '…', 12) ELSE 'Image' END
+                    ELSE snippet(blocks_fts, 1, char(\(Self.highlightOpen)), char(\(Self.highlightClose)), '…', 12) END
             FROM blocks_fts CROSS JOIN ranked r
             JOIN blocks b ON b.id = blocks_fts.rowid JOIN notes n ON n.id = b.note_id
             WHERE blocks_fts MATCH ? AND blocks_fts.rowid >= (SELECT min(id) FROM ranked)
@@ -348,7 +348,7 @@ public actor SearchIndex {
                 """)
             let fts = try database.prepare("""
                 INSERT INTO blocks_fts(rowid, title, body, ocr)
-                VALUES (?, ?, ?, coalesce((SELECT replace(replace(text, char(2), ''), char(3), '') FROM image_text WHERE asset_path = ?), ''))
+                VALUES (?, ?, ?, coalesce((SELECT replace(replace(text, char(\(Self.highlightOpen)), ''), char(\(Self.highlightClose)), '') FROM image_text WHERE asset_path = ?), ''))
                 """)
             let title = Self.ftsText(parsed.title)
             for (ord, block) in parsed.blocks.enumerated() {
@@ -381,6 +381,9 @@ public actor SearchIndex {
     }
 
     private static let hitColumns = "n.path, n.title, n.kind, b.capture_id, b.kind, b.created_at, b.source_app, b.window_title, b.asset_path, b.id, b.body, b.ord"
+    /// STX/ETX bracket FTS highlight matches.
+    private static let highlightOpen: UInt8 = 2
+    private static let highlightClose: UInt8 = 3
 
     private static func embeddingKey(_ row: SQLiteStatement) -> String {
         (row.text(0) ?? "") + "#" + (row.text(3) ?? "loose-\(row.int(11))")
@@ -414,7 +417,8 @@ public actor SearchIndex {
     }
 
     private static func ftsText(_ text: String) -> String {
-        text.replacingOccurrences(of: "\u{02}", with: "").replacingOccurrences(of: "\u{03}", with: "")
+        text.replacingOccurrences(of: String(UnicodeScalar(Self.highlightOpen)), with: "")
+            .replacingOccurrences(of: String(UnicodeScalar(Self.highlightClose)), with: "")
     }
 
     private static func unmark(_ marked: String) -> (text: String, matches: [Range<String.Index>]) {
@@ -422,8 +426,8 @@ public actor SearchIndex {
         var offsets: [Range<Int>] = []
         var start: Int?
         for byte in marked.utf8 {
-            if byte == 2 { start = bytes.count }
-            else if byte == 3 {
+            if byte == Self.highlightOpen { start = bytes.count }
+            else if byte == Self.highlightClose {
                 if let lower = start, lower < bytes.count { offsets.append(lower..<bytes.count) }
                 start = nil
             } else { bytes.append(byte) }
@@ -444,7 +448,7 @@ public actor SearchIndex {
             do {
                 let candidate = try SQLiteDatabase(url: url)
                 let version = try candidate.prepare("PRAGMA user_version")
-                guard try version.step(), version.int(0) == 4 else { throw IndexError.invalidCache }
+                guard try version.step(), version.int(0) == Int64(Self.cacheVersion) else { throw IndexError.invalidCache }
                 let integrity = try candidate.prepare("PRAGMA quick_check")
                 guard try integrity.step(), integrity.text(0) == "ok" else { throw IndexError.invalidCache }
                 // Catch incomplete schemas even if the version number claims compatibility.
@@ -467,6 +471,8 @@ public actor SearchIndex {
         return fresh
     }
 
+    private static let cacheVersion = 4
+
     private static let schema = """
         BEGIN IMMEDIATE;
         CREATE TABLE notes (
@@ -484,7 +490,7 @@ public actor SearchIndex {
         CREATE INDEX blocks_recent ON blocks(created_at DESC) WHERE capture_id IS NOT NULL;
         CREATE TABLE image_text (asset_path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, fingerprint TEXT NOT NULL, text TEXT NOT NULL);
         CREATE VIRTUAL TABLE blocks_fts USING fts5(title, body, ocr, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3');
-        PRAGMA user_version = 4;
+        PRAGMA user_version = \(SearchIndex.cacheVersion);
         COMMIT;
         """
 }
