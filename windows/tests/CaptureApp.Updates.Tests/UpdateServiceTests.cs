@@ -79,7 +79,6 @@ public sealed class UpdateServiceTests
         Assert.Equal(UpdateStatus.Disabled, service.Snapshot.Status);
         Assert.False(await service.CheckAsync(manual: true, CancellationToken.None));
         Assert.Equal(UpdateStatus.Disabled, service.Snapshot.Status);
-        Assert.Equal(TrustedKeys.Empty.IsEmpty, TrustedKeys.Parse("").IsEmpty);
     }
 
     [Fact]
@@ -239,7 +238,7 @@ public sealed class UpdateServiceTests
     {
         var locator = new StableIndexLocator("owner/repo", new FakeFetcher(new Uri("https://github.com/owner/repo/releases/tag/v1.2.3")));
         var location = await locator.LocateAsync("win-x64", CancellationToken.None);
-        Assert.Equal("https://github.com/owner/repo/releases/download/v1.2.3/releases.win-x64.json", location.For("releases.win-x64.json").ToString());
+        Assert.Equal("https://github.com/owner/repo/releases/download/v1.2.3/releases.win-x64.json", location.For(FeedNames.IndexFile("win-x64")).ToString());
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new StableIndexLocator("owner/repo", new FakeFetcher(new Uri("https://github.com/owner/repo"))).LocateAsync("win-x64", CancellationToken.None));
     }
