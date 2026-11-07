@@ -128,5 +128,15 @@ public sealed class IndexSignatureTests
     [InlineData("nocolon")]
     [InlineData("id:***")]
     [InlineData("id:AAAA")]
+    [InlineData("a:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=;b:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
+    [InlineData("a:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nb:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
     public void MalformedKeyListThrows(string list) => Assert.Throws<FormatException>(() => TrustedKeys.Parse(list));
+
+    [Fact]
+    public void CommittedKeyListParses()
+    {
+        var keys = TrustedKeys.Parse("kbf4ab7d4:rIE1XtVJiExoWRe9BDxQ7kLgyyrRER5FJIBnkWFK4Vk=,k86ab515c:ShR8AP9gQs0IWwYUGHei0R1KkDq7MUdUb2igadx5P2U=");
+        Assert.True(keys.TryGet("kbf4ab7d4", out _));
+        Assert.True(keys.TryGet("k86ab515c", out _));
+    }
 }
