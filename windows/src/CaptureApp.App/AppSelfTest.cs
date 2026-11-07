@@ -13,7 +13,6 @@ using Velopack.Locators;
 
 namespace CaptureApp.App;
 
-/// The platform sections of --self-test: menu, architecture, helper background status, OCR and semantic embedding.
 /// The controller sections (staging, journaling, sessions, notes, shutdown) run in AppCore.Shell.ControllerSelfTest.
 internal static class AppSelfTest
 {

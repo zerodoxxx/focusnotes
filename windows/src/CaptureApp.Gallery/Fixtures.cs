@@ -156,7 +156,6 @@ internal static class Fixtures
         });
         yield return Quick("quick-browse", "Trip planning\nBook the train", v => { v.SetRevealed(true, false); v.BrowseItems = () => BrowseItems; v.ShowBrowse(BrowseItems); }, v =>
         {
-            // Two headers and seven visible rows, pinned section first.
             const double expected = Tokens.CardFieldHeight + Tokens.BorderWidth + Tokens.CardVerticalPadding * 2 + 2 * Tokens.BrowseHeaderHeight + Tokens.BrowseVisibleRows * Tokens.BrowseRowHeight + Tokens.BorderWidth + Tokens.BrowseFooterHeight;
             Require(v.CardSize is { } size && Math.Abs(size.Width - Tokens.BrowseCardWidth) < Tokens.LayoutTolerance && Math.Abs(size.Height - expected) < Tokens.LayoutTolerance, "quick-browse: card size from tokens");
         });
