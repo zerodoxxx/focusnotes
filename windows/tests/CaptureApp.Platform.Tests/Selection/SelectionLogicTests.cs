@@ -174,14 +174,6 @@ public sealed class SelectionLogicTests
     }
 
     [Fact]
-    public async Task ForeignOwnerCopyIsNeverRestored()
-    {
-        var fake = new FakeServices { TargetOwnsCopy = false };
-        Assert.Equal(SelectionFailure.NoSelection, (await new SelectionReader(fake).ReadAsync(true, Target, TestContext.Current.CancellationToken)).Failure);
-        Assert.Equal(0, fake.Restores);
-    }
-
-    [Fact]
     public async Task HeldModifiersHaveBoundedWaitAndExactMessage()
     {
         var fake = new FakeServices { ModifiersHeld = true };

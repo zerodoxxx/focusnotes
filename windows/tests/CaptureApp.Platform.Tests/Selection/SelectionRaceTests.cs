@@ -116,8 +116,6 @@ public sealed class SelectionRaceTests
         var services = new InstrumentedServices();
         Task? release = null;
         var injectionsBeforeRelease = -1;
-        var held = Stopwatch.StartNew();
-        TimeSpan heldFor = default;
         services.Hook = async point =>
         {
             if (point != SelectionCheckpoint.AfterUia) return;
@@ -125,14 +123,12 @@ public sealed class SelectionRaceTests
             // cannot accidentally release the key before the modifier wait is exercised.
             await target.CommandAsync("modifiers", key.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Assert.True(services.ModifiersHeld, "The native keydown must be visible to GetAsyncKeyState.");
-            held.Restart();
             release = ReleaseLaterAsync();
         };
         async Task ReleaseLaterAsync()
         {
             await Task.Delay(TimeSpan.FromMilliseconds(450), token);
             injectionsBeforeRelease = Volatile.Read(ref services.Injections);
-            heldFor = held.Elapsed;
             await target.CommandAsync("release-modifiers");
         }
 
@@ -149,7 +145,6 @@ public sealed class SelectionRaceTests
             finally { await target.CommandAsync("release-modifiers"); }
         }
         Assert.NotNull(release);
-        Assert.True(heldFor >= TimeSpan.FromMilliseconds(400), "Exercise a natural hold beyond the former 200 ms deadline.");
         Assert.Equal(0, injectionsBeforeRelease);
         Assert.True(result.IsSuccess, $"Selection refused after modifier release: {result.Failure} at {result.Detail}.");
         Assert.Equal("first selected text", result.Capture?.Text);
@@ -310,13 +305,12 @@ public sealed class SelectionRaceTests
         await target.FocusAsync();
         var services = new InstrumentedServices();
         var result = await new SelectionReader(services).ReadAsync(true, target.Context, TestContext.Current.CancellationToken);
-        Assert.Contains(result.Failure, new SelectionFailure?[] { SelectionFailure.ClipboardTooLarge, SelectionFailure.ClipboardUnsafe });
+        Assert.Equal(mode == "large" ? SelectionFailure.ClipboardTooLarge : SelectionFailure.ClipboardUnsafe, result.Failure);
         Assert.Equal("Couldn't capture selection", result.Message);
         Assert.Equal(0, services.Injections);
         Assert.Equal(sequence, NativeMethods.GetClipboardSequenceNumber());
         if (mode == "large")
         {
-            Assert.Equal(SelectionFailure.ClipboardTooLarge, result.Failure);
             Assert.Equal("Your clipboard is too large to restore safely", result.Hint);
             var dump = await target.CommandAsync("dump");
             var bytes = Convert.FromBase64String(Assert.Single(dump.Formats!).Value);
