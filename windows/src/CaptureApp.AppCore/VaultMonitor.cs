@@ -165,11 +165,11 @@ public sealed class VaultMonitor : IDisposable
         }
     }
 
-    private static bool IsKnownAssetPath(string path)
+    internal static bool IsKnownAssetPath(string path)
     {
         var components = path.Split('/', StringSplitOptions.None);
         return !path.StartsWith("/", StringComparison.Ordinal) && components.Length >= 2
-            && components[0] == Vault.AssetsDirectoryName
+            && Vault.IsAssetPath(path)
             && components.All(component => component.Length != 0 && component is not ("." or ".."));
     }
 

@@ -348,7 +348,7 @@ public sealed class VaultWatcher : IDisposable
             if (before?.IsDirectory == true || after?.IsDirectory == true)
             {
                 if (before?.IsDirectory == true && (after is null || !before.SameDirectory(after))) { fullSync = true; }
-                if (IsAsset(path)) { Classify(path, notes, assets); }
+                if (Vault.IsAssetPath(path)) { Classify(path, notes, assets); }
             }
             else { Classify(path, notes, assets); }
         }
@@ -360,7 +360,7 @@ public sealed class VaultWatcher : IDisposable
             if (before?.IsDirectory == true || after?.IsDirectory == true)
             {
                 if ((kind & (WatcherChangeTypes.Deleted | WatcherChangeTypes.Renamed)) != 0) { fullSync = true; }
-                if (IsAsset(path)) { Classify(path, notes, assets); }
+                if (Vault.IsAssetPath(path)) { Classify(path, notes, assets); }
             }
             else { Classify(path, notes, assets); }
         }
@@ -371,20 +371,19 @@ public sealed class VaultWatcher : IDisposable
         Publish(notes, assets, fullSync);
     }
 
-    private static bool IsAsset(string path) => path.Split('/')[0].Equals(Vault.AssetsDirectoryName, StringComparison.OrdinalIgnoreCase);
     private static bool IsReportable(string path)
     {
         var parts = path.Split('/');
         var name = parts[^1];
         return !parts.Any(p => p.StartsWith('.')) && !NoteTitle.IsOwnerFileName(name)
             && !name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".icloud", StringComparison.OrdinalIgnoreCase)
-            && (IsAsset(path) ? parts.Length >= 2 : Vault.IsMarkdown(name));
+            && (Vault.IsAssetPath(path) ? parts.Length >= 2 : Vault.IsMarkdown(name));
     }
 
     private static void Classify(string path, HashSet<string> notes, HashSet<string> assets)
     {
         if (!IsReportable(path)) { return; }
-        if (IsAsset(path)) { assets.Add(path); }
+        if (Vault.IsAssetPath(path)) { assets.Add(path); }
         else { notes.Add(path); }
     }
 
