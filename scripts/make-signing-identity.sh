@@ -160,7 +160,6 @@ HASH="$(security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$CN\"" | 
 [[ "$HASH" =~ ^[0-9A-Fa-f]{40}$ ]] || fail "could not read the SHA-1 of the new identity from $KEYCHAIN"
 HASH="$(printf '%s' "$HASH" | tr '[:upper:]' '[:lower:]')"
 
-# noclobber: never overwrite an existing requirement file.
 (set -C; app_signing_requirement "$BUNDLE_ID" "$HASH" > "$REQ_FILE") \
     || fail "could not create $REQ_FILE (it must not already exist)"
 REQ_WRITTEN=1

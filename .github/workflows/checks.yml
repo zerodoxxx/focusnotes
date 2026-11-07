@@ -183,7 +183,7 @@ jobs:
           hdiutil attach -nobrowse -readonly -mountpoint "$MNT" dist/*.dmg
           app="$MNT/focusnotes.app"
           codesign --verify --strict --verbose=2 "$app"
-          # Self-test runs without UI. Exits non-zero on failure. Timeout is enforced by timeout-minutes (2 min).
+          # Self-test runs without UI. Timeout is enforced by timeout-minutes (2 min).
           "$app/Contents/MacOS/focusnotes" --self-test "$STATE"
 
       - name: Detach DMG
