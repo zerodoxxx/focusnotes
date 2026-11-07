@@ -62,7 +62,7 @@ public static class TrayMenuBuilder
         var quit = new MenuEntry(MenuIds.Quit, Strings.MenuQuit);
         if (!state.ConsentAnswered)
         {
-            // Until step 0 is answered nothing runs: only Finish Setup… and Quit.
+            // Until step 0 is answered nothing runs.
             return [new(MenuIds.FinishSetup, Strings.MenuFinishSetup(Math.Max(1, state.SetupAttention))), quit];
         }
 

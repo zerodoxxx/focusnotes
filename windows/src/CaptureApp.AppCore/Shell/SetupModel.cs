@@ -157,7 +157,6 @@ public sealed class SetupState
         FirstIncompleteRequired ?? SetupSteps.All.Where(info => Status(info.Id) == SetupStatus.Failed)
             .Select(info => (SetupStepId?)info.Id).FirstOrDefault();
 
-    /// Launch trigger: Velopack first run, no stored state, or an incomplete Required step.
     public bool ShouldOpenOnLaunch(bool isFirstRun) => isFirstRun || NeverRan || FirstIncompleteRequired is not null;
 
     /// The steps the window shows: everything on a first run or manual open, only new steps after a version bump.

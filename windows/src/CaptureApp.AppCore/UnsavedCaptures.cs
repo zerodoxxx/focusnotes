@@ -9,7 +9,6 @@ public sealed class UnsavedCaptures
 {
     private sealed class Entry
     {
-        // The job and store of the last Record for this id.
         public Task<CaptureJob>? Recorded;
         public Task? Stored;
         // The job being committed, or kept for retry once Kept is set.
