@@ -302,6 +302,7 @@ func runBehaviorChecks() async throws {
     try await checkFolderQuickNote()
     try await checkOutsideSessionShortcut()
     try checkCardButtonClicks()
+    try checkNoteActionShortcuts()
     try checkQuickNoteDesign()
     try await checkFloatingCards()
     try await checkPanelMoving()
@@ -856,6 +857,16 @@ private func checkFooterFit() async throws {
             editor.dismiss()
             try await settle()
         }
+    }
+}
+
+/// Every Actions row that had a shortcut must keep its glyph; `PanelShortcuts.glyph(for:)` returns "" for a missing entry.
+@MainActor
+private func checkNoteActionShortcuts() throws {
+    let rows = OverlayPreview.noteActionShortcuts()
+    let expected: [NoteActionID] = [.newNote, .saveAsNewNote, .pin, .openAsNote, .copyMarkdown, .discardDraft, .writeOutsideSession]
+    for id in expected {
+        try require(rows.first { $0.id == id }?.shortcut.isEmpty == false, "Actions row \(id) must show a shortcut glyph")
     }
 }
 
