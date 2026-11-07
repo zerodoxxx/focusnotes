@@ -96,19 +96,7 @@ public sealed class CaptureJournal
             if (record.HasPNG)
             {
                 try { png = File.ReadAllBytes(Path.Combine(DirectoryPath, stem + ".png")); }
-                catch (FileNotFoundException)
-                {
-                    if (string.IsNullOrWhiteSpace(record.Ocr))
-                    {
-                        throw new RecordException("The journal image is missing and has no OCR recovery text.");
-                    }
-
-                    var original = record.Prepared;
-                    var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
-                    var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
-                    return Resolve(new(recovered));
-                }
-                catch (DirectoryNotFoundException)
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
                 {
                     if (string.IsNullOrWhiteSpace(record.Ocr))
                     {
@@ -168,7 +156,11 @@ public sealed class CaptureJournal
                 var path = Path.Combine(DirectoryPath, id.ToString("D").ToLowerInvariant() + ".json");
                 if (!File.Exists(path)) continue;
                 try { Store(Resolve(Load(path))); }
-                catch (RecordException) { /* Preserve it for the normal replay quarantine path. */ }
+                catch (RecordException error)
+                {
+                    // Preserve it for the normal replay quarantine path.
+                    logger.Notice($"Could not relocate capture journal record {id}: {error.Message}");
+                }
             }
         }
     }

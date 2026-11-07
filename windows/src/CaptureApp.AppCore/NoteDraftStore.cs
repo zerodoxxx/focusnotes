@@ -13,6 +13,9 @@ public sealed record NoteDraftSnapshot(
 /// Stores the editor text and pin intent as one atomically replaced snapshot.
 public sealed class NoteDraftStore : IDisposable
 {
+    internal const string FileName = "draft-note.json";
+    internal const string CorruptFileName = "draft-note.corrupt.json";
+
     private sealed record PendingWrite(string Text, bool? PinOnSave, Action<Exception>? OnFailure, NoteFolder? Folder);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -39,7 +42,7 @@ public sealed class NoteDraftStore : IDisposable
         Action? beforeScheduledWriteForTesting = null)
     {
         var directory = Path.GetFullPath(stateDirectory);
-        Url = Path.Combine(directory, "draft-note.json");
+        Url = Path.Combine(directory, FileName);
         LegacyUrl = Path.Combine(directory, "draft-note.md");
         this.debounceInterval = debounceInterval ?? TimeSpan.FromMilliseconds(180);
         this.maxCoalescingInterval = maxCoalescingInterval ?? TimeSpan.FromSeconds(1);
@@ -87,26 +90,12 @@ public sealed class NoteDraftStore : IDisposable
 
     public void FlushScheduledStore(string text, bool? pinOnSave = null, NoteFolder? folder = null)
     {
-        lock (gate)
-        {
-            ThrowIfDisposed();
-            var pending = ReplacePendingWrite(text, pinOnSave, folder);
-            var writeGeneration = generation;
-            WriteSnapshot(pending);
-            ClearPendingWrite(writeGeneration);
-        }
+        WriteNow(text, pinOnSave, folder, keepFailureHandler: true);
     }
 
     public void Store(string text, bool? pinOnSave = null, NoteFolder? folder = null)
     {
-        lock (gate)
-        {
-            ThrowIfDisposed();
-            var pending = ReplacePendingWrite(text, pinOnSave, folder, keepFailureHandler: false);
-            var writeGeneration = generation;
-            WriteSnapshot(pending);
-            ClearPendingWrite(writeGeneration);
-        }
+        WriteNow(text, pinOnSave, folder, keepFailureHandler: false);
     }
 
     public void SetPinOnSave(bool pin)
@@ -144,7 +133,7 @@ public sealed class NoteDraftStore : IDisposable
             }
 
             var draft = Read();
-            if (draft.Folder == folder && CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(text))
+            if (Matches(draft, text, folder))
             {
                 Remove();
             }
@@ -166,7 +155,7 @@ public sealed class NoteDraftStore : IDisposable
             }
 
             var draft = Read();
-            var matches = draft.Folder == folder && CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(matchingText);
+            var matches = Matches(draft, matchingText, folder);
             applyPin(pinOnSave ?? (matches && draft.PinOnSave));
             if (matches)
             {
@@ -209,6 +198,18 @@ public sealed class NoteDraftStore : IDisposable
         {
             try { failure?.Invoke(error); }
             catch (Exception callbackError) { logger.Error($"Draft write failure handler failed: {callbackError}"); }
+        }
+    }
+
+    private void WriteNow(string text, bool? pinOnSave, NoteFolder? folder, bool keepFailureHandler)
+    {
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            var pending = ReplacePendingWrite(text, pinOnSave, folder, keepFailureHandler);
+            var writeGeneration = generation;
+            WriteSnapshot(pending);
+            ClearPendingWrite(writeGeneration);
         }
     }
 
@@ -279,7 +280,7 @@ public sealed class NoteDraftStore : IDisposable
         }
         catch (JsonException)
         {
-            var corrupt = Path.Combine(Path.GetDirectoryName(Url)!, "draft-note.corrupt.json");
+            var corrupt = Path.Combine(Path.GetDirectoryName(Url)!, CorruptFileName);
             try { File.Move(Url, corrupt, true); }
             catch (FileNotFoundException) { }
             return new("", false);
@@ -295,6 +296,9 @@ public sealed class NoteDraftStore : IDisposable
             return new("", false);
         }
     }
+
+    private static bool Matches(NoteDraftSnapshot draft, string text, NoteFolder? folder) =>
+        draft.Folder == folder && CaptureFormat.NoteBody(draft.Text) == CaptureFormat.NoteBody(text);
 
     private void Write(NoteDraftSnapshot draft)
     {
