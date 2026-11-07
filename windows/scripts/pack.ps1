@@ -28,18 +28,14 @@ $envFile = Join-Path (Split-Path -Parent $windowsDirectory) 'Config/app.env'
 if (-not $OutDir) { $OutDir = Join-Path $windowsDirectory 'dist' }
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 
-function Get-EnvValue([string] $Name) {
-    $match = [regex]::Match((Get-Content -Raw -Path $envFile), "(?m)^$Name=([^\r\n]*)")
-    if (-not $match.Success -or -not $match.Groups[1].Value) { throw "$Name is missing from Config/app.env" }
-    return $match.Groups[1].Value
-}
+. (Join-Path $PSScriptRoot 'app-env.ps1')
 
 function Invoke-Checked([string] $Description, [scriptblock] $Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) { throw "$Description failed with exit code $LASTEXITCODE" }
 }
 
-$appName = Get-EnvValue 'APPNAME'
+$appName = Get-AppEnv $envFile 'APPNAME'
 $rid = "win-$Arch"
 $packId = "$appName-$rid"
 $archOut = Join-Path $OutDir $rid
