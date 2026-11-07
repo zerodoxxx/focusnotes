@@ -38,3 +38,6 @@ app_signing_requirement() { printf 'identifier "%s" and certificate leaf = H"%s"
 
 # app_signing_requirement_hash FILE: prints the certificate SHA-1 from a requirement file.
 app_signing_requirement_hash() { sed -n 's/.*H"\([0-9a-f]\{40\}\)".*/\1/p' "$1"; }
+
+# app_env_get FILE KEY: prints KEY's value by the app_env_load rule, or nothing; sets no variables.
+app_env_get() ( unset "$2"; app_env_load "$1" "$2"; printf '%s' "${!2-}" )
