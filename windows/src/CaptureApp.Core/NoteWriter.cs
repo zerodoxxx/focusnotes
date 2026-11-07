@@ -12,6 +12,7 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
     private readonly List<string> order = [];
     private int fullScans;
     private const int FileLimit = 8, MarkerLimit = 50000, SourceByteLimit = 65536;
+    private const int AppendAttempts = 4;
     private sealed class AppendState(FileMetadata fingerprint)
     {
         internal FileMetadata Fingerprint = fingerprint;
@@ -134,7 +135,7 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     NoteFile.Create(NoteFile.Utf8.GetBytes(header + block), location.Root, location.RelativePath);
                 }
 
-                for (var attempt = 0; attempt < 4; attempt++)
+                for (var attempt = 0; attempt < AppendAttempts; attempt++)
                 {
                     target = NoteFile.SafePath(location.Root, location.RelativePath, true);
                     using var stream = NoteFile.OpenExclusive(target, FileMode.OpenOrCreate, FileAccess.ReadWrite);

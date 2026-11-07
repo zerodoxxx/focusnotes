@@ -135,8 +135,7 @@ public sealed class SearchIndex : IDisposable
         {
             database.Transaction(() =>
             {
-                database.Execute("DELETE FROM blocks_fts WHERE rowid IN (SELECT b.id FROM blocks b JOIN notes n ON n.id = b.note_id WHERE n.path = ?)", SQLiteValue.Text(path));
-                database.Execute("DELETE FROM notes WHERE path = ?", SQLiteValue.Text(path));
+                DeleteNoteBlocks("SELECT b.id FROM blocks b JOIN notes n ON n.id = b.note_id WHERE n.path = ?", "DELETE FROM notes WHERE path = ?", SQLiteValue.Text(path));
             });
         }
 
@@ -418,6 +417,13 @@ public sealed class SearchIndex : IDisposable
     // Like Swift's String(decoding:as:): invalid bytes become U+FFFD instead of failing the sync.
     private static readonly System.Text.Encoding LenientUtf8 = new System.Text.UTF8Encoding(false, false);
 
+    // FTS rows go first: they are found through the base rows.
+    private void DeleteNoteBlocks(string blockIds, string deleteBase, SQLiteValue key)
+    {
+        database.Execute($"DELETE FROM blocks_fts WHERE rowid IN ({blockIds})", key);
+        database.Execute(deleteBase, key);
+    }
+
     private void Index(byte[] contents, string path, NoteKind kind, string titleFallback, Fingerprint fingerprint)
     {
         var parsed = NoteParser.Parse(LenientUtf8.GetString(contents), path, titleFallback, timeZone, vault.AssetsUrl);
@@ -436,8 +442,7 @@ public sealed class SearchIndex : IDisposable
             }
 
             var noteId = row.Int(0);
-            database.Execute("DELETE FROM blocks_fts WHERE rowid IN (SELECT id FROM blocks WHERE note_id = ?)", SQLiteValue.Int(noteId));
-            database.Execute("DELETE FROM blocks WHERE note_id = ?", SQLiteValue.Int(noteId));
+            DeleteNoteBlocks("SELECT id FROM blocks WHERE note_id = ?", "DELETE FROM blocks WHERE note_id = ?", SQLiteValue.Int(noteId));
             using var insert = database.Prepare("""
                 INSERT INTO blocks(note_id, ord, capture_id, kind, created_at, source_app, window_title, body, asset_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

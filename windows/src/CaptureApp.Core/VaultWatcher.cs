@@ -110,8 +110,7 @@ public sealed class VaultWatcher : IDisposable
             rootSnapshot = ScanRoot();
             ReconcileParents(); // Subscribe before reading the registry, then bracket the read with stats.
             RefreshRegistry(force: true, requestSync: false);
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
     }
 
@@ -145,8 +144,7 @@ public sealed class VaultWatcher : IDisposable
             if (!running) { return; }
             ReconcileParents();
             RefreshRegistry(force: false, requestSync: true);
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
     }
 
@@ -270,9 +268,8 @@ public sealed class VaultWatcher : IDisposable
                     else if (watch.Errors >= MaxWatchErrors) { failedParents.Add(path); }
                 }
 
-                if (replacement is null && (recursive || watch.Errors >= MaxWatchErrors)) { ReportIssue("watch-unavailable:" + path); }
-                ReconcileParents();
-                UpdateFallbackTimer();
+                if (replacement is null && (recursive || watch.Errors >= MaxWatchErrors)) { ReportIssue(WatchUnavailableIssue(path)); }
+                ReconcileAndUpdateFallback();
             }
         }
     }
@@ -461,12 +458,12 @@ public sealed class VaultWatcher : IDisposable
         {
             var value = WatchSnapshot.Managed(vault.HomeRoot, location.RelativePath);
             if (value?.IsDirectory == true) { throw new VaultFileException(VaultFileError.PermissionDenied); }
-            issues.Remove("snapshot:" + location.Id);
+            issues.Remove(SnapshotIssue(location.Id));
             return value;
         }
         catch (Exception error) when (IsWatchFailure(error))
         {
-            ReportIssue("snapshot:" + location.Id);
+            ReportIssue(SnapshotIssue(location.Id));
             return fingerprints.GetValueOrDefault(location.Id);
         }
     }
@@ -520,16 +517,16 @@ public sealed class VaultWatcher : IDisposable
             if (watch is null)
             {
                 failedParents.Add(path);
-                ReportIssue("watch-unavailable:" + path);
+                ReportIssue(WatchUnavailableIssue(path));
                 ScheduleParentRetry(path);
             }
-            else { parents[path] = watch; parentRetries.Remove(path); issues.Remove("watch-unavailable:" + path); }
+            else { parents[path] = watch; parentRetries.Remove(path); issues.Remove(WatchUnavailableIssue(path)); }
         }
 
         fallbackIds.Clear();
         foreach (var (id, path) in parentById)
         {
-            if (path is null || !parents.ContainsKey(path) || issues.Contains("snapshot:" + id)) { fallbackIds.Add(id); }
+            if (path is null || !parents.ContainsKey(path) || issues.Contains(SnapshotIssue(id))) { fallbackIds.Add(id); }
         }
         if (parentById.Values.OfType<string>().Distinct(PathComparer).Count() > maximumParents) { ReportIssue("parent-watch-cap"); }
         else { issues.Remove("parent-watch-cap"); }
@@ -546,15 +543,14 @@ public sealed class VaultWatcher : IDisposable
             if (fingerprints.GetValueOrDefault(id) != current) { fingerprints[id] = current; changed.Add(id); }
         }
         pendingExternal.Clear();
-        ReconcileParents();
-        UpdateFallbackTimer();
+        ReconcileAndUpdateFallback();
         Publish(changed, [], false);
     }
 
     private void PollFallbacks()
     {
         if (rootFallback) { FlushRoot(); }
-        if (vault.ExternalNoteRegistry is not null && (registryParent is null || !parents.ContainsKey(registryParent)))
+        if (RegistryNeedsPolling)
         {
             RefreshRegistry(force: false, requestSync: true);
         }
@@ -568,17 +564,23 @@ public sealed class VaultWatcher : IDisposable
             {
                 root = CreateWatch(vault.Root, recursive: true);
                 rootFallback = root is null;
-                if (!rootFallback) { issues.Remove("watch-unavailable:" + vault.Root); }
+                if (!rootFallback) { issues.Remove(WatchUnavailableIssue(vault.Root)); }
             }
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
+    }
+
+    private bool RegistryNeedsPolling => vault.ExternalNoteRegistry is not null && (registryParent is null || !parents.ContainsKey(registryParent));
+
+    private void ReconcileAndUpdateFallback()
+    {
+        ReconcileParents();
+        UpdateFallbackTimer();
     }
 
     private void UpdateFallbackTimer()
     {
-        var needed = rootFallback || fallbackIds.Count != 0 || vault.ExternalNoteRegistry is not null
-            && (registryParent is null || !parents.ContainsKey(registryParent));
+        var needed = rootFallback || fallbackIds.Count != 0 || RegistryNeedsPolling;
         if (!needed) { fallbackTimer?.Dispose(); fallbackTimer = null; return; }
         if (fallbackTimer is not null || !running) { return; }
         var generation = epoch;
@@ -606,8 +608,7 @@ public sealed class VaultWatcher : IDisposable
                 if (generation != epoch || !running) { return; }
                 parentRetryTimer?.Dispose(); parentRetryTimer = null;
                 failedParents.RemoveWhere(p => parentRetries.GetValueOrDefault(p) is > 0 and < MaxParentRetries);
-                ReconcileParents();
-                UpdateFallbackTimer();
+                ReconcileAndUpdateFallback();
             }
         }, null, TimeSpan.FromMilliseconds(100), Timeout.InfiniteTimeSpan);
     }
@@ -641,6 +642,10 @@ public sealed class VaultWatcher : IDisposable
             }
         }, null, ExternalDebounce, Timeout.InfiniteTimeSpan);
     }
+
+    private static string WatchUnavailableIssue(string path) => "watch-unavailable:" + path;
+
+    private static string SnapshotIssue(string id) => "snapshot:" + id;
 
     private void ReportIssue(string key)
     {
