@@ -27,7 +27,6 @@ public enum SelectionFailure: Error, Equatable, Sendable {
 }
 
 public enum PasteboardSnapshotError: Error, Equatable, Sendable {
-    case unreadableType(String)
     case changedDuringSnapshot
 }
 
