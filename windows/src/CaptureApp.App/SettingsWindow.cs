@@ -101,8 +101,7 @@ internal sealed class SettingsWindow : Window
     private StackPanel UpdatesTab()
     {
         var panel = new StackPanel();
-        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "settingsUpdates", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
-        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "settingsUpdates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var (auto, manual) = SettingsActions.UpdatesRadios(controller, "settingsUpdates", autoWhenUnset: true);
         var message = UiKit.Secondary(controller.Settings.UpdatesChoice is null ? "Choose an option in Setup to confirm it." : "Automatic checks take effect on the next launch.");
         void Choose(UpdatesChoice choice)
         {

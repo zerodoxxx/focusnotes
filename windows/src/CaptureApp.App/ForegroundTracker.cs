@@ -8,11 +8,10 @@ internal sealed class ForegroundTracker : IDisposable
 {
     private const uint EventSystemForeground = 3;
     private const uint WinEventOutOfContext = 0;
-    // Must be declared before ShellClasses: static initializers run in textual order and ShellClasses spreads it.
     private static readonly string[] DesktopClasses = ["Progman", "WorkerW"];
     private static readonly string[] ShellClasses =
     [
-        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland", .. DesktopClasses
+        "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland", "Progman", "WorkerW"
     ];
 
     private readonly WinEventCallback callback;

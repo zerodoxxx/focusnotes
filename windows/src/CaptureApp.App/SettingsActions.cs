@@ -16,6 +16,16 @@ internal static class SettingsActions
         manual.IsChecked = controller.Settings.UpdatesChoice == UpdatesChoice.Manual;
     }
 
+    /// The update choice radio pair. With autoWhenUnset false, an unset choice leaves both unchecked.
+    public static (RadioButton Auto, RadioButton Manual) UpdatesRadios(AppController controller, string group, bool autoWhenUnset)
+    {
+        var choice = controller.Settings.UpdatesChoice;
+        var auto = UiKit.Radio(UpdatesAutoLabel, group, autoWhenUnset ? choice != UpdatesChoice.Manual : choice == UpdatesChoice.Auto);
+        return (auto, UiKit.Radio(UpdatesManualLabel, group, choice == UpdatesChoice.Manual));
+    }
+
+    public static UpdatesChoice SelectedUpdatesChoice(RadioButton auto) => auto.IsChecked == true ? UpdatesChoice.Auto : UpdatesChoice.Manual;
+
     public static void WithHotkeysPaused(AppController controller, Action action)
     {
         controller.PauseHotkeys();

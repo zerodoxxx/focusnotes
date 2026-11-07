@@ -291,8 +291,7 @@ internal sealed class SetupWindow : Window
         body.Children.Add(use);
         body.Children.Add(dont);
         body.Children.Add(UiKit.Text("Updates", 13, true));
-        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Auto);
-        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "updates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var (auto, manual) = SettingsActions.UpdatesRadios(controller, "updates", autoWhenUnset: false);
         body.Children.Add(auto);
         body.Children.Add(manual);
         var message = UiKit.Text("", 12, false, "Warning");
@@ -308,7 +307,7 @@ internal sealed class SetupWindow : Window
             var previousFallback = controller.Settings.ClipboardFallback;
             var previousChoice = controller.Settings.UpdatesChoice;
             if (!controller.ApplyClipboardFallback(use.IsChecked == true)) { return; }
-            if (!controller.ApplyUpdatesChoice(auto.IsChecked == true ? UpdatesChoice.Auto : UpdatesChoice.Manual)
+            if (!controller.ApplyUpdatesChoice(SettingsActions.SelectedUpdatesChoice(auto))
                 || !Mark(SetupStepId.Disclosure, SetupStatus.Passed))
             {
                 // Step 0 stays unanswered, so neither choice may look saved.
@@ -483,13 +482,12 @@ internal sealed class SetupWindow : Window
     private void Updates(StackPanel body)
     {
         body.Children.Add(UiKit.Text("Review how updates are checked. Updates come from github.com and are verified before they are installed.", 13, false, "TextPrimary", 8));
-        var auto = UiKit.Radio(SettingsActions.UpdatesAutoLabel, "updates7", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
-        var manual = UiKit.Radio(SettingsActions.UpdatesManualLabel, "updates7", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var (auto, manual) = SettingsActions.UpdatesRadios(controller, "updates7", autoWhenUnset: true);
         body.Children.Add(auto);
         body.Children.Add(manual);
         body.Children.Add(UiKit.Row(UiKit.Button("Looks good", () =>
         {
-            if (!controller.ApplyUpdatesChoice(auto.IsChecked == true ? UpdatesChoice.Auto : UpdatesChoice.Manual))
+            if (!controller.ApplyUpdatesChoice(SettingsActions.SelectedUpdatesChoice(auto)))
             {
                 SettingsActions.ShowSavedUpdatesChoice(controller, auto, manual);
                 return;
