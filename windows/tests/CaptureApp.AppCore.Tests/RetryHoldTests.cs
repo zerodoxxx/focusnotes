@@ -22,12 +22,12 @@ public sealed class RetryHoldTests
         var inboxBefore = File.ReadAllText(pipeline.Vault.InboxUrl);
         var capture = PendingCaptures.Selection(Needle, new());
         await coordinator.StageAsync(capture);
-        await HoldAsync(coordinator, host, capture, title);
+        await RetryHold.HoldAsync(coordinator, host, capture, title);
 
         // The warning says the capture was kept and never claims it was not saved.
-        var warning = Assert.Single(Toasts(host), toast => toast.Title == Strings.CouldNotSaveToNote);
+        var warning = Assert.Single(RetryHold.Toasts(host), toast => toast.Title == Strings.CouldNotSaveToNote);
         Assert.Contains("Capture kept", warning.Subtitle, StringComparison.Ordinal);
-        Assert.DoesNotContain(Toasts(host), toast => toast.Title == Strings.CouldNotSaveCapture
+        Assert.DoesNotContain(RetryHold.Toasts(host), toast => toast.Title == Strings.CouldNotSaveCapture
             || toast.Subtitle?.Contains("not saved", StringComparison.Ordinal) == true);
         Assert.Equal(inboxBefore, File.ReadAllText(pipeline.Vault.InboxUrl));
 
@@ -59,9 +59,9 @@ public sealed class RetryHoldTests
         var inboxBefore = File.ReadAllText(pipeline.Vault.InboxUrl);
         var capture = PendingCaptures.Selection(Needle, new());
         await coordinator.StageAsync(capture);
-        await HoldAsync(coordinator, host, capture, " ideas ", Strings.SeveralNotesTitled("Ideas"));
+        await RetryHold.HoldAsync(coordinator, host, capture, " ideas ", Strings.SeveralNotesTitled("Ideas"));
 
-        var warning = Assert.Single(Toasts(host), toast => toast.Title == Strings.SeveralNotesTitled("Ideas"));
+        var warning = Assert.Single(RetryHold.Toasts(host), toast => toast.Title == Strings.SeveralNotesTitled("Ideas"));
         Assert.Contains("pick one by its path", warning.Subtitle, StringComparison.Ordinal);
         Assert.Equal(inboxBefore, File.ReadAllText(pipeline.Vault.InboxUrl));
         Assert.Equal(capture.Id, coordinator.Pending?.Id);
@@ -82,13 +82,13 @@ public sealed class RetryHoldTests
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
         await coordinator.StageAsync(capture);
-        await HoldAsync(coordinator, host, capture, "..");
+        await RetryHold.HoldAsync(coordinator, host, capture, "..");
         coordinator.ShowToast(new(AppToastStyle.Success, "Unrelated"));
         Assert.Null(coordinator.PendingWithRetryWarning);
 
         coordinator.SettleUnchosenCapture(capture.Id, false);
         Assert.Equal(capture.Id, coordinator.PendingWithRetryWarning?.Id);
-        Assert.Equal(Strings.ChooseWhereToSave, Toasts(host)[^1].Title);
+        Assert.Equal(Strings.ChooseWhereToSave, RetryHold.Toasts(host)[^1].Title);
         Assert.DoesNotContain(Needle, File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
 
         // A capture that was never held still saves to its default on Escape.
@@ -109,7 +109,7 @@ public sealed class RetryHoldTests
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
         await coordinator.StageAsync(capture);
-        await HoldAsync(coordinator, host, capture, "..");
+        await RetryHold.HoldAsync(coordinator, host, capture, "..");
 
         Assert.True(await coordinator.BeginTermination());
         Assert.Null(coordinator.Pending);
@@ -125,7 +125,7 @@ public sealed class RetryHoldTests
         var coordinator = new CaptureCoordinator(pipeline, host);
         var capture = PendingCaptures.Selection(Needle, new());
         await coordinator.StageAsync(capture);
-        await HoldAsync(coordinator, host, capture, "..");
+        await RetryHold.HoldAsync(coordinator, host, capture, "..");
 
         var newer = PendingCaptures.Selection("newer capture", new());
         await coordinator.StageAsync(newer);
@@ -133,18 +133,5 @@ public sealed class RetryHoldTests
         Assert.Null(coordinator.PendingWithRetryWarning);
         Assert.Single(Regex.Matches(File.ReadAllText(pipeline.Vault.InboxUrl), Regex.Escape(Needle)));
         Assert.DoesNotContain("newer capture", File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
-    }
-
-    private static async Task HoldAsync(CaptureCoordinator coordinator, HeadlessCaptureHost host, PendingCapture capture, string title,
-        string warning = Strings.CouldNotSaveToNote)
-    {
-        var commit = coordinator.CommitPending(title, true) ?? throw new InvalidOperationException("Capture was not pending.");
-        await Assert.ThrowsAnyAsync<Exception>(() => commit);
-        await Wait.Until(() => coordinator.PendingWithRetryWarning?.Id == capture.Id && Toasts(host).Any(toast => toast.Title == warning), "the retry warning");
-    }
-
-    private static AppToast[] Toasts(HeadlessCaptureHost host)
-    {
-        lock (host.Toasts) { return host.Toasts.ToArray(); }
     }
 }
