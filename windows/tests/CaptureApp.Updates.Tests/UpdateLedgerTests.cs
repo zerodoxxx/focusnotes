@@ -7,11 +7,7 @@ public sealed class UpdateLedgerTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 19, 12, 0, 0, TimeSpan.Zero);
 
-    private static UpdateLedger NewLedger(out int saves)
-    {
-        saves = 0;
-        return new UpdateLedger(new UpdateLedgerState(), () => { });
-    }
+    private static UpdateLedger NewLedger() => new(new UpdateLedgerState(), () => { });
 
     [Fact]
     public void BackoffSequenceCapsAtTwentyFourHours()
@@ -29,7 +25,7 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void FailuresWalkTheBackoffAndSuccessResetsIt()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         var now = T0;
         foreach (var hours in new[] { 1, 4, 12, 24, 24 })
         {
@@ -50,7 +46,7 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void RetryAfterIsHonouredInTheSchedule()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.CheckFailed(T0, TimeSpan.FromHours(6));
         Assert.Equal(T0.AddHours(6), ledger.NextAutomaticCheck(T0));
     }
@@ -58,9 +54,9 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void ClockMovedBackNeverStallsChecksBeyondADay()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.CheckSucceeded(T0.AddDays(30));
-        Assert.True(ledger.NextAutomaticCheck(T0) <= T0.AddHours(24));
+        Assert.Equal(T0, ledger.NextAutomaticCheck(T0));
         Assert.True(ledger.ShouldCheckAutomatically(T0));
     }
 
@@ -69,7 +65,7 @@ public sealed class UpdateLedgerTests
     {
         Assert.Equal(TimeSpan.FromHours(24), UpdateBackoff.Delay(1, TimeSpan.FromDays(365)));
         Assert.Equal(TimeSpan.FromHours(1), UpdateBackoff.Delay(1, TimeSpan.FromHours(-5)));
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.CheckFailed(T0, TimeSpan.FromDays(365));
         Assert.Equal(T0.AddHours(24), ledger.NextAutomaticCheck(T0));
     }
@@ -77,13 +73,13 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void FirstLaunchChecksImmediately()
     {
-        Assert.True(NewLedger(out _).ShouldCheckAutomatically(T0));
+        Assert.True(NewLedger().ShouldCheckAutomatically(T0));
     }
 
     [Fact]
     public void ApplyThatTookEffectClearsTheBookkeeping()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.ApplyStarted("1.2.0");
         Assert.Equal(StartupOutcome.Applied, ledger.ReconcileStartup("1.2.0"));
         Assert.Null(ledger.State.PendingApplyVersion);
@@ -93,7 +89,7 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void FirstFailedApplyRetriesOnceThenSecondDiscardsAndPauses()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.ApplyStarted("1.2.0");
         Assert.Equal(StartupOutcome.RetryAtQuit, ledger.ReconcileStartup("1.1.0"));
         Assert.False(ledger.IsPaused("1.2.0"));
@@ -108,11 +104,12 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void ManualRetryLiftsThePause()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.ApplyStarted("1.2.0");
         ledger.ReconcileStartup("1.1.0");
         ledger.ApplyStarted("1.2.0");
         ledger.ReconcileStartup("1.1.0");
+        Assert.True(ledger.IsPaused("1.2.0"));
         ledger.ClearPause();
         Assert.False(ledger.IsPaused("1.2.0"));
     }
@@ -120,7 +117,7 @@ public sealed class UpdateLedgerTests
     [Fact]
     public void FailureCountIsPerVersion()
     {
-        var ledger = NewLedger(out _);
+        var ledger = NewLedger();
         ledger.ApplyStarted("1.2.0");
         ledger.ReconcileStartup("1.1.0");
         ledger.ApplyStarted("1.3.0");
