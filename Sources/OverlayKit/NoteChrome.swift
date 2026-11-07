@@ -93,14 +93,14 @@ final class NoteChromeBar: FlippedView {
     var isActionsOpen = false { didSet { actions.isOn = isActionsOpen } }
     var isBrowseOpen = false { didSet { browse.isOn = isBrowseOpen } }
     private let close = ChromeButton(symbolName: "xmark", tooltip: "Close (esc)", label: "Close")
-    private let open = ChromeButton(symbolName: "arrow.up.left.and.arrow.down.right", tooltip: "Open as note (⌘O)", label: "Open as note")
+    private let open = ChromeButton(symbolName: "arrow.up.left.and.arrow.down.right", tooltip: "Open as note (\(PanelShortcuts.glyph(for: .openAsNote)))", label: "Open as note")
     /// `rectangle.on.rectangle.angled` is newer than the deployment target; fall back where it is missing.
     static let browseSymbolName = NSImage(systemSymbolName: "rectangle.on.rectangle.angled", accessibilityDescription: nil) == nil
         ? "square.on.square" : "rectangle.on.rectangle.angled"
     private let cluster = ChromeCluster(frame: .zero)
-    private let actions = ChromeButton(symbolName: "ellipsis", tooltip: "Actions (⌘K)", label: "Actions")
-    private let browse = ChromeButton(symbolName: NoteChromeBar.browseSymbolName, tooltip: "Browse notes (⌘P)", label: "Browse notes")
-    private let new = ChromeButton(symbolName: "plus", tooltip: "New note (⌘N)", label: "New note")
+    private let actions = ChromeButton(symbolName: "ellipsis", tooltip: "Actions (\(PanelShortcuts.toggleActions.glyph))", label: "Actions")
+    private let browse = ChromeButton(symbolName: NoteChromeBar.browseSymbolName, tooltip: "Browse notes (\(PanelShortcuts.toggleBrowse.glyph))", label: "Browse notes")
+    private let new = ChromeButton(symbolName: "plus", tooltip: "New note (\(PanelShortcuts.glyph(for: .newNote)))", label: "New note")
     /// False while the bar is faded out, so invisible buttons cannot be clicked.
     var isActive = false
     private var buttons: [ChromeButton] { [close, open, browse, new, actions] }
@@ -143,19 +143,7 @@ final class NoteChromeBar: FlippedView {
 
 /// The editor shortcuts that map to note actions; ⌘K is OverlayKeyCommand.toggleActions.
 func noteShortcutAction(for event: NSEvent) -> NoteActionID? {
-    let flags = event.shortcutFlags
-    guard flags.contains(.command) else { return nil }
-    let shift = flags.contains(.shift)
-    switch event.keyCode {
-    case OverlayKeyCode.c where shift: return .copyMarkdown
-    case OverlayKeyCode.p: return shift ? .pin : .browse
-    case OverlayKeyCode.n where flags == [.command, .shift]: return .writeOutsideSession
-    case OverlayKeyCode.n where flags == .command: return .newNote
-    case OverlayKeyCode.o: return .openAsNote
-    case OverlayKeyCode.delete where shift: return .discardDraft
-    case OverlayKeyCode.returnKey where flags.contains(.option), OverlayKeyCode.keypadEnter where flags.contains(.option): return .saveAsNewNote // Return, keypad Enter
-    default: return nil
-    }
+    PanelShortcuts.noteActions.first { $0.binding.matches(event) }?.id
 }
 
 extension NSEvent {

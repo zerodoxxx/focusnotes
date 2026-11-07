@@ -206,10 +206,10 @@ final class NoteTextView: NSTextView {
             case OverlayKeyCode.z: if event.modifierFlags.contains(.shift) { history.redo() } else { history.undo() }
             case OverlayKeyCode.v: paste(nil)
             case OverlayKeyCode.c: copy(nil)
-            case OverlayKeyCode.k: onToggleActions?()
+            case _ where PanelShortcuts.toggleActions.keyCodes.contains(event.keyCode): onToggleActions?()
             case OverlayKeyCode.x: cut(nil)
             case OverlayKeyCode.a: selectAll(nil)
-            case OverlayKeyCode.returnKey, OverlayKeyCode.keypadEnter: onSave?()
+            case _ where PanelShortcuts.save.keyCodes.contains(event.keyCode): onSave?()
             default: return false
             }
             return true
@@ -353,8 +353,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     private let titlePin = symbol("pin.fill", color: OverlayTheme.textColor)
     private let chrome = NoteChromeBar()
     private let footer = PassiveView()
-    private let saveHint = KeycapView(key: "⌘↩", caption: "Create note")
-    private let hints = [KeycapView(key: "⌘K", caption: "Actions"), KeycapView(key: "esc", caption: "Close")]
+    private let saveHint = KeycapView(key: PanelShortcuts.save.glyph, caption: "Create note")
+    private let hints = [KeycapView(key: PanelShortcuts.toggleActions.glyph, caption: "Actions"), KeycapView(key: "esc", caption: "Close")]
     private let restoredDraft: Bool
     private let draftLabel = label("Draft kept", font: OverlayTheme.metaFont, color: OverlayTheme.tertiaryColor)
     private var editedRange: NSRange?

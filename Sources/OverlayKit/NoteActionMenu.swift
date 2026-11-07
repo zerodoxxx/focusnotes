@@ -18,19 +18,19 @@ struct NoteActionItem {
 
     @MainActor static func standard(isPinned: Bool, hasText: Bool, editor: EditorContext = EditorContext()) -> [NoteActionItem] {
         var items = [
-            NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: "⌘N", isEnabled: true, group: 0),
-            NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: "⌥⌘↩",
+            NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: PanelShortcuts.glyph(for: .newNote), isEnabled: true, group: 0),
+            NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: PanelShortcuts.glyph(for: .saveAsNewNote),
                            isEnabled: editor.appendsToExisting, group: 0),
             NoteActionItem(id: .pin, title: isPinned ? "Remove from Pinned" : "Add to Pinned", symbolName: isPinned ? "pin.slash" : "pin",
-                           shortcut: "⇧⌘P", isEnabled: true, group: 0),
+                           shortcut: PanelShortcuts.glyph(for: .pin), isEnabled: true, group: 0),
             NoteActionItem(id: .openAsNote, title: "Open as Note", symbolName: "arrow.up.left.and.arrow.down.right",
-                           shortcut: "⌘O", isEnabled: true, group: 1),
-            NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: "⇧⌘C", isEnabled: hasText, group: 1),
-            NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: "⇧⌘⌫", isEnabled: hasText, group: 1),
+                           shortcut: PanelShortcuts.glyph(for: .openAsNote), isEnabled: true, group: 1),
+            NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: PanelShortcuts.glyph(for: .copyMarkdown), isEnabled: hasText, group: 1),
+            NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: PanelShortcuts.glyph(for: .discardDraft), isEnabled: hasText, group: 1),
         ]
         if editor.hasActiveSession {
             items.insert(NoteActionItem(id: .writeOutsideSession, title: "Write outside session", symbolName: "arrow.turn.up.right",
-                                        shortcut: "⇧⌘N", isEnabled: true, group: 0), at: 1)
+                                        shortcut: PanelShortcuts.glyph(for: .writeOutsideSession), isEnabled: true, group: 0), at: 1)
         }
         return items
     }
