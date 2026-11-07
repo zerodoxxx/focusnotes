@@ -80,7 +80,6 @@ internal static class Program
         return 0;
     }
 
-    /// Windows asserts all three background controls took effect; elsewhere there is nothing to assert.
     private static int SelfTest(BackgroundReport? background)
     {
         var report = EmbedResponse.Create("self-test", EmbedRequest.DefaultDimensions, background: background);

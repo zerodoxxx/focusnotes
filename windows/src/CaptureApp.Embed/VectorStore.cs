@@ -249,7 +249,6 @@ public sealed class VectorStore : IVectorStore, IDisposable
                 scores[row] = sum;
             }
 
-            // Stable key order resolves ties reproducibly.
             return (IReadOnlyList<(string, float)>)Enumerable.Range(0, keys.Length)
                 .OrderByDescending(i => scores[i]).ThenBy(i => keys[i], StringComparer.Ordinal)
                 .Take(limit).Select(i => (keys[i], Math.Clamp(scores[i], -1f, 1f))).ToList();

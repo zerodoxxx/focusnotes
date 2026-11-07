@@ -408,7 +408,7 @@ internal sealed class HelperTransport(string executable, string directory, doubl
         }
         catch (IOException)
         {
-            // The helper may already have closed its pipe; disposal is best-effort.
+            // The helper may already have closed its pipe.
         }
 
         Process? stopping;

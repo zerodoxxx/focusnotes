@@ -380,7 +380,6 @@ public sealed class Tokenizer
             }
         }
 
-        /// Returns the string's UTF-8 bytes widened to Latin-1 chars.
         private string ReadString()
         {
             Expect((byte)'"');
