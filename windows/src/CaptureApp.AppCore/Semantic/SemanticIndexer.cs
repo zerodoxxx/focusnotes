@@ -34,6 +34,9 @@ public sealed class SemanticIndexer
     private CancellationTokenSource? debounce;
     private CancellationTokenSource? retry;
     private CancellationTokenSource? jobCancellation;
+
+    // Lets tests pause between the caller's decision to use resources and the enabled check.
+    internal Action? BeforeAcquiringResources { get; set; }
     private Task? job;
 
     /// <param name="enabled">Whether the models are installed. Toggle later with <see cref="SetEnabled"/>.</param>
@@ -389,6 +392,7 @@ public sealed class SemanticIndexer
 
     private (IEmbedService Client, IVectorStore Store)? ActiveResources(CancellationToken cancellationToken)
     {
+        BeforeAcquiringResources?.Invoke();
         lock (gate)
         {
             if (!enabled || stopped || cancellationToken.IsCancellationRequested)

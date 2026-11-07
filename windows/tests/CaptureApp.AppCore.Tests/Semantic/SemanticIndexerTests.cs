@@ -217,44 +217,35 @@ public sealed class SemanticIndexerTests : IDisposable
         Assert.Single(embedder.DocumentBatches);
     }
 
-    [Fact]
-    public async Task NoClientIsCreatedOnceDisableHasReturned()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoClientIsCreatedOnceDisableHasReturned(bool flush)
     {
-        var store = Store(Path.Combine(temp.Path, VectorsFile));
-        var disabledReturned = false;
-        var violations = 0;
-        for (var i = 0; i < 2000; i++)
+        source.Blocks.Add(FakeSource.Text("a.md#1", "A", "alpha"));
+        var clients = 0;
+        var indexer = new SemanticIndexer(source, () =>
         {
-            Volatile.Write(ref disabledReturned, false);
-            var iterationSource = new FakeSource();
-            iterationSource.Blocks.Add(FakeSource.Text($"n{i}.md#1", "A", "alpha"));
-            var indexer = new SemanticIndexer(iterationSource, () =>
-            {
-                if (Volatile.Read(ref disabledReturned))
-                {
-                    Interlocked.Increment(ref violations);
-                }
+            Interlocked.Increment(ref clients);
+            return embedder;
+        }, () => Store(Path.Combine(temp.Path, VectorsFile)), true, () => true, time);
+        using var reached = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        indexer.BeforeAcquiringResources = () =>
+        {
+            reached.Set();
+            release.Wait();
+        };
 
-                return new FakeEmbedder();
-            }, () => store, true, () => true, time);
+        Func<Task> use = flush ? indexer.FlushAsync : indexer.WarmAsync;
+        var pending = Task.Run(use);
+        Assert.True(reached.Wait(TimeSpan.FromSeconds(10)), "the resource acquisition was never reached");
+        indexer.SetEnabled(false);
+        release.Set();
+        await pending;
+        await indexer.StopAsync();
 
-            using var start = new Barrier(2);
-            var flush = Task.Run(async () =>
-            {
-                start.SignalAndWait();
-                await indexer.FlushAsync();
-            });
-            var disable = Task.Run(() =>
-            {
-                start.SignalAndWait();
-                indexer.SetEnabled(false);
-                Volatile.Write(ref disabledReturned, true);
-            });
-            await Task.WhenAll(flush, disable);
-            await indexer.StopAsync();
-        }
-
-        Assert.Equal(0, violations);
+        Assert.Equal(0, clients);
     }
 
     [Fact]
