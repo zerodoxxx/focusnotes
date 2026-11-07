@@ -335,16 +335,16 @@ final class AppController: NSObject, NSMenuDelegate {
                     let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                         .filter { Self.sessionPath($0.path, isIn: folder) }
                     guard await controller.waitForAcquisition() else { return }
-                    controller.presentInput(placeholder: "Session name", title: "Start Session",
+                    controller.presentInput(placeholder: Self.sessionNamePlaceholder, title: "Start Session",
                         secondary: "In \(folder.sessionsRelativePath)", suggestions: suggestions,
-                        suggestionValue: { "/" + $0.path },
+                        suggestionValue: { Self.slashPath($0.path) },
                         onSubmit: { [weak controller] name in
                             guard !NoteTitle.cleanTitle(name).isEmpty else { return }
                             controller?.enqueue(runsDuringQuit: true) { controller in
                                 _ = controller.captures.commitPending()
                                 await controller.captures.waitForCommits()
                                 do {
-                                    if let selected = suggestions.first(where: { "/" + $0.path == name }),
+                                    if let selected = suggestions.first(where: { Self.slashPath($0.path) == name }),
                                        Self.sessionPath(selected.path, isIn: folder) {
                                         _ = try await controller.resumeSession(SessionCandidate(name: selected.title,
                                             notePath: selected.path, modifiedAt: selected.modified))
@@ -435,7 +435,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             permissionGuide.show(for: .screenCapture)
                         }
                         showToast(Toast(style: .warning, title: "Allow Screen Recording to capture areas",
-                                                   subtitle: "Open the menu bar icon → Permissions"))
+                                                   subtitle: Self.permissionsHint))
                     }
                 } catch {
                     report(error, title: "Couldn't capture area")
@@ -483,7 +483,7 @@ final class AppController: NSObject, NSMenuDelegate {
         case .secureInput:
             warning = Toast(style: .warning, title: "Can't capture from secure fields")
         case .accessibilityNotTrusted:
-            warning = Toast(style: .warning, title: "Allow Accessibility to capture text", subtitle: "Open the menu bar icon → Permissions")
+            warning = Toast(style: .warning, title: "Allow Accessibility to capture text", subtitle: Self.permissionsHint)
         case .ownApp: return
         }
         showToast(warning)
@@ -608,6 +608,13 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private static let draftKeptOpenTitle = "Couldn't keep draft; editor stays open"
     private static let draftKeptFailureTitle = "Couldn't add note; draft kept"
+    private static let sessionNamePlaceholder = "Session name"
+    private static let permissionsHint = "Open the menu bar icon → Permissions"
+    private static let longDatePattern = "MMM d, yyyy"
+
+    private static func slashPath(_ path: String) -> String { "/" + path }
+
+    static func stillActive(_ name: String) -> String { "\(name) still active" }
 
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
@@ -674,7 +681,7 @@ final class AppController: NSObject, NSMenuDelegate {
             let key = NoteTitle.matchKey(prefix)
             return suggestions.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }.prefix(8).map {
                 let session = $0.kind == .session
-                let date = Self.stamp($0.modified, pattern: "MMM d, yyyy", calendar: calendar)
+                let date = Self.stamp($0.modified, pattern: Self.longDatePattern, calendar: calendar)
                 let detail = "\($0.kind.pickerLabel) · \(date)"
                 let pathDetail = session ? "\(detail) · \($0.path)" : detail
                 return Suggestion(title: $0.title,
@@ -732,7 +739,7 @@ final class AppController: NSObject, NSMenuDelegate {
             } else {
                 let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                 guard await controller.waitForAcquisition() else { return }
-                controller.presentInput(placeholder: "Session name", suggestions: suggestions, onSubmit: { [weak controller] name in
+                controller.presentInput(placeholder: Self.sessionNamePlaceholder, suggestions: suggestions, onSubmit: { [weak controller] name in
                     controller?.enqueue(runsDuringQuit: true) { controller in
                         _ = controller.captures.commitPending()
                         await controller.captures.waitForCommits()
@@ -793,7 +800,7 @@ final class AppController: NSObject, NSMenuDelegate {
         let calendar = pipeline.calendar
         let choices = candidates.map {
             Suggestion(title: $0.name,
-                       secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: "MMM d, yyyy", calendar: calendar)) · \($0.notePath)",
+                       secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: Self.longDatePattern, calendar: calendar)) · \($0.notePath)",
                        symbolName: NoteKind.session.pickerSymbol,
                        value: $0.notePath)
         }
@@ -1216,7 +1223,7 @@ final class AppController: NSObject, NSMenuDelegate {
         if pinFailed {
             showToast(Toast(style: .warning, title: "Note saved, but not pinned", subtitle: saved.destination.title))
         } else if let outsideSessionName {
-            showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(outsideSessionName) still active"))
+            showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(Self.stillActive(outsideSessionName))"))
         } else if let created {
             let appended = !created && saved.destination.kind == .session
             showToast(Toast(style: .success, title: created ? "Note created" : appended ? "Saved to \(saved.destination.title)" : "Note added",
@@ -1585,7 +1592,7 @@ extension AppController: CaptureQueueHost {
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
         let session = outsideSession ? await pipeline.currentSession() : nil
         let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
-            + (session.map { " · \($0.name) still active" } ?? "")
+            + (session.map { " · " + Self.stillActive($0.name) } ?? "")
         if captures.pending == nil { showToast(Toast(style: .success, title: title, duration: 1.6)) }
     }
 
