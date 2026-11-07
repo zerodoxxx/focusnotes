@@ -96,7 +96,7 @@ actor SessionRenameTransaction {
         let intent = try await begin(oldPath: candidate.notePath, session: renamed, followingCaptures: followingCaptures)
         let recorder = installationRecorder(for: intent)
         do {
-            _ = try await sessions.rename(candidate, to: name, beforeInstall: { stage in
+            _ = try await sessions.rename(candidate, to: renamed, beforeInstall: { stage in
                 try recorder(stage)
                 try beforeInstall?(stage)
             }, afterSwap: afterSwap)
@@ -237,7 +237,7 @@ actor SessionRenameTransaction {
         }
         let candidate = SessionCandidate(name: intent.session.name, notePath: intent.oldPath, modifiedAt: source.modifiedAt)
         let recorder = installationRecorder(for: intent)
-        do { _ = try await sessions.rename(candidate, to: intent.session.name, beforeInstall: recorder) }
+        do { _ = try await sessions.rename(candidate, to: intent.session, beforeInstall: recorder) }
         catch {
             // State persistence can fail after installation; keep that committed file.
             guard let recorded = try pending(),

@@ -193,7 +193,16 @@ public actor SessionStore {
     public func rename(_ candidate: SessionCandidate, to rawName: String,
                        beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
                        afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
-        let destination = try renameDestination(candidate, to: rawName)
+        try rename(candidate, to: try renameDestination(candidate, to: rawName), beforeInstall: beforeInstall, afterSwap: afterSwap)
+    }
+
+    /// Installs a destination from renameDestination, so callers that persist it first install the same session.
+    public func rename(_ candidate: SessionCandidate, to destination: Session,
+                       beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
+                       afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
+        try requireSession(at: candidate.notePath)
+        guard (destination.notePath as NSString).deletingLastPathComponent
+                == (candidate.notePath as NSString).deletingLastPathComponent else { throw SessionStoreError.invalidRename }
         do {
             try NoteFile.renameSession(in: vault.rootAnchor, relativePath: candidate.notePath,
                                        newName: (destination.notePath as NSString).lastPathComponent,

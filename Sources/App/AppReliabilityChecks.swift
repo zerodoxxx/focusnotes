@@ -17,6 +17,7 @@ func checkAppReliability() async throws {
     try await checkChangesDuringInitialScan()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
+    try await checkSessionRenameSingleDestination()
     try await checkSessionRenameCrashBoundaries()
     try await checkSessionRenameAbandonment()
     try await checkSessionPickerEscapeRestoresSelection()
@@ -638,6 +639,35 @@ private func checkSessionPickerEscapeRestoresSelection() async throws {
     try await Task.sleep(for: .milliseconds(350))
     guard controller.inputForChecks?.selectedValueForChecks == second.notePath, await pipeline.selfCheck.sessions.current() == nil else {
         throw SelfTestFailure("Escape from rename did not restore the original picker selection without activating a session")
+    }
+}
+
+private final class AdvancingClock: @unchecked Sendable {
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var seconds: TimeInterval = 1_700_000_000
+    nonisolated func now() -> Date { lock.withLock { seconds += 1; return Date(timeIntervalSince1970: seconds) } }
+}
+
+/// The store must install the exact session the intent persisted and the outcome reports.
+private func checkSessionRenameSingleDestination() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-clock-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let clock = AdvancingClock()
+    let sessions = SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: { clock.now() })
+    let renames = SessionRenameTransaction(vault: pipeline.vault, stateDirectory: state, sessions: sessions, journal: pipeline.selfCheck.journal,
+                                           pins: pipeline.pins, index: pipeline.index, semantic: pipeline.semantic, logger: pipeline.logger)
+    let source = try await sessions.start(name: "archive/Standup")
+    let candidate = SessionCandidate(name: source.name, notePath: source.notePath, modifiedAt: .distantPast)
+    // A corrupt intent after the swap skips recovery, so the store keeps whatever rename installed.
+    let intentURL = state.appendingPathComponent("session-rename.json")
+    let outcome = try await renames.rename(candidate, to: "Daily sync", followingCaptures: [], afterSwap: {
+        try Data("{invalid JSON".utf8).write(to: intentURL, options: .atomic)
+    })
+    let restored = await SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: Date.init).current()
+    guard await sessions.current() == outcome.session, restored == outcome.session else {
+        throw SelfTestFailure("Session rename installed a different session than its intent and outcome")
     }
 }
 
