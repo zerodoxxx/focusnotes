@@ -36,10 +36,6 @@ internal sealed class ForegroundTracker : IDisposable
 
     public enum Decision { Track, Keep, Clear }
 
-    /// Our own windows and the shell are never targets.
-    public static bool ShouldTrack(uint processId, uint ownProcessId, string? className) =>
-        Decide(processId, ownProcessId, className) == Decision.Track;
-
     /// The last tracked window, or 0.
     public nint Last => (nint)Interlocked.Read(ref last);
 

@@ -27,13 +27,16 @@ internal sealed partial class AppController
         return File.Exists(exe) ? exe : Path.Combine(AppContext.BaseDirectory, "CaptureApp.EmbedHelper.dll");
     }
 
+    private static string ModelPath(string directory, string relativePath) =>
+        Path.Combine(directory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
     internal static bool ModelsInstalled(string directory) =>
-        ModelManifest.Current.RequiredFiles.All(file => File.Exists(Path.Combine(directory, file.Replace('/', Path.DirectorySeparatorChar))));
+        ModelManifest.Current.RequiredFiles.All(file => File.Exists(ModelPath(directory, file)));
 
     private void InitializeSemantic()
     {
         var models = ModelsDirectory;
-        var modelFiles = ModelManifest.Current.EmbeddingModelFiles.Select(file => Path.Combine(models, file.Path.Replace('/', Path.DirectorySeparatorChar))).ToArray();
+        var modelFiles = ModelManifest.Current.EmbeddingModelFiles.Select(file => ModelPath(models, file.Path)).ToArray();
         semantic = new SemanticIndexer(new VaultSemanticSource(pipeline.Index, pipeline.Vault),
             () => new EmbedClient(HelperPath(), models),
             () => new VectorStore(Path.Combine(pipeline.StateDirectory, "vectors.sqlite"), modelFiles: modelFiles, log: message => log.Error(message)),
@@ -94,8 +97,6 @@ internal sealed partial class AppController
     {
         return installer ??= new ModelInstaller(ModelsDirectory, ModelInstaller.DefaultBundledResources, log: message => log.Error(message));
     }
-
-    internal bool ModelsAreInstalled => ModelsInstalled(ModelsDirectory);
 
     private void ActivateSemanticMenu()
     {
