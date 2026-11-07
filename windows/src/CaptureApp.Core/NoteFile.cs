@@ -8,16 +8,6 @@ public static partial class NoteFile
     public static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     private static readonly ConcurrentDictionary<string, object> Gates = new(StringComparer.Ordinal);
     internal static object Gate(string path) => Gates.GetOrAdd(path, _ => new());
-    public static string[] PathComponents(string path)
-    {
-        var parts = path.Split('/');
-        if (path.Length == 0 || Path.IsPathRooted(path) || path.Contains('\\') || NoteTitle.ContainsControlCharacters(path) || parts.Any(p => p is "" or "." or ".."))
-        {
-            throw new VaultFileException(VaultFileError.PermissionDenied);
-        }
-
-        return parts;
-    }
 
     public static string ResolveSelectedRoot(string path)
     {
@@ -38,7 +28,7 @@ public static partial class NoteFile
 
     public static string SafePath(string root, string relativePath, bool createParents = false)
     {
-        var parts = PathComponents(relativePath);
+        var parts = Vault.PathComponents(relativePath);
         var current = root;
         ValidateDirectory(current, createParents);
         for (var i = 0; i < parts.Length; i++)
@@ -526,7 +516,7 @@ public static partial class NoteFile
 
     public static bool CreateAsset(byte[] data, string root, string relativePath)
     {
-        var components = PathComponents(relativePath);
+        var components = Vault.PathComponents(relativePath);
         var parent = string.Join('/', components.SkipLast(1));
         _ = SafePath(root, parent.Length == 0 ? ".asset-check" : parent + "/.asset-check", true);
         var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));

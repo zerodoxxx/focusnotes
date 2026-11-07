@@ -199,7 +199,7 @@ public sealed class SessionStore
             _ = Existing().FirstOrDefault(n => vault.NoteId(n.Url) == candidate.NotePath)
                 ?? throw new SessionStoreException(SessionStoreError.CandidateNoLongerExists, path: candidate.NotePath);
             var title = RenameTitle(newName);
-            var parts = NoteFile.PathComponents(candidate.NotePath);
+            var parts = Vault.PathComponents(candidate.NotePath);
             if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName)
             {
                 throw new NotePathNameException(NotePathNameError.InvalidComponent);
@@ -225,8 +225,8 @@ public sealed class SessionStore
         lock (gate)
         {
             vault.Prepare();
-            var parts = NoteFile.PathComponents(plan.Target.NotePath);
-            var old = NoteFile.PathComponents(plan.OldPath);
+            var parts = Vault.PathComponents(plan.Target.NotePath);
+            var old = Vault.PathComponents(plan.OldPath);
             if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName ||
                 !parts.SkipLast(1).SequenceEqual(old.SkipLast(1)) || RenameTitle(plan.Target.Name) != plan.Target.Name ||
                 parts[^1] != vault.NamingRules.FileStem(plan.Target.Name) + ".md")
@@ -276,7 +276,7 @@ public sealed class SessionStore
         if (plan.Installation is not { } stage) return;
         // With neither session name present, the staged rewrite may be the note's only copy.
         var lost = vault.FileSnapshot(plan.Target.NotePath, false) is null && vault.FileSnapshot(plan.OldPath, false) is null;
-        NoteFile.RemoveSessionTemporary(vault.Root, stage, lost ? NoteFile.PathComponents(plan.Target.NotePath)[^1] : null);
+        NoteFile.RemoveSessionTemporary(vault.Root, stage, lost ? Vault.PathComponents(plan.Target.NotePath)[^1] : null);
     }
 
     private string RenameTitle(string raw)

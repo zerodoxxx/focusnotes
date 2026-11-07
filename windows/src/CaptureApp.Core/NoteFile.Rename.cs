@@ -10,8 +10,8 @@ public static partial class NoteFile
     internal static void RenameSession(string root, string oldPath, string newPath, string title,
         Action<VaultFileSnapshot, byte[], SessionRenameStage>? beforeRename = null, Action? beforeReplace = null)
     {
-        var oldParts = PathComponents(oldPath);
-        var newParts = PathComponents(newPath);
+        var oldParts = Vault.PathComponents(oldPath);
+        var newParts = Vault.PathComponents(newPath);
         if (!oldParts.SkipLast(1).SequenceEqual(newParts.SkipLast(1)))
         {
             throw new VaultFileException(VaultFileError.InvalidFileName);
@@ -143,7 +143,7 @@ public static partial class NoteFile
     // the restorable ".recovered-" name instead of deleted, unless that copy already exists.
     internal static void RemoveSessionTemporary(string root, SessionRenameStage stage, string? keepFor = null)
     {
-        var parts = PathComponents(stage.TemporaryPath);
+        var parts = Vault.PathComponents(stage.TemporaryPath);
         if (!TempNames.IsPending(parts[^1]))
             throw new VaultFileException(VaultFileError.InvalidFileName);
         using var ancestors = RenameAncestors.Lock(root, parts);
@@ -175,10 +175,10 @@ public static partial class NoteFile
     // Installs a verified ".recovered-" copy of a staged temporary at a missing session target; never overwrites.
     internal static void InstallSessionTemporary(string root, SessionRenameStage stage, string targetPath)
     {
-        var parts = PathComponents(stage.TemporaryPath);
+        var parts = Vault.PathComponents(stage.TemporaryPath);
         if (!TempNames.IsPending(parts[^1]))
             throw new VaultFileException(VaultFileError.InvalidFileName);
-        var targetParts = PathComponents(targetPath);
+        var targetParts = Vault.PathComponents(targetPath);
         if (!parts.SkipLast(1).SequenceEqual(targetParts.SkipLast(1)))
             throw new VaultFileException(VaultFileError.InvalidFileName);
         lock (Gate(SafePath(root, targetPath)))

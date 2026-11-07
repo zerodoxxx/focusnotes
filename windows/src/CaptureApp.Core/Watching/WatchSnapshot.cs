@@ -45,7 +45,7 @@ internal sealed record WatchSnapshot(FileAttributes Attributes, long Size, long 
     internal static WatchSnapshot? Managed(string root, string relative, bool directory = false)
     {
         var current = root;
-        var parts = NoteFile.PathComponents(relative);
+        var parts = Vault.PathComponents(relative);
         for (var i = 0; i <= parts.Length; i++)
         {
             var value = At(current);

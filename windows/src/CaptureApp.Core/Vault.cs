@@ -29,6 +29,17 @@ public sealed class Vault
     public const string InboxTitle = "Inbox";
     public const string SessionsDirectoryName = "Sessions";
     public const string AssetsDirectoryName = "assets";
+    public static string[] PathComponents(string path)
+    {
+        var parts = path.Split('/');
+        if (path.Length == 0 || Path.IsPathRooted(path) || path.Contains('\\') || NoteTitle.ContainsControlCharacters(path) || parts.Any(p => p is "" or "." or ".."))
+        {
+            throw new VaultFileException(VaultFileError.PermissionDenied);
+        }
+
+        return parts;
+    }
+
     public string Root { get; }
     public string HomeRoot { get; }
     public string InboxUrl => Path.Combine(Root, InboxFileName);
@@ -311,7 +322,7 @@ public sealed class Vault
 
     private void ValidateNoteLocation(NotePathScope scope, string relative)
     {
-        var components = NoteFile.PathComponents(relative);
+        var components = PathComponents(relative);
         if (NoteTitle.IsOwnerFileName(components[^1]) || scope == NotePathScope.Vault && components[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
@@ -365,7 +376,7 @@ public sealed class Vault
     public string UrlForRelativePath(string path) => Path.Combine(Root, path.Replace('/', Path.DirectorySeparatorChar));
     public string ManagedUrl(string relativePath)
     {
-        _ = NoteFile.PathComponents(relativePath);
+        _ = PathComponents(relativePath);
         var managed = ManagedLocation(UrlForRelativePath(relativePath));
         if (managed.Scope != NotePathScope.Vault || managed.RelativePath != relativePath)
         {

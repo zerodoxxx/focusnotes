@@ -57,7 +57,7 @@ public sealed class SearchIndexExecutor() : IAreaExecutor
 
         private string Url(string path)
         {
-            _ = NoteFile.PathComponents(path);
+            _ = Vault.PathComponents(path);
             return Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar));
         }
 
@@ -192,7 +192,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
         private string Url(string path)
         {
             var relative = path.StartsWith('/') ? path[1..] : path;
-            _ = NoteFile.PathComponents(relative);
+            _ = Vault.PathComponents(relative);
             return Path.Combine(path.StartsWith('/') ? home : root, relative.Replace('/', Path.DirectorySeparatorChar));
         }
 
