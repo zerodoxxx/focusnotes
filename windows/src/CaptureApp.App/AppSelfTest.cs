@@ -6,6 +6,7 @@ using CaptureApp.Embed;
 using CaptureApp.Platform.Hotkeys;
 using CaptureApp.Platform.Ocr;
 using CaptureApp.Platform.Tray;
+using CaptureApp.Updates;
 using SkiaSharp;
 using Velopack;
 using Velopack.Locators;
@@ -55,7 +56,7 @@ internal static class AppSelfTest
         string channel;
         try { channel = VelopackLocator.Current?.Channel ?? "not installed"; }
         catch (Exception) { channel = "not installed"; }
-        var expectedChannel = "win-" + architecture;
+        var expectedChannel = FeedNames.Channel(architecture);
         if (channel != "not installed" && !string.Equals(channel, expectedChannel, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"The installed channel {channel} does not match {expectedChannel}.");

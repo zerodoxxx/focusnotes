@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
+using CaptureApp.Updates;
 
 namespace CaptureApp.App;
 
@@ -121,7 +122,7 @@ internal sealed class SettingsWindow : Window
             message.Text = "Checking… the result appears as a notification.";
         })));
         panel.Children.Add(UiKit.Rule());
-        var channel = "win-" + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        var channel = FeedNames.Channel(RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant());
         panel.Children.Add(UiKit.Text($"Version {AppInfo.Version} · channel {channel}", 13));
         return panel;
     }

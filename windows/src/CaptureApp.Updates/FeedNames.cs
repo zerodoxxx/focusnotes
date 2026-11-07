@@ -4,6 +4,10 @@ namespace CaptureApp.Updates;
 public static class FeedNames
 {
     public const string SignatureSuffix = ".sig";
+    public const string ChannelPrefix = "win-";
+
+    /// <summary>The update channel for a lower-case process architecture, e.g. "win-x64".</summary>
+    public static string Channel(string architecture) => ChannelPrefix + architecture;
 
     public static string IndexFile(string channel) => $"releases.{channel}.json";
 

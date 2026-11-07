@@ -472,6 +472,7 @@ jobs:
 
           dotnet build windows/tools/IndexSigner -c Release --artifacts-path "$RUNNER_TEMP/signer" >/dev/null
           signer="$RUNNER_TEMP/signer/bin/CaptureApp.IndexSigner/release/CaptureApp.IndexSigner.dll"
+          # Index and signature names mirror windows/src/CaptureApp.Updates/FeedNames.cs.
           for index in windows-dist/*/releases.win-*.json; do
             channel="$(basename "$index" .json)"; channel="${channel#releases.}"
             dotnet "$signer" sign --key-env WINDOWS_UPDATE_ED_KEY_1 --key-id "$key_id" --channel "$channel" "$index"
