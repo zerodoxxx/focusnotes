@@ -374,13 +374,13 @@ public sealed class SessionRenameTests
         Assert.False(pipeline.Pins.IsPinned(original.NotePath));
         Assert.True(pipeline.Pins.IsPinned("Sessions/Daily sync.md"));
         Assert.Equal(expected, pipeline.Sessions.Current());
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(expected, coordinator.ActiveSession);
         Assert.Equal(pipeline.Vault.ManagedUrl("Sessions/Daily sync.md"), pipeline.Commit(preparedBeforeRename).Destination.Url);
         var job = pipeline.PrepareText("after transition", new CaptureSource());
         var saved = pipeline.Commit(job);
         Assert.Equal(expected is null ? pipeline.Vault.InboxUrl : pipeline.Vault.ManagedUrl(expected.NotePath), saved.Destination.Url);
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
     }
 
     [Theory]
@@ -403,7 +403,7 @@ public sealed class SessionRenameTests
         await Assert.ThrowsAnyAsync<Exception>(() => Transition(coordinator, transition, Candidate(other)));
 
         Assert.Equal(before, pipeline.Sessions.Current());
-        AssertSessionPath(before, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(before, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(before, coordinator.ActiveSession);
         Assert.True(File.Exists(IntentPath(pipeline.StateDirectory)));
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Requested.md")));
@@ -412,7 +412,7 @@ public sealed class SessionRenameTests
         RepairPins(pipeline, pinBackup);
         var expected = await Transition(coordinator, transition, Candidate(other));
         Assert.Equal(expected, pipeline.Sessions.Current());
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(expected, coordinator.ActiveSession);
         Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
     }

@@ -78,7 +78,7 @@ public sealed class ExternalNoteTests
         var vault = new Vault(root, e.Registry, e.Home, new() { WindowsRules = false });
         vault.Prepare();
         var writer = new NoteWriter(vault, CheckVault.Zone);
-        var sessions = new SessionStore(e.State, vault, CheckVault.Zone, CheckVault.Clock);
+        var sessions = new SessionStore(e.State, vault, CheckVault.Clock);
         var service = new CaptureService(vault, sessions, writer, CheckVault.Clock);
         var location = vault.ResolveNoteName("/Vault/Subfolder/Inside");
         Assert.Equal(NotePathScope.Vault, location.Scope);

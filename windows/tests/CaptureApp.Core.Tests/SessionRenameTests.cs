@@ -29,7 +29,7 @@ public sealed class SessionRenameTests
         var target = e.Vault.UrlForRelativePath(renamed.NotePath);
         Assert.Equal("# Daily sync\n\n![screen](../../assets/screen.png)\n\nuntouchedneedle\n", CheckVault.Read(target));
         Assert.Equal(renamed, e.Sessions.Current());
-        Assert.Equal(renamed, new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock).Current());
+        Assert.Equal(renamed, new SessionStore(e.State, e.Vault, CheckVault.Clock).Current());
         Assert.NotNull(intent);
         Assert.Equal(Candidate().NotePath, intent.OldPath);
         Assert.Equal(renamed, intent.Target);

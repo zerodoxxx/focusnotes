@@ -54,11 +54,11 @@ public sealed class SessionStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true
     };
-    public string StateFileUrl => System.IO.Path.Combine(stateDirectory, "session.json");
+    private const string StateFileName = "session.json";
+    public string StateFileUrl => System.IO.Path.Combine(stateDirectory, StateFileName);
 
-    public SessionStore(string stateDirectory, Vault vault, TimeZoneInfo timeZone, TimeProvider? timeProvider = null, Action<string>? beforeNoteWrite = null)
+    public SessionStore(string stateDirectory, Vault vault, TimeProvider? timeProvider = null, Action<string>? beforeNoteWrite = null)
     {
-        _ = timeZone;
         this.stateDirectory = System.IO.Path.GetFullPath(stateDirectory);
         this.vault = vault;
         clock = timeProvider ?? TimeProvider.System;
@@ -114,7 +114,7 @@ public sealed class SessionStore
     {
         lock (gate)
         {
-            var raw = vault.NamingRules.WindowsRules ? name.Replace('\\', '/') : name;
+            var raw = vault.NamingRules.NormalizeSeparators(name);
             var cleaned = NoteTitle.CleanTitle(raw);
             if (cleaned.Length == 0) throw new NotePathNameException(NotePathNameError.EmptyPath);
             vault.Prepare();
@@ -177,7 +177,7 @@ public sealed class SessionStore
         }
 
         var existing = matches.FirstOrDefault();
-        return StartAt(existing?.Title ?? title, existing is null ? directory + "/" + stem + ".md" : vault.NoteId(existing.Url), existing);
+        return StartAt(existing?.Title ?? title, existing is null ? directory + "/" + stem + Vault.MarkdownExtension : vault.NoteId(existing.Url), existing);
     }
 
     public Session Resume(SessionCandidate candidate)
@@ -206,7 +206,7 @@ public sealed class SessionStore
             }
             var components = parts.SkipLast(1).Append(vault.NamingRules.FileStem(title)).ToArray();
             var name = NotePathName.Validated(NotePathScope.Vault, components, vault.NamingRules);
-            var newPath = name.RelativePath + ".md";
+            var newPath = name.RelativePath + Vault.MarkdownExtension;
             var target = new Session(title, newPath, clock.GetUtcNow(), true);
             NoteFile.RenameSession(vault.Root, candidate.NotePath, newPath, title, (snapshot, rewritten, stage) =>
             {
@@ -229,7 +229,7 @@ public sealed class SessionStore
             var old = Vault.PathComponents(plan.OldPath);
             if (parts.Length < 2 || parts[0] != Vault.SessionsDirectoryName ||
                 !parts.SkipLast(1).SequenceEqual(old.SkipLast(1)) || RenameTitle(plan.Target.Name) != plan.Target.Name ||
-                parts[^1] != vault.NamingRules.FileStem(plan.Target.Name) + ".md")
+                parts[^1] != vault.NamingRules.FileStem(plan.Target.Name) + Vault.MarkdownExtension)
             {
                 throw new VaultFileException(VaultFileError.InvalidFileName);
             }
@@ -287,7 +287,7 @@ public sealed class SessionStore
         }
         var title = NoteTitle.CleanTitle(raw);
         var stem = vault.NamingRules.FileStem(title);
-        if (title is "" or "." or ".." || stem.StartsWith("~$", StringComparison.Ordinal))
+        if (title is "" or "." or ".." || NoteTitle.IsOwnerFileName(stem))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
@@ -329,9 +329,9 @@ public sealed class SessionStore
             ["name"] = started.Name,
             ["notePath"] = started.NotePath,
             ["resumed"] = started.Resumed,
-            ["startedAt"] = started.StartedAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            ["startedAt"] = started.StartedAt.UtcDateTime.ToString(CaptureFormat.IsoUtcStampPattern, System.Globalization.CultureInfo.InvariantCulture)
         };
-        NoteFile.AtomicWrite(JsonSerializer.SerializeToUtf8Bytes(persisted, Options), stateDirectory, "session.json");
+        NoteFile.AtomicWrite(JsonSerializer.SerializeToUtf8Bytes(persisted, Options), stateDirectory, StateFileName);
         session = started;
         return started;
     }

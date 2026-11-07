@@ -187,7 +187,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
             clock = new(input.Clock);
             vault = new(root, homeDirectoryUrl: home, namingRules: new() { WindowsRules = false });
             writer = new(vault, zone, clock);
-            sessions = new(state, vault, zone, clock);
+            sessions = new(state, vault, clock);
             foreach (var file in input.Files.OrderBy(x => x.Key, StringComparer.Ordinal))
             {
                 Write(file.Key, file.Value);
@@ -371,7 +371,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
                     sessions.End();
                     return null;
                 case "reload":
-                    sessions = new(state, vault, zone, clock);
+                    sessions = new(state, vault, clock);
                     return SessionResult(sessions.Current());
                 case "persisted":
                     return JsonDocument.Parse(File.ReadAllBytes(Path.Combine(state, "session.json"))).RootElement.Clone();

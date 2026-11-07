@@ -35,7 +35,7 @@ internal sealed class CheckVault : IDisposable
         Directory.CreateDirectory(Home);
         Vault = new(Path.Combine(Base, "Vault"), registry ? Registry : null, Home, new() { WindowsRules = windowsRules });
         Writer = new(Vault, Zone, Clock);
-        Sessions = new(State, Vault, Zone, Clock);
+        Sessions = new(State, Vault, Clock);
         Service = new(Vault, Sessions, Writer, Clock);
     }
 

@@ -37,7 +37,7 @@ public static class SelfTest
             await WritePass(output, "pipeline opened").ConfigureAwait(false);
 
             var session = pipeline.StartSession("Self-Test Session");
-            var restoredSession = new SessionStore(stateDirectory, pipeline.Vault, zone).Current();
+            var restoredSession = new SessionStore(stateDirectory, pipeline.Vault).Current();
             var externalPath = Path.Combine(pipeline.Vault.HomeRoot, "External.md");
             Directory.CreateDirectory(pipeline.Vault.HomeRoot);
             await File.WriteAllTextAsync(externalPath, "# External\n", new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);

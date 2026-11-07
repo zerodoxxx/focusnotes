@@ -70,7 +70,7 @@ public sealed class CapturePipeline : IDisposable
         vault.Prepare();
         var journal = new CaptureJournal(state);
         var index = new SearchIndex(vault, Path.Combine(state, "index.sqlite"), zone);
-        var sessions = new SessionStore(state, vault, zone, clock);
+        var sessions = new SessionStore(state, vault, clock);
         var writer = new NoteWriter(vault, zone, clock);
         var service = new CaptureService(vault, sessions, writer, clock);
         var monitor = new VaultMonitor(vault, index, state, watcherLatencySeconds);
