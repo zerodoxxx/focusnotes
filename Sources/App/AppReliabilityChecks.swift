@@ -15,6 +15,7 @@ func checkAppReliability() async throws {
     try checkRelaunchLifecycle()
     try await checkNotesFolder()
     try await checkChangesDuringInitialScan()
+    try checkMixedCaseAssetChangesSkipFullValidation()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
     try await checkSessionRenameSingleDestination()
@@ -1012,6 +1013,18 @@ private func checkChangesDuringInitialScan() async throws {
     }
     guard await recorder.sawNoteOnlyAssetRefresh() else {
         throw SelfTestFailure("A note-only event must check new image references without rehashing unchanged assets")
+    }
+}
+
+/// Case-insensitive volumes report `assets/` in whatever case the folder has; those are still known assets.
+private func checkMixedCaseAssetChangesSkipFullValidation() throws {
+    let assets: Set<String> = ["ASSETS/x.png", "Assets/sub/y.jpg", "assets/z.png"]
+    guard !VaultMonitor.needsFullAssetValidation(for: VaultChange(notesChanged: [], assetsChanged: assets, needsFullSync: false)) else {
+        throw SelfTestFailure("Mixed-case asset paths forced a full asset validation")
+    }
+    guard VaultMonitor.needsFullAssetValidation(for: VaultChange(notesChanged: [], assetsChanged: assets.union(["notes/a.md"]),
+                                                                 needsFullSync: false)) else {
+        throw SelfTestFailure("A non-asset path was treated as a known asset change")
     }
 }
 
