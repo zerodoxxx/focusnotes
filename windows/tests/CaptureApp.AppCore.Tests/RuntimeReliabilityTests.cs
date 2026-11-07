@@ -13,7 +13,7 @@ public sealed class RuntimeReliabilityTests
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         using var temp = new TempDirectory();
-        var pipeName = "captureapp-test-" + Guid.NewGuid().ToString("N");
+        var pipeName = "fn-" + Guid.NewGuid().ToString("N")[..12];
         var showReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using (var first = await SingleInstance.StartAsync(temp.Path, pipeName, () => showReceived.TrySetResult(), cancellationToken))
         {
