@@ -98,6 +98,11 @@ func checkNoteParser() throws {
     try require(fallback.title == "Fallback" && fallback.blocks[0].body == "No leading title", "missing title should use the file stem and preserve the first line")
     let bom = NoteParser.parse(contents: "\u{FEFF}# \t \n\nbody", notePath: "Stem.md", titleFallback: "Stem", calendar: calendar)
     try require(bom.title == "Stem", "BOM and empty cleaned titles should follow Vault's fallback rule")
+    // U+200B is not Swift whitespace but Foundation trims it; the parser must keep Swift's definition.
+    let zeroWidth = NoteParser.parse(contents: "# Fixture\n\nalpha\n\u{200B}\nbeta\n", notePath: "ZW.md", titleFallback: "ZW", calendar: calendar)
+    try require(zeroWidth.blocks.map(\.body) == ["alpha\n\u{200B}\nbeta"], "a zero-width-space line must not split a loose paragraph")
+    let zeroWidthCapture = NoteParser.parse(contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\u{200B}\nbody\n\u{200B}\n \n", notePath: "ZW.md", titleFallback: "ZW", calendar: calendar)
+    try require(zeroWidthCapture.blocks.map(\.body) == ["\u{200B}\nbody\n\u{200B}"], "capture body trimming must only drop Swift-whitespace lines")
     let malformed = NoteParser.parse(contents: "# Malformed\n\n### 2026-02-30 10:04\n\(checkMarker(id))\n\nBad date\n\n### 2026-10-13 10:04\n<!-- capture:not-a-uuid -->\n\nBad marker", notePath: "Malformed.md", titleFallback: "Fallback", calendar: calendar)
     try require(malformed.blocks.allSatisfy { $0.kind == .loose }, "malformed dates and markers should degrade to loose Markdown")
 

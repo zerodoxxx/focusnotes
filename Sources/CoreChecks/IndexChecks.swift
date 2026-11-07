@@ -3,6 +3,19 @@ import Core
 import SQLite3
 import Foundation
 
+/// A manual note whose paragraph contains a U+200B-only line must stay one searchable block.
+func checkZeroWidthSpaceSearch() async throws {
+    let base = try checkMakeDirectory("zero-width-search")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    try vault.prepare()
+    try checkWrite("# Fixture\n\nalpha\n\u{200B}\nbeta\n", to: vault.root.appendingPathComponent("Fixture.md"))
+    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("index.sqlite"), calendar: checkCalendar())
+    _ = try await index.sync()
+    let hits = try await index.search("alpha beta")
+    try require(hits.count == 1 && hits[0].notePath == "Fixture.md", "both words of a zero-width-space paragraph must match one block")
+}
+
 func checkSearchIndex() async throws {
     let base = try checkMakeDirectory("index")
     defer { checkRemoveDirectory(base) }

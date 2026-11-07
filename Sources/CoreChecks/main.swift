@@ -82,6 +82,7 @@ do {
     try await checkTypedNotes()
     try await checkFolderRoutes()
     try await checkSearchIndex()
+    try await checkZeroWidthSpaceSearch()
     if !CommandLine.arguments.contains("--skip-performance") {
         try await checkSearchIndexPerformance()
     }

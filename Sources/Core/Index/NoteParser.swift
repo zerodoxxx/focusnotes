@@ -42,8 +42,8 @@ public enum NoteParser {
         for (offset, boundary) in boundaries.enumerated() {
             var bodyStart = boundary.marker + 1
             var bodyEnd = offset + 1 < boundaries.count ? boundaries[offset + 1].line : lines.count
-            if bodyStart < bodyEnd, CaptureFormat.isBlank(lines[bodyStart]) { bodyStart += 1 }
-            while bodyEnd > bodyStart, CaptureFormat.isBlank(lines[bodyEnd - 1]) { bodyEnd -= 1 }
+            if bodyStart < bodyEnd, isBlankLine(lines[bodyStart]) { bodyStart += 1 }
+            while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }
             var body = lines[bodyStart..<bodyEnd].joined(separator: "\n")
             if boundary.id == nil {
                 body = lines[boundary.line] + (body.isEmpty ? "" : "\n" + body)
@@ -290,6 +290,9 @@ public enum NoteParser {
         return URL(fileURLWithPath: notePath)
     }
 
+    /// Swift `isWhitespace`, not `CaptureFormat.isBlank`: a U+200B-only line is content, not a block break.
+    private static func isBlankLine(_ line: String) -> Bool { line.allSatisfy(\.isWhitespace) }
+
     private static func looseBlocks(_ lines: ArraySlice<String>) -> [ParsedBlock] {
         var blocks: [ParsedBlock] = []
         var region: [String] = []
@@ -308,7 +311,7 @@ public enum NoteParser {
             region.removeAll(keepingCapacity: true)
         }
         for line in lines {
-            if CaptureFormat.isBlank(line) { flush() } else { region.append(line) }
+            if isBlankLine(line) { flush() } else { region.append(line) }
         }
         flush()
         return blocks
