@@ -52,7 +52,6 @@ final class CaptureCommitQueue {
     func beginQuit() { isQuitting = true }
     func close() { isClosed = true }
     func hasPreparedJobForChecks(_ id: UUID) -> Bool { preparedJobs[id] != nil }
-    var commitTailForChecks: Task<SavedCapture, Error>? { commitTail }
     func isPending(_ id: UUID) -> Bool { pending?.id == id }
 
     /// Every job the queue may still write, for redirecting a session rename.
