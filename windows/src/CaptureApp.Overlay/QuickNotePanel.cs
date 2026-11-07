@@ -194,7 +194,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
         UpdateTitle();
         TextChanged?.Invoke(Editor.Text);
         if (suppressMeasure) return;
-        if (Editor.TextLength > Tokens.EditorRestyleLimit) { measureTimer.Stop(); measureTimer.Start(); return; } // Debounce measuring for large notes.
+        if (Editor.TextLength > Tokens.EditorRestyleLimit) { measureTimer.Stop(); measureTimer.Start(); return; }
         if (measurePending) return;
         measurePending = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Send, () => { measurePending = false; if (!disposed) Remeasure(true); });
@@ -331,7 +331,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 break;
             case NoteActionId.SaveAsNewNote:
                 if (AppendsToExisting) ActionRequested?.Invoke(id);
-                else SaveRequested?.Invoke(); // Nothing to escape: use the default save.
+                else SaveRequested?.Invoke();
                 break;
             default: ActionRequested?.Invoke(id); break;
         }
@@ -452,7 +452,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 if (open is NoteBrowseView)
                 {
                     if (key != Key.K || modifiers != ModifierKeys.Control) return false;
-                    ShowActions(); return true; // Swaps Browse for Actions.
+                    ShowActions(); return true;
                 }
                 if (ShortcutAction(key, modifiers) is not { } shortcut) return false;
                 HideActions(); Perform(shortcut); return true;

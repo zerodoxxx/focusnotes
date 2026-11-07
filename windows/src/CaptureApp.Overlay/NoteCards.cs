@@ -126,7 +126,6 @@ internal abstract class NoteCardView : Border
         Ui.Place(canvas, fieldHost, inset, (Tokens.CardFieldHeight - fieldHeight) / 2, DesiredCardSize.Width - inset * 2, fieldHeight);
         Ui.Place(canvas, headerSeparator, Tokens.Zero, Tokens.CardFieldHeight, DesiredCardSize.Width, Tokens.BorderWidth);
     }
-    /// <summary>Size the card and lay out its content.</summary>
     protected void ApplySize()
     {
         var size = DesiredCardSize; Width = size.Width; Height = size.Height;
