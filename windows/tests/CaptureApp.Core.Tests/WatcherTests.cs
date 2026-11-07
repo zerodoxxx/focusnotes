@@ -88,7 +88,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.08, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.08);
         Assert.False(watcher.IsRunning);
         watcher.Start();
         watcher.Start();
@@ -143,7 +143,7 @@ public sealed class WatcherTests
         try
         {
             var failed = 0;
-            using var watcher = new VaultWatcher(e.Vault, 0.05, change =>
+            using var watcher = new VaultWatcher(e.Vault, change =>
             {
                 if (change.NotesChanged.Contains("Fails.md") && Interlocked.Exchange(ref failed, 1) == 0)
                 {
@@ -151,7 +151,7 @@ public sealed class WatcherTests
                 }
 
                 recorder.Append(change);
-            });
+            }, 0.05);
             watcher.Start();
             recorder.Drain();
 
@@ -173,7 +173,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.08, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.08);
         watcher.Start();
         // A quiet gap cannot drain FileSystemWatcher's native event queue. Start with a fresh
         // watcher so a late duplicate from an earlier real write cannot fail this negative check.
@@ -195,7 +195,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.25, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.25);
         watcher.Start();
         recorder.Drain();
         var offset = recorder.Count;
@@ -228,7 +228,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         var fail = true;
         watcher.ConfigureWatchFallbackForChecks(64, 0.05, path => path == e.Vault.Root && fail);
         watcher.Start();
@@ -259,7 +259,7 @@ public sealed class WatcherTests
         _ = e.Vault.ListNotes(); // Warm cache is deliberately stale at subscription.
         Registry(e, "Direct.md", "Projects/Research/Science/Deep.md", "Added/Folder/Added.md");
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.08, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.08);
         watcher.Start();
         Assert.Equal(0, watcher.PollingFallbackCountForChecks);
         Assert.False(watcher.HasPollingTimerForChecks);
@@ -320,7 +320,7 @@ public sealed class WatcherTests
         e.Vault.Prepare();
         Directory.CreateDirectory(e.State);
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.06, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.06);
         watcher.Start();
         var generation = watcher.StreamGenerationForChecks;
         var local = e.Write("Direct.md", "initial", true);
@@ -362,7 +362,7 @@ public sealed class WatcherTests
         e.WriteRegistry("{\"version\":1,\"paths\":[\"Direct.md\"]}");
         var id = e.Vault.NoteId(note);
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.06, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.06);
         watcher.Start();
         recorder.Drain();
         var offset = recorder.Count;
@@ -416,7 +416,7 @@ public sealed class WatcherTests
         var polled = e.Write("Two/Second.md", "second", true);
         e.WriteRegistry("{\"version\":1,\"paths\":[\"One/First.md\",\"One/Sibling.md\",\"Two/Second.md\"]}");
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.06, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.06);
         watcher.ConfigureWatchFallbackForChecks(1, 0.05);
         watcher.Start();
         Assert.Equal(1, watcher.PollingFallbackCountForChecks);
@@ -457,7 +457,7 @@ public sealed class WatcherTests
         e.WriteRegistry("{\"version\":1,\"paths\":[\"Projects/Note.md\"]}");
         var parent = Path.GetDirectoryName(note)!;
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.ConfigureWatchFallbackForChecks(64, 0.05, path => path == parent);
         watcher.Start();
         Assert.True(watcher.IsRunning);
@@ -489,7 +489,7 @@ public sealed class WatcherTests
         e.WriteRegistry("{\"version\":1,\"paths\":[\"Projects/Note.md\"]}");
         var id = e.Vault.NoteId(note);
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.ConfigureWatchFallbackForChecks(64, 0.05);
         watcher.Start();
         var warning = recorder.Wait(c => c.NeedsFullSync);
@@ -518,7 +518,7 @@ public sealed class WatcherTests
         Directory.CreateDirectory(e.Vault.UrlForRelativePath("assets/old-directory"));
         e.Write("Folder/Child.md", "child");
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.Start();
         recorder.Drain();
         watcher.SetNativeEventsEnabledForChecks(false);
@@ -558,7 +558,7 @@ public sealed class WatcherTests
         var note = e.Write("Projects/Note.md", "initial", true);
         e.WriteRegistry("{\"version\":1,\"paths\":[\"Projects/Note.md\"]}");
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.ConfigureWatchFallbackForChecks(64, 0.1);
         watcher.Start();
         recorder.Drain();
@@ -587,7 +587,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.ConfigureWatchFallbackForChecks(64, 0.1);
         watcher.Start();
         recorder.Drain();
@@ -615,7 +615,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.Start();
         recorder.Drain();
         watcher.SetNativeEventsEnabledForChecks(false);
@@ -636,7 +636,7 @@ public sealed class WatcherTests
         using var e = new CheckVault();
         Directory.CreateDirectory(e.Vault.Root);
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.Start();
         recorder.Drain();
         watcher.SetNativeEventsEnabledForChecks(false);
@@ -661,7 +661,7 @@ public sealed class WatcherTests
         CheckVault.WriteAbsolute(Path.Combine(outside, "Hidden.md"), "outside");
         CheckVault.SymbolicLink(e.Vault.UrlForRelativePath("Linked"), outside, true);
         var recorder = new Recorder();
-        using var watcher = new VaultWatcher(e.Vault, 0.05, recorder.Append);
+        using var watcher = new VaultWatcher(e.Vault, recorder.Append, 0.05);
         watcher.Start();
         recorder.Drain();
         watcher.SetNativeEventsEnabledForChecks(false);

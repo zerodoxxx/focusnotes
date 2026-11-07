@@ -46,6 +46,7 @@ public sealed class VaultWatcher : IDisposable
     private const int MaxParentRetries = 5;
     private const double MinimumRetryMilliseconds = 30000;
     private const double FallbackIntervalsPerRetry = 4;
+    private const double DefaultLatencySeconds = 1.0;
     private readonly object gate = new();
     private readonly Vault vault;
     private readonly TimeSpan latency;
@@ -81,14 +82,12 @@ public sealed class VaultWatcher : IDisposable
         internal int Errors { get; set; }
     }
 
-    public VaultWatcher(Vault vault, Action<VaultChange> onChange, double latency = 1.0)
+    public VaultWatcher(Vault vault, Action<VaultChange> onChange, double latency = DefaultLatencySeconds)
     {
         this.vault = vault;
         this.onChange = onChange;
-        this.latency = TimeSpan.FromSeconds(double.IsFinite(latency) ? Math.Max(0, latency) : 1);
+        this.latency = TimeSpan.FromSeconds(double.IsFinite(latency) ? Math.Max(0, latency) : DefaultLatencySeconds);
     }
-
-    public VaultWatcher(Vault vault, double latency, Action<VaultChange> onChange) : this(vault, onChange, latency) { }
 
     public bool IsRunning { get { lock (gate) { return running; } } }
 
@@ -379,7 +378,7 @@ public sealed class VaultWatcher : IDisposable
         var name = parts[^1];
         return !parts.Any(p => p.StartsWith('.')) && !NoteTitle.IsOwnerFileName(name)
             && !name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".icloud", StringComparison.OrdinalIgnoreCase)
-            && (IsAsset(path) ? parts.Length >= 2 : Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase));
+            && (IsAsset(path) ? parts.Length >= 2 : Vault.IsMarkdown(name));
     }
 
     private static void Classify(string path, HashSet<string> notes, HashSet<string> assets)
@@ -481,7 +480,7 @@ public sealed class VaultWatcher : IDisposable
             try
             {
                 var value = !managed || PathComparer.Equals(candidate, boundary) ? WatchSnapshot.At(candidate)
-                    : WatchSnapshot.Managed(boundary, Path.GetRelativePath(boundary, candidate).Replace(Path.DirectorySeparatorChar, '/'), directory: true);
+                    : WatchSnapshot.Managed(boundary, CaptureFormat.RelativePath(boundary, candidate), directory: true);
                 value?.Metadata?.Validate(directory: true);
                 if (value is { IsDirectory: true, IsLink: false, IsPlaceholder: false }) { return candidate; }
             }
