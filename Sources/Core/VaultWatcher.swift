@@ -93,7 +93,7 @@ public final class VaultWatcher: @unchecked Sendable {
     // Includes descriptors whose dispatch sources have been cancelled but whose
     // cancel handlers have not closed them yet.
     private var retainedVnodeDescriptorCount = 0
-    private var reportedWatchIssues = Set<String>()
+    private var reportedWatchIssues = Set<WatchIssue>()
 
     private enum WatchIssue: Hashable {
         case vaultStreamUnavailable
@@ -118,20 +118,6 @@ public final class VaultWatcher: @unchecked Sendable {
             case .fileOpen(let id): return "file-open:\(id)"
             case .snapshot(let id): return "snapshot:\(id)"
             }
-        }
-
-        /// Literal issues carry no identifier, so only keyed issues can go stale when a note or parent leaves the registry.
-        static func keyed(fromKey key: String) -> WatchIssue? {
-            if key.hasPrefix("parent-open:") {
-                return .parentOpen(String(key.dropFirst("parent-open:".count)))
-            }
-            if key.hasPrefix("file-open:") {
-                return .fileOpen(String(key.dropFirst("file-open:".count)))
-            }
-            if key.hasPrefix("snapshot:") {
-                return .snapshot(String(key.dropFirst("snapshot:".count)))
-            }
-            return nil
         }
     }
 
@@ -217,7 +203,7 @@ public final class VaultWatcher: @unchecked Sendable {
     @_spi(Checks)
     public var reportedWatchIssuesForChecks: Set<String> {
         var issues = Set<String>()
-        performOnQueue { issues = self.reportedWatchIssues }
+        performOnQueue { issues = Set(self.reportedWatchIssues.map(\.key)) }
         return issues
     }
 
@@ -492,16 +478,17 @@ public final class VaultWatcher: @unchecked Sendable {
         updatePollingFallbackIDs()
         let validNoteIDs = Set(externalLocationsByID.keys)
         let validParentPaths = Set(desiredParentPaths.values)
-        reportedWatchIssues = Set(reportedWatchIssues.filter { key in
-            switch WatchIssue.keyed(fromKey: key) {
-            case .fileOpen(let id)?, .snapshot(let id)?:
+        // Literal issues carry no identifier, so only keyed issues can go stale when a note or parent leaves the registry.
+        reportedWatchIssues = reportedWatchIssues.filter { issue in
+            switch issue {
+            case .fileOpen(let id), .snapshot(let id):
                 return validNoteIDs.contains(id)
-            case .parentOpen(let path)?:
+            case .parentOpen(let path):
                 return validParentPaths.contains(path)
             default:
                 return true
             }
-        })
+        }
 
         if Set(desiredParentPaths.values).count > maximumParents {
             reportWatchIssue(
@@ -888,13 +875,13 @@ public final class VaultWatcher: @unchecked Sendable {
     }
 
     private func reportWatchIssue(key issue: WatchIssue, message: String) {
-        guard reportedWatchIssues.insert(issue.key).inserted else { return }
+        guard reportedWatchIssues.insert(issue).inserted else { return }
         Self.logger.warning("\(message, privacy: .public)")
         onChange(VaultChange(notesChanged: [], assetsChanged: [], needsFullSync: true))
     }
 
     private func clearWatchIssue(_ issue: WatchIssue) {
-        reportedWatchIssues.remove(issue.key)
+        reportedWatchIssues.remove(issue)
     }
 
     private func enqueueExternalFlush(_ update: () -> Void) {
