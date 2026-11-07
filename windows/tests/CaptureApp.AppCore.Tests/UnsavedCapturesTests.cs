@@ -9,7 +9,7 @@ public sealed class UnsavedCapturesTests
     public async Task CommitsSaveInOrderAndAFailedOneIsKeptUntilTheDrain()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var ledger = pipeline.Unsaved;
         var gate = new TaskCompletionSource<CaptureJob>(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = pipeline.PrepareText("firstneedle", new CaptureSource());
@@ -43,7 +43,7 @@ public sealed class UnsavedCapturesTests
     public async Task AnInFlightCommitIsNotARetryCandidate()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var ledger = pipeline.Unsaved;
         var gate = new TaskCompletionSource<CaptureJob>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queued = pipeline.PrepareText("queuedneedle", new CaptureSource());
@@ -58,7 +58,7 @@ public sealed class UnsavedCapturesTests
     public async Task AnEquivalentRetryReusesTheFailedCaptureId()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var ledger = pipeline.Unsaved;
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         var failed = pipeline.PrepareText("retryneedle", new CaptureSource());
@@ -79,7 +79,7 @@ public sealed class UnsavedCapturesTests
     public async Task ASupersededFailedCaptureIsDiscarded()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var ledger = pipeline.Unsaved;
         var blocked = Path.Combine(pipeline.Vault.Root, "Blocked.md");
         Directory.CreateDirectory(blocked);
@@ -98,7 +98,7 @@ public sealed class UnsavedCapturesTests
     public async Task APreparedSessionCaptureIsSavedToTheRenamedNote()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var ledger = pipeline.Unsaved;
         var session = pipeline.Sessions.Start("Standup");
         // Prepared but neither recorded nor committed: only the ledger knows it targets the session note.
@@ -113,7 +113,4 @@ public sealed class UnsavedCapturesTests
         Assert.Contains("renameneedle", File.ReadAllText(newUrl), StringComparison.Ordinal);
         Assert.Empty(pipeline.Journal.RecordPaths());
     }
-
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 }

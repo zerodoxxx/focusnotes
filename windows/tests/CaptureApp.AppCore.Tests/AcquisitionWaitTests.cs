@@ -12,7 +12,7 @@ public sealed class AcquisitionWaitTests
     public async Task SettleReturnsAtOnceWhenNothingIsBeingAcquired()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         await coordinator.SettleCapturesAsync().WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
     }
@@ -26,7 +26,7 @@ public sealed class AcquisitionWaitTests
     public async Task SessionChangeWaitsForAnAcquisitionStartedInTheSession(string change)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var earlier = change == "resume" ? await coordinator.StartSessionAsync("Kinetics") : null;
         var session = await coordinator.StartSessionAsync("Thermo");
@@ -48,53 +48,41 @@ public sealed class AcquisitionWaitTests
         var next = await operation.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Contains(Needle, File.ReadAllText(pipeline.Vault.ManagedUrl(session.NotePath)), StringComparison.Ordinal);
         Assert.DoesNotContain(Needle, File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
-        if (next is not null)
+        if (change == "end")
         {
+            Assert.Null(next);
+        }
+        else
+        {
+            Assert.NotNull(next);
             Assert.NotEqual(session.NotePath, next.NotePath);
             Assert.DoesNotContain(Needle, File.ReadAllText(pipeline.Vault.ManagedUrl(next.NotePath)), StringComparison.Ordinal);
         }
     }
 
-    [Fact]
-    public async Task SubheadingLandsAfterAnAcquisitionStillInFlight()
+    [Theory]
+    [InlineData("subheading", "Results")]
+    [InlineData("note", "Quick results")]
+    public async Task EntryLandsAfterAnAcquisitionStillInFlight(string kind, string text)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = await coordinator.StartSessionAsync("Thermo");
         var release = new TaskCompletionSource<PendingCapture?>(TaskCreationOptions.RunContinuationsAsynchronously);
         Assert.True(coordinator.BeginAcquisition(() => release.Task));
 
-        var subheading = Task.Run(() => coordinator.AddSubheadingAsync("Results"), TestContext.Current.CancellationToken);
+        var add = Task.Run(() => kind == "subheading" ? coordinator.AddSubheadingAsync(text) : coordinator.AddNoteAsync(text), TestContext.Current.CancellationToken);
         await Task.Delay(100, TestContext.Current.CancellationToken);
-        Assert.False(subheading.IsCompleted);
+        Assert.False(add.IsCompleted);
 
         release.SetResult(PendingCaptures.Selection(Needle, new()));
-        Assert.NotNull(await subheading.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.NotNull(await add.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
         var contents = File.ReadAllText(pipeline.Vault.ManagedUrl(session.NotePath));
         var needle = contents.IndexOf(Needle, StringComparison.Ordinal);
-        Assert.True(needle >= 0 && needle < contents.IndexOf("Results", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task QuickNoteLandsAfterAnAcquisitionStillInFlight()
-    {
-        using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
-        var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
-        var session = await coordinator.StartSessionAsync("Thermo");
-        var release = new TaskCompletionSource<PendingCapture?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Assert.True(coordinator.BeginAcquisition(() => release.Task));
-
-        var note = Task.Run(() => coordinator.AddNoteAsync("Quick results"), TestContext.Current.CancellationToken);
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-        Assert.False(note.IsCompleted);
-
-        release.SetResult(PendingCaptures.Selection(Needle, new()));
-        Assert.NotNull(await note.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
-        var contents = File.ReadAllText(pipeline.Vault.ManagedUrl(session.NotePath));
-        var needle = contents.IndexOf(Needle, StringComparison.Ordinal);
-        Assert.True(needle >= 0 && needle < contents.IndexOf("Quick results", StringComparison.Ordinal));
+        var entry = contents.IndexOf(text, StringComparison.Ordinal);
+        Assert.True(entry >= 0);
+        Assert.InRange(needle, 0, entry - 1);
     }
 
     // A quit that begins while captures settle stops the session change.
@@ -102,7 +90,7 @@ public sealed class AcquisitionWaitTests
     public async Task QuitDuringSettleLeavesTheSessionUnchanged()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = await coordinator.StartSessionAsync("Thermo");
         var release = new TaskCompletionSource<PendingCapture?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,9 +102,6 @@ public sealed class AcquisitionWaitTests
         release.SetResult(PendingCaptures.Selection(Needle, new()));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
         Assert.Equal(session.NotePath, pipeline.Sessions.Current()?.NotePath);
-        await termination.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.True(await termination.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
     }
-
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 }
