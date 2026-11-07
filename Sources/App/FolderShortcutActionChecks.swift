@@ -47,19 +47,13 @@ func checkFolderShortcutActions() async throws {
                                 action: .startSession, folder: folder.rawValue)
     for code in [UInt16(53), UInt16(36)] {
         controller.runFolderShortcut(binding)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while controller.inputForChecks == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        guard let input = controller.inputForChecks,
-              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                  windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+        try await waitUntil("the folder session name prompt", timeout: .seconds(3)) { controller.inputForChecks != nil }
+        guard let input = controller.inputForChecks else {
             throw SelfTestFailure("Folder shortcut did not ask for a session name")
         }
+        let event = try keyDownEvent(code)
         _ = input.handleKeyForChecks(event)
-        while controller.inputForChecks != nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil("the folder session name prompt to close", timeout: .seconds(3)) { controller.inputForChecks == nil }
         guard controller.inputForChecks == nil, await pipeline.selfCheck.sessions.current() == second else {
             throw SelfTestFailure("Cancel or blank session prompt changed the active session")
         }
@@ -77,23 +71,19 @@ func checkFolderShortcutActions() async throws {
         .write(to: selectedURL, atomically: true, encoding: .utf8)
     try await pipeline.index.reindex(note: selectedURL)
     controller.runFolderShortcut(binding)
-    let selectionDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.inputForChecks == nil, ContinuousClock.now < selectionDeadline {
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await waitUntil("the folder session suggestions", timeout: .seconds(3)) { controller.inputForChecks != nil }
     for code in [UInt16(125), UInt16(36)] {
-        guard let input = controller.inputForChecks,
-              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                  windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+        guard let input = controller.inputForChecks else {
             throw SelfTestFailure("Folder session suggestion was not presented")
         }
+        let event = try keyDownEvent(code)
         _ = input.handleKeyForChecks(event)
         if code == 125, input.selectedValueForChecks != "/" + second.notePath {
             throw SelfTestFailure("Folder session suggestion lost its exact path identity")
         }
     }
-    while await pipeline.selfCheck.sessions.current()?.name != "Visible review", ContinuousClock.now < selectionDeadline {
-        try await Task.sleep(for: .milliseconds(10))
+    try await waitUntil("the chosen folder session to resume", timeout: .seconds(3)) {
+        await pipeline.selfCheck.sessions.current()?.name == "Visible review"
     }
     guard await pipeline.selfCheck.sessions.current()?.notePath == second.notePath,
           await pipeline.selfCheck.sessions.current()?.name == "Visible review",

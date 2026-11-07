@@ -71,17 +71,8 @@ extension AppController {
         }
         // No explicit sync/reindex between the editor write and this assertion.
         let externalStart = ContinuousClock.now
-        let externalDeadline = externalStart.advanced(by: .seconds(5))
-        var externalFound = false
-        while ContinuousClock.now < externalDeadline {
-            if try await pipeline.index.search("watcherexternalneedle").contains(where: { $0.captureID == external.id }) {
-                externalFound = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        guard externalFound, ContinuousClock.now < externalDeadline else {
-            throw SelfTestFailure("External edit was not searchable through the watcher within 5 seconds")
+        try await waitUntil("the external edit to become searchable through the watcher", timeout: .seconds(5), poll: .milliseconds(50)) {
+            try await pipeline.index.search("watcherexternalneedle").contains(where: { $0.captureID == external.id })
         }
         let externalDuration = externalStart.duration(to: .now)
         let externalSeconds = Double(externalDuration.components.seconds) + Double(externalDuration.components.attoseconds) / 1e18
@@ -98,11 +89,7 @@ extension AppController {
                 _ = await deferredOCR.value
                 await completion.finish()
             }
-            let deadline = ContinuousClock.now.advanced(by: .seconds(90))
-            while !(await completion.isFinished()), ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            guard await completion.isFinished() else { throw SelfTestFailure("Deferred OCR did not finish within 90 seconds") }
+            try await waitUntil("deferred OCR to finish", timeout: .seconds(90), poll: .milliseconds(50)) { await completion.isFinished() }
         }
 
         // Join deferred OCR and its detached index update before checking vector backfill.
@@ -233,7 +220,7 @@ extension AppController {
         guard controller.beginAcquisition({ next }) else { throw SelfTestFailure("Another capture was ignored during OCR") }
         _ = try await selfTestValue(of: Task {
             // Yield until the second interactive operation has entered the ordered processing queue.
-            while controller.acquisitionInProgress { await Task.yield() }
+            try await waitUntil("the second acquisition to release the acquisition lock", timeout: .seconds(5)) { !controller.acquisitionInProgress }
             await controller.captures.waitForProcessing()
             guard let tail = controller.captures.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
             return try await tail.value
@@ -929,14 +916,18 @@ extension AppController {
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: base.appendingPathComponent("State"), calendar: pipeline.calendar)
         let controller = AppController(pipeline: live, presentsUI: false)
         await controller.captures.stage(CapturePipeline.selection(text: "quit pending work", context: context))
+        let latch = SelfTestLatch()
+        defer { latch.release() }
         let accepted = controller.beginAcquisition {
-            try? await Task.sleep(for: .milliseconds(120))
+            await latch.hold()
             return CapturePipeline.selection(text: "quit in-flight work", context: context)
         }
+        if accepted { await latch.waitUntilHeld() }
         var overlapped = false
         let rejected = controller.beginAcquisition { overlapped = true; return nil }
         let quit = controller.beginTermination()
         let afterQuit = controller.beginAcquisition { overlapped = true; return nil }
+        latch.release()
         _ = await quit.value
         let hits = try await live.index.search("quit")
         guard accepted, !rejected, !afterQuit, !overlapped, hits.count == 2 else { throw SelfTestFailure("Acquisition/quit ordering failed") }
