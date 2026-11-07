@@ -25,7 +25,7 @@ internal sealed class ImagePreprocessor
             || !Flag(image, "do_convert_rgb", true) || !Flag(image, "do_rescale", true) || !Flag(image, "do_normalize", false)
             || !(image.TryGetProperty("patch_size", out var patch) && patch.TryGetInt32(out patchSize) && patchSize == 16)
             || !(image.TryGetProperty("pooling_kernel_size", out var pooling) && pooling.TryGetInt32(out poolingSize) && poolingSize == 3)
-            || !(image.TryGetProperty("max_soft_tokens", out var budget) && budget.TryGetInt32(out softTokens) && softTokens is 70 or 140 or 280 or 560 or 1120)
+            || !(image.TryGetProperty("max_soft_tokens", out var budget) && budget.TryGetInt32(out softTokens) && GemmaModelConfig.ImageSoftTokenBudgets.Contains(softTokens))
             || !(image.TryGetProperty("rescale_factor", out var factor) && factor.ValueKind == JsonValueKind.Number))
         {
             throw EmbeddingException.Invalid(Unsupported);

@@ -109,7 +109,7 @@ final class NoteTextView: NSTextView {
     }
     private var markdownLayout: MarkdownLayoutManager? { layoutManager as? MarkdownLayoutManager }
     private func prepareSelection(_ ranges: [NSRange]) {
-        if markdownLayout?.updateSelection(ranges, markedRange: hasMarkedText() ? markedRange() : NSRange(location: NSNotFound, length: 0)) == true {
+        if markdownLayout?.updateSelection(ranges, markedRange: activeMarkedRange) == true {
             onPreviewChange?()
         }
     }
@@ -203,23 +203,23 @@ final class NoteTextView: NSTextView {
         if event.modifierFlags.contains(.command) {
             if let action = noteShortcutAction(for: event) { onShortcut?(action); return true }
             switch event.keyCode {
-            case 6: if event.modifierFlags.contains(.shift) { history.redo() } else { history.undo() }
-            case 9: paste(nil)
-            case 8: copy(nil)
-            case 40: onToggleActions?()
-            case 7: cut(nil)
-            case 0: selectAll(nil)
-            case 36, 76: onSave?()
+            case OverlayKeyCode.z: if event.modifierFlags.contains(.shift) { history.redo() } else { history.undo() }
+            case OverlayKeyCode.v: paste(nil)
+            case OverlayKeyCode.c: copy(nil)
+            case _ where PanelShortcuts.toggleActions.keyCodes.contains(event.keyCode): onToggleActions?()
+            case OverlayKeyCode.x: cut(nil)
+            case OverlayKeyCode.a: selectAll(nil)
+            case _ where PanelShortcuts.save.keyCodes.contains(event.keyCode): onSave?()
             default: return false
             }
             return true
         }
         switch event.keyCode {
-        case 36, 76:
+        case OverlayKeyCode.returnKey, OverlayKeyCode.keypadEnter:
             if event.modifierFlags.contains(.shift) { insertText("\n", replacementRange: selectedRange()) }
             else { insertLineBreak() }
             return true
-        case 48: indentList(outdent: event.modifierFlags.contains(.shift)); return true
+        case OverlayKeyCode.tab: indentList(outdent: event.modifierFlags.contains(.shift)); return true
         default: return false
         }
     }
@@ -230,8 +230,7 @@ final class NoteTextView: NSTextView {
         guard caret >= line.location, !isInsideFencedCode(before: line.location) else { return nil }
         let prefixRange = NSRange(location: line.location, length: caret - line.location)
         let prefix = source.substring(with: prefixRange)
-        let pattern = try? NSRegularExpression(pattern: #"^([ \t]*)([-*+]) \[\]$"#)
-        guard pattern?.firstMatch(in: prefix, range: NSRange(location: 0, length: (prefix as NSString).length)) != nil else { return nil }
+        guard MarkdownStyler.Syntax.emptyTaskBox.firstMatch(in: prefix, range: NSRange(location: 0, length: (prefix as NSString).length)) != nil else { return nil }
         let brackets = (prefix as NSString).range(of: "[]", options: .backwards)
         guard brackets.location != NSNotFound else { return nil }
         return NSRange(location: line.location + brackets.location, length: brackets.length)
@@ -243,12 +242,11 @@ final class NoteTextView: NSTextView {
         let line = source.lineRange(for: NSRange(location: caret, length: 0))
         let value = source.substring(with: line).trimmingCharacters(in: .newlines)
         let lineText = value as NSString
-        let pattern = try? NSRegularExpression(pattern: #"^([ \t]*)([-*+] )\[[ xX]\] "#)
-        guard let match = pattern?.firstMatch(in: value, range: NSRange(location: 0, length: lineText.length)) else { return nil }
+        guard let match = MarkdownStyler.Syntax.taskBox.firstMatch(in: value, range: NSRange(location: 0, length: lineText.length)) else { return nil }
         let markerStart = line.location + NSMaxRange(match.range(at: 1))
         let markerEnd = line.location + match.range.location + match.range.length
         guard caret == markerEnd, markdownLayout?.isBlockMarkerActive(at: markerStart) != true else { return nil }
-        let deletion = NSRange(location: markerStart + match.range(at: 2).length, length: 4)
+        let deletion = NSRange(location: markerStart + match.range(at: 2).length, length: MarkdownStyler.Syntax.taskBoxLength)
         guard NSMaxRange(deletion) == caret else { return nil }
         return deletion
     }
@@ -263,33 +261,19 @@ final class NoteTextView: NSTextView {
             return state.isOpen
         }
         var offset = 0
-        var fence: (character: unichar, length: Int)?
+        var fence = MarkdownStyler.FenceState.outside
         while offset < lineStart {
             let line = source.lineRange(for: NSRange(location: offset, length: 0))
             let value = source.substring(with: line).trimmingCharacters(in: .newlines) as NSString
-            var indent = 0
-            while indent < value.length, value.character(at: indent) == 32 { indent += 1 }
-            var run = 0
-            let first: unichar = indent < value.length ? value.character(at: indent) : 0
-            if indent <= 3, first == 96 || first == 126 {
-                while indent + run < value.length, value.character(at: indent + run) == first { run += 1 }
-            }
-            let rest = value.substring(from: min(value.length, indent + run))
-            if let current = fence {
-                if first == current.character, run >= current.length,
-                   rest.trimmingCharacters(in: .whitespaces).isEmpty { fence = nil }
-            } else if run >= 3, first != 96 || !rest.contains("`") {
-                fence = (first, run)
-            }
+            _ = MarkdownStyler.advanceFence(&fence, line: value)
             let next = NSMaxRange(line)
             if next <= offset { break }
             offset = next
         }
-        return fence != nil
+        return fence.isOpen
     }
     private func listMatch(_ line: String) -> NSTextCheckingResult? {
-        let regex = try? NSRegularExpression(pattern: #"^([ \t]*)([-*+] (?:\[[ xX]\] )?|([0-9]+)\. )(.*)$"#)
-        return regex?.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length))
+        MarkdownStyler.Syntax.listLine.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length))
     }
     private func insertLineBreak() {
         let source = string as NSString
@@ -369,8 +353,9 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     private let titlePin = symbol("pin.fill", color: OverlayTheme.textColor)
     private let chrome = NoteChromeBar()
     private let footer = PassiveView()
-    private let saveHint = KeycapView(key: "⌘↩", caption: "Create note")
-    private let hints = [KeycapView(key: "⌘K", caption: "Actions"), KeycapView(key: "esc", caption: "Close")]
+    private static let createCaption = "Create note"
+    private let saveHint = KeycapView(key: PanelShortcuts.save.glyph, caption: NoteEditorView.createCaption)
+    private let hints = [KeycapView(key: PanelShortcuts.toggleActions.glyph, caption: "Actions"), KeycapView(key: "esc", caption: "Close")]
     private let restoredDraft: Bool
     private let draftLabel = label("Draft kept", font: OverlayTheme.metaFont, color: OverlayTheme.tertiaryColor)
     private var editedRange: NSRange?
@@ -538,7 +523,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             }
         }
         appendsToExisting = destination == nil && appends
-        let caption = appends ? "Add to note" : "Create note"
+        let caption = appends ? "Add to note" : NoteEditorView.createCaption
         if saveHint.caption.stringValue != caption {
             saveHint.caption.stringValue = caption
             footer.needsLayout = true
@@ -659,7 +644,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         guard actionMenu == nil else { return }
         detachBrowse()
         let menu = NoteActionMenuView(items: NoteActionItem.standard(isPinned: isPinned, hasText: !textView.string.isEmpty,
-                                                                     appendsToExisting: appendsToExisting, hasActiveSession: hasActiveSession),
+                                                                     editor: EditorContext(appendsToExisting: appendsToExisting, hasActiveSession: hasActiveSession)),
                                       query: query, selectedIndex: selectedIndex)
         menu.onRun = { [weak self] id in self?.hideActions(); self?.perform(id) }
         menu.onClose = { [weak self] in self?.hideActions() }
@@ -755,7 +740,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             if let editor = card.field.currentEditor(), window?.firstResponder === editor {
                 if let browse = card as? NoteBrowseView {
                     if browse.handle(event) { return true }
-                    guard event.keyCode == 40, event.shortcutFlags == .command else { return false }
+                    guard OverlayKeyCommand(event) == .toggleActions else { return false }
                     showActions() // closes Browse first
                     return true
                 }
@@ -767,7 +752,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
                     return true
                 }
             }
-            if event.keyCode == 53 || (event.keyCode == 40 && event.shortcutFlags == .command) { hideCard(); return true }
+            if let command = OverlayKeyCommand(event), command == .cancel || command == .toggleActions { hideCard(); return true }
         }
         guard !textView.hasMarkedText() else { return false }
         return textView.handle(event)
@@ -791,53 +776,23 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         placeholder.isHidden = !textView.string.isEmpty
         updateTitle()
         guard let storage = textView.textStorage else { return }
-        let text = storage.string
-        let source = text as NSString
-        if editedDelta != 0, let safe = editedRange.map({ NSIntersectionRange($0, NSRange(location: 0, length: source.length)) }),
-           source.length > 0 {
-            let probe = min(safe.location, source.length - 1)
-            let changedLine = source.paragraphRange(for: NSRange(location: probe, length: min(max(1, safe.length), source.length - probe)))
+        let source = storage.string as NSString
+        if editedDelta != 0, let editedRange, source.length > 0 {
+            let changedLine = MarkdownStyler.paragraphRange(around: editedRange, in: source)
             MarkdownStyler.rebaseElementRanges(in: storage, after: NSMaxRange(changedLine), by: editedDelta)
             editedDelta = 0
         }
         guard !textView.hasMarkedText() else { return }
         let manager = textView.layoutManager as? MarkdownLayoutManager
         let localEdit = !restyleForAppearance && source.length > OverlayTheme.editorRestyleLimit ? editedRange : nil
-        let safeEdit = localEdit.map { NSIntersectionRange($0, NSRange(location: 0, length: source.length)) }
-        let changedParagraph: NSRange? = safeEdit.map { safe in
-            let probe = min(safe.location, max(0, source.length - 1))
-            return source.paragraphRange(for: NSRange(location: probe, length: min(max(1, safe.length), source.length - probe)))
-        }
+        let changedParagraph = localEdit.map { MarkdownStyler.paragraphRange(around: $0, in: source) }
         let fullRestyle = changedParagraph == nil
-        let start = changedParagraph?.location ?? 0
-        let incomingFence = start > 0
-            ? storage.attribute(MarkdownStyler.fenceStateAfter, at: start - 1, effectiveRange: nil) as? MarkdownStyler.FenceState ?? .outside
-            : .outside
-        let scan: MarkdownStyler.ScanResult
-        if let changedParagraph, let safeEdit {
-            let minimumEnd = max(NSMaxRange(changedParagraph), NSMaxRange(safeEdit))
-            scan = MarkdownStyler.scan(text, from: start, startingFence: incomingFence) { line, state in
-                guard NSMaxRange(line) >= minimumEnd, line.location < source.length,
-                      let previousState = storage.attribute(MarkdownStyler.fenceStateAfter, at: line.location,
-                                                            effectiveRange: nil) as? MarkdownStyler.FenceState else { return false }
-                return state == previousState
-            }
-        } else {
-            scan = MarkdownStyler.scan(text, from: 0, startingFence: .outside)
-        }
         styling = true
         textView.undoManager?.disableUndoRegistration()
-        storage.beginEditing()
-        storage.setAttributes(typingAttributes, range: scan.processedRange)
-        for span in scan.spans { storage.addAttributes(span.attributes, range: span.range) }
-        normalizeLineHeights(in: scan.processedRange)
-        storage.endEditing()
-        manager?.finishTextEdit()
-        manager?.synchronize(textView)
-        manager?.applyParagraphs(in: scan.processedRange)
-        if scan.processedRange.length > 0 {
-            manager?.invalidateGlyphs(forCharacterRange: scan.processedRange, changeInLength: 0, actualCharacterRange: nil)
+        let processed = MarkdownStyler.restyle(storage, editedRange: localEdit, baseAttributes: typingAttributes) {
+            normalizeLineHeights(in: $0)
         }
+        manager?.finishRestyle(in: processed, for: textView)
         textView.undoManager?.enableUndoRegistration()
         styling = false; editedRange = nil; editedDelta = 0; restyleForAppearance = false
         textView.typingAttributes = typingAttributes
@@ -876,7 +831,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
                     height = max(height, ceil(manager.defaultLineHeight(for: font) * OverlayTheme.editorLineHeightMultiple))
                 }
             }
-            for key in [NSAttributedString.Key.paragraphStyle, MarkdownStyler.rawParagraph, MarkdownStyler.previewParagraph] {
+            for key in MarkdownStyler.paragraphKeys {
                 var updates: [(NSRange, NSMutableParagraphStyle)] = []
                 storage.enumerateAttribute(key, in: line) { value, run, _ in
                     guard let original = value as? NSParagraphStyle else { return }
@@ -939,7 +894,6 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     }
     private func layoutText() {
         let inset = OverlayTheme.quickTextInset
-        // Ends exactly at the top of the bottom band.
         let height = max(textHeight, noteSurface.bounds.height - bandsHeight)
         scroll.frame = NSRect(x: inset, y: OverlayTheme.quickTopBandHeight, width: currentWidth - inset * 2, height: height)
         textView.setFrameSize(NSSize(width: scroll.contentSize.width, height: max(textHeight, documentHeight)))
@@ -1101,8 +1055,7 @@ public final class NoteEditorPanel {
         view.onBrowseChoice = { [weak panel, weak view] item, choice in
             if choice == .write { handlers.onBrowse(item, choice); view?.hideBrowse(); return }
             guard let panel else { return }
-            panel.dismiss()
-            if !panel.isVisible { handlers.onBrowse(item, choice) }
+            panel.dismissThen { handlers.onBrowse(item, choice) }
         }
         panel.shouldDismiss = { [weak view] in
             guard let view else { return true }
@@ -1115,8 +1068,7 @@ public final class NoteEditorPanel {
         view.textView.onSave = { [weak panel, weak view] in
             guard let panel, let view else { return }
             let text = view.textView.string
-            panel.dismiss()
-            if !panel.isVisible { handlers.onSubmit(text) }
+            panel.dismissThen { handlers.onSubmit(text) }
         }
         view.onAction = { [weak panel, weak view] id in
             guard let panel, let view else { return }
@@ -1124,13 +1076,11 @@ public final class NoteEditorPanel {
             switch id {
             case .newNote:
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { handlers.onNew("") }
-                else { panel.dismiss(); if !panel.isVisible { handlers.onNew(text) } }
+                else { panel.dismissThen { handlers.onNew(text) } }
             case .openAsNote:
-                panel.dismiss()
-                if !panel.isVisible { handlers.onOpenAsNote(text) }
+                panel.dismissThen { handlers.onOpenAsNote(text) }
             case .saveAsNewNote: // the editor view only forwards this while saving would append
-                panel.dismiss()
-                if !panel.isVisible { handlers.onSaveAsNew(text) }
+                panel.dismissThen { handlers.onSaveAsNew(text) }
             case .pin:
                 view.setDestination(view.destination, isPinned: handlers.onTogglePin())
             case .writeOutsideSession:
@@ -1156,4 +1106,12 @@ public final class NoteEditorPanel {
     /// Refresh an open Browse card after its asynchronous note snapshot arrives. Keep its
     /// filter text and selected item when that item is still present in the new snapshot.
     public func refreshBrowseItems() { content?.refreshBrowseItems() }
+}
+
+extension OverlayPanel {
+    /// Runs `action` only once the panel has actually closed, since shouldDismiss can veto the close.
+    func dismissThen(_ action: () -> Void) {
+        dismiss()
+        if !isVisible { action() }
+    }
 }

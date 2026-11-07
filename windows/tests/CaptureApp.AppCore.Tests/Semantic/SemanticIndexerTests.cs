@@ -8,6 +8,8 @@ namespace CaptureApp.AppCore.Tests.Semantic;
 
 public sealed class SemanticIndexerTests : IDisposable
 {
+    private const string VectorsFile = "vectors.sqlite";
+
     private readonly TempDirectory temp = new();
     private readonly FakeSource source = new();
     private readonly FakeEmbedder embedder = new();
@@ -17,7 +19,7 @@ public sealed class SemanticIndexerTests : IDisposable
 
     private SemanticIndexer Create(bool enabled = true, IReadOnlyList<TimeSpan>? retryDelays = null)
     {
-        var path = Path.Combine(temp.Path, "vectors.sqlite");
+        var path = Path.Combine(temp.Path, VectorsFile);
         return new SemanticIndexer(source, () => embedder, () => Store(path), enabled, () => gate, time, retryDelays);
     }
 
@@ -28,7 +30,7 @@ public sealed class SemanticIndexerTests : IDisposable
         return store;
     }
 
-    private VectorStore Inspect() => new(Path.Combine(temp.Path, "vectors.sqlite"));
+    private VectorStore Inspect() => new(Path.Combine(temp.Path, VectorsFile));
 
     public void Dispose()
     {
@@ -117,7 +119,6 @@ public sealed class SemanticIndexerTests : IDisposable
             Assert.Equal(new[] { "a.md#t" }, store.Keys());
         }
 
-        // Power returns: the false-to-true change schedules a pass after the debounce.
         gate = true;
         indexer.ImageEmbeddingAllowedChanged(this, true);
         time.Advance(Debounce);
@@ -160,7 +161,7 @@ public sealed class SemanticIndexerTests : IDisposable
         {
             attempts++;
             return embedder;
-        }, () => Store(Path.Combine(temp.Path, "vectors.sqlite")), true, () => gate, time);
+        }, () => Store(Path.Combine(temp.Path, VectorsFile)), true, () => gate, time);
 
         indexer.Schedule();
         time.Advance(Debounce);
@@ -170,7 +171,6 @@ public sealed class SemanticIndexerTests : IDisposable
         await Task.Delay(100);
         Assert.Empty(embedder.DocumentBatches);
         time.Advance(TimeSpan.FromSeconds(0.2));
-        // Second failure schedules the 15 s retry.
         await Wait.Until(() => time.PendingTimers == 1, "the second retry timer");
         time.Advance(TimeSpan.FromSeconds(14.9));
         await Task.Delay(100);
@@ -215,6 +215,37 @@ public sealed class SemanticIndexerTests : IDisposable
         time.Advance(Debounce);
         await Task.Delay(100);
         Assert.Single(embedder.DocumentBatches);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoClientIsCreatedOnceDisableHasReturned(bool flush)
+    {
+        source.Blocks.Add(FakeSource.Text("a.md#1", "A", "alpha"));
+        var clients = 0;
+        var indexer = new SemanticIndexer(source, () =>
+        {
+            Interlocked.Increment(ref clients);
+            return embedder;
+        }, () => Store(Path.Combine(temp.Path, VectorsFile)), true, () => true, time);
+        using var reached = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        indexer.BeforeAcquiringResources = () =>
+        {
+            reached.Set();
+            release.Wait();
+        };
+
+        Func<Task> use = flush ? indexer.FlushAsync : indexer.WarmAsync;
+        var pending = Task.Run(use);
+        Assert.True(reached.Wait(TimeSpan.FromSeconds(10)), "the resource acquisition was never reached");
+        indexer.SetEnabled(false);
+        release.Set();
+        await pending;
+        await indexer.StopAsync();
+
+        Assert.Equal(0, clients);
     }
 
     [Fact]

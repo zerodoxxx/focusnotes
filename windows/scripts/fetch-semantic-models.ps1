@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $windowsDirectory = Split-Path -Parent $scriptDirectory
 $manifestPath = Join-Path $windowsDirectory 'src/CaptureApp.ModelInstall/ModelManifest.cs'
+$configPath = Join-Path $windowsDirectory 'src/CaptureApp.Embed/GemmaModelConfig.cs'
 if (-not $Destination) { $Destination = Join-Path $windowsDirectory '.semantic-models' }
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 $Destination = (Resolve-Path -LiteralPath $Destination).Path
@@ -15,7 +16,9 @@ function Get-Sha256([string] $Path) {
 
 $source = Get-Content -Raw -Path $manifestPath
 $repo = [regex]::Match($source, 'const string Repo = "([^"]+)"').Groups[1].Value
-$revision = [regex]::Match($source, 'const string Revision = "([^"]+)"').Groups[1].Value
+# Revision lives in GemmaModelConfig.cs; ModelManifest.cs references it.
+$revision = [regex]::Match((Get-Content -Raw -Path $configPath), 'const string Revision = "([^"]+)"').Groups[1].Value
+if (-not $repo -or -not $revision) { throw "Could not read model repo/revision from $manifestPath and $configPath" }
 $baseUrl = "https://huggingface.co/$repo/resolve/$revision"
 
 foreach ($match in [regex]::Matches($source, 'Artifact\("([^"]+)", "([0-9a-f]{64})", (\d+)\)')) {

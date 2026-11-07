@@ -26,7 +26,6 @@ public sealed class ExternalNoteTests
         Assert.DoesNotContain(reopened.ListNotes(), n => n.Url == unregistered);
         Assert.Equal("\nexternal body", CaptureApp.Core.Index.NoteParser.Parse(CheckVault.Read(location.Url), location.Id, "", CheckVault.Zone).Blocks.Last().Body);
         Assert.NotNull(reopened.FileSnapshotForNoteId(location.Id));
-        Assert.NotNull(reopened.ExternalRegistryFingerprint());
         File.Delete(location.Url);
         Assert.DoesNotContain(reopened.ListNotes(), n => n.Url == location.Url);
         Assert.ThrowsAny<IOException>(() => reopened.NoteLocation(location.Id));
@@ -41,7 +40,7 @@ public sealed class ExternalNoteTests
 
         )
         {
-            Assert.ThrowsAny<Exception>(() => reopened.NoteLocation(id));
+            Assert.Throws<VaultFileException>(() => reopened.NoteLocation(id));
         }
     }
 
@@ -79,7 +78,7 @@ public sealed class ExternalNoteTests
         var vault = new Vault(root, e.Registry, e.Home, new() { WindowsRules = false });
         vault.Prepare();
         var writer = new NoteWriter(vault, CheckVault.Zone);
-        var sessions = new SessionStore(e.State, vault, CheckVault.Zone, CheckVault.Clock);
+        var sessions = new SessionStore(e.State, vault, CheckVault.Clock);
         var service = new CaptureService(vault, sessions, writer, CheckVault.Clock);
         var location = vault.ResolveNoteName("/Vault/Subfolder/Inside");
         Assert.Equal(NotePathScope.Vault, location.Scope);
@@ -186,7 +185,7 @@ public sealed class ExternalNoteTests
             "Escaped/Outside.md"
         };
         e.WriteRegistry(JsonSerializer.Serialize(new { version = 1, paths = bad.Append("Desktop/Allowed.md").Append("Desktop/Allowed.md") }));
-        e.Vault.InvalidateExternalRegistryCache();
+        e.Vault.ExternalNoteRegistry!.InvalidateCache();
         var notes = e.Vault.ListNotes();
         Assert.Contains(notes, n => n.Url == safe);
         Assert.DoesNotContain(notes, n => n.Title == "Outside");

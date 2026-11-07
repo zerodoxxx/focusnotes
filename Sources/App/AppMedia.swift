@@ -6,32 +6,15 @@ import UniformTypeIdentifiers
 
 enum AppMedia {
     @concurrent
-    static func thumbnail(at url: URL) async -> CGImage? {
-        guard !Task.isCancelled,
-              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        return thumbnail(source: source)
-    }
-
-    @concurrent
     static func thumbnail(pngData: Data) async -> CGImage? {
         guard !Task.isCancelled,
               let source = CGImageSourceCreateWithData(pngData as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        return thumbnail(source: source)
-    }
-
-    private static func thumbnail(source: CGImageSource) -> CGImage? {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: 72,
             kCGImageSourceShouldCacheImmediately: true
         ] as CFDictionary)
-    }
-
-    @concurrent
-    static func imageRepresentations(at url: URL) async throws -> (png: Data, tiff: Data) {
-        let png = try Data(contentsOf: url)
-        return try await imageRepresentations(pngData: png)
     }
 
     @concurrent

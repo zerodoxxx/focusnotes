@@ -93,8 +93,11 @@ private func checkFailedChoiceHoldsCapture() async throws {
         try await pipeline.index.reindex(note: secondURL)
         let capture = queueCapture("held for an exact choice")
         await queue.stage(capture, outsideSession: true)
-        if (try? await queue.commitPending(noteTitle: "Target")?.value) != nil {
-            throw SelfTestFailure("Queue: an ambiguous title selected a destination")
+        try await expectRejection(RouterError.self, "Queue: an ambiguous title selected a destination", matching: { error in
+            if case .ambiguous = error { return true }
+            return false
+        }) {
+            _ = try await queue.commitPending(noteTitle: "Target")?.value
         }
         try await host.waitUntil("the failed choice to hold the capture") { host.held.contains(capture.id) }
         guard queue.pending?.id == capture.id, queue.needsRetryChoice else {
@@ -121,8 +124,8 @@ private func checkRetypedSubheadingSavesOnce() async throws {
         // A second hard link makes the session note unsafe to write, so the commit fails.
         let link = root.appendingPathComponent("second-link.md")
         try FileManager.default.linkItem(at: noteURL, to: link)
-        if (try? await queue.addSubheading("Queue heading", destination: nil)) != nil {
-            throw SelfTestFailure("Queue: a subheading saved to an unsafe note")
+        try await expectRejection(POSIXError.self, "Queue: a subheading saved to an unsafe note", matching: { $0.code == .EPERM }) {
+            _ = try await queue.addSubheading("Queue heading", destination: nil)
         }
         try FileManager.default.removeItem(at: link)
         guard try await queue.addSubheading("Queue heading", destination: nil) != nil else {
@@ -144,7 +147,9 @@ private func checkQuitDrainSavesHeldCapture() async throws {
     try await withQueue("queue-quit") { queue, host, pipeline, _ in
         let capture = queueCapture("held capture saved by quit")
         await queue.stage(capture, outsideSession: true)
-        _ = try? await queue.commitPending(noteTitle: "../escape")?.value
+        try await expectRejection(NotePathNameError.self, "Queue: an unsafe title was not rejected", matching: { $0 == .invalidComponent }) {
+            _ = try await queue.commitPending(noteTitle: "../escape")?.value
+        }
         try await host.waitUntil("the failed choice to hold the capture") { host.held.contains(capture.id) }
         guard queue.pending?.id == capture.id, queue.commitPending() == nil else {
             throw SelfTestFailure("Queue: a retry-held capture was committed implicitly")

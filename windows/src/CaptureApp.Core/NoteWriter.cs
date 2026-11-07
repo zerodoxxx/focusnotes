@@ -12,6 +12,7 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
     private readonly List<string> order = [];
     private int fullScans;
     private const int FileLimit = 8, MarkerLimit = 50000, SourceByteLimit = 65536;
+    private const int AppendAttempts = 4;
     private sealed class AppendState(FileMetadata fingerprint)
     {
         internal FileMetadata Fingerprint = fingerprint;
@@ -22,9 +23,9 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
         {
             foreach (var prefix in new[]
             {
-                "<!-- capture:",
-                "<!-- note:",
-                "<!-- subheading:"
+                CaptureFormat.MarkerPrefix,
+                CaptureFormat.NoteMarkerPrefix,
+                CaptureFormat.SubheadingMarkerPrefix
             }
 
             )
@@ -40,10 +41,10 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     }
 
                     found += start;
-                    if (found + needle.Length + 36 <= data.Length)
+                    if (found + needle.Length + CaptureFormat.CaptureIdLength <= data.Length)
                     {
-                        var identity = Encoding.UTF8.GetString(data, found, needle.Length + 36);
-                        if (Guid.TryParseExact(identity[^36..], "D", out _))
+                        var identity = Encoding.UTF8.GetString(data, found, needle.Length + CaptureFormat.CaptureIdLength);
+                        if (Guid.TryParseExact(identity[^CaptureFormat.CaptureIdLength..], "D", out _))
                         {
                             if (!Markers.TryGetValue(identity, out var offsets))
                             {
@@ -77,13 +78,6 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                 return (fullScans, cache.Count);
             }
         }
-    }
-
-    public static bool SourceGroupingMatchesFullParser(string contents, string source, TimeZoneInfo zone)
-    {
-        var state = new NoteParser.SourceHeadingState();
-        state.Consume(contents, zone);
-        return state.NeedsHeading(source, zone) == NoteParser.NeedsSourceHeading(source, contents, zone);
     }
 
     public void Append(Capture capture, string note, string title) => AppendCore(capture, new(note, title, NoteKind.Note), false, false);
@@ -120,12 +114,12 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
             var block = CaptureFormat.Block(capture, directory, timeZone, false, prefix);
             var header = CaptureFormat.NoteHeader(destination.Title) + "\n";
             var kind = capture.Content.Kind;
-            var identity = "<!-- " + (kind == CaptureContentKind.Note ? "note:" : kind == CaptureContentKind.Subheading ? "subheading:" : "capture:") + capture.Id.ToString("D");
+            var identity = "<!-- " + CaptureFormat.MarkerKeyword(kind) + capture.Id.ToString("D");
             var savedMarker = replay && noteIdentity && kind == CaptureContentKind.Note ? block.Split('\n')[0] : null;
-            var heading = kind is CaptureContentKind.Note or CaptureContentKind.Subheading ? null : CaptureFormat.SourceHeading(capture.Source);
-            var equivalents = kind is CaptureContentKind.Note or CaptureContentKind.Subheading ? Array.Empty<string>() : new[]
+            var heading = CaptureFormat.IsHeadingKind(kind) ? null : CaptureFormat.SourceHeading(capture.Source);
+            var equivalents = CaptureFormat.IsHeadingKind(kind) ? Array.Empty<string>() : new[]
             {
-                $"<!-- capture:{capture.Id:D} -->" + block[block.IndexOf('\n')..]
+                CaptureFormat.CaptureMarker(capture.Id) + block[block.IndexOf('\n')..]
             };
             lock (NoteFile.Gate(target))
             {
@@ -141,7 +135,7 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
                     NoteFile.Create(NoteFile.Utf8.GetBytes(header + block), location.Root, location.RelativePath);
                 }
 
-                for (var attempt = 0; attempt < 4; attempt++)
+                for (var attempt = 0; attempt < AppendAttempts; attempt++)
                 {
                     target = NoteFile.SafePath(location.Root, location.RelativePath, true);
                     using var stream = NoteFile.OpenExclusive(target, FileMode.OpenOrCreate, FileAccess.ReadWrite);
@@ -343,10 +337,10 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
     {
         lock (gate)
         {
-            var stamp = CaptureFormat.LocalStamp(createdAt ?? clock.GetUtcNow(), "yyyy-MM-dd-HHmmss", timeZone);
+            var stamp = Vault.AssetStamp(createdAt ?? clock.GetUtcNow(), timeZone);
             while (true)
             {
-                var path = $"{Vault.AssetsDirectoryName}/{stamp}-{RandomNumberGenerator.GetInt32(65536):x4}.png";
+                var path = Vault.AssetPath(stamp, $"{RandomNumberGenerator.GetInt32(65536):x4}");
                 if (NoteFile.CreateAsset(png, vault.Root, path))
                 {
                     return path;

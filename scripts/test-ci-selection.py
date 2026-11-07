@@ -104,6 +104,8 @@ class SelectionTests(unittest.TestCase):
     def test_platform_paths_and_shared_inputs(self):
         cases = [
             (["README.md", "docs/manual-tests.md"], (False, False)),
+            (["LICENSE", "SECURITY.txt"], (False, False)),
+            ([".github/ISSUE_TEMPLATE/bug.yml"], (False, False)),
             (["Sources/App/AppController.swift"], (True, False)),
             (["Package.swift", "Package.resolved"], (True, False)),
             (["windows/src/CaptureApp.App/AppController.cs"], (False, True)),
@@ -111,9 +113,6 @@ class SelectionTests(unittest.TestCase):
             (["Sources/EmbedKit/ModelManifest.swift"], (True, True)),
             (["Sources/EmbedKit/Embedder.swift"], (True, True)),
             (["Sources/EmbedChecks/Fixtures/tokenizer.json"], (True, True)),
-            (["Sources/EmbedChecks/Fixtures/embeddings.json"], (True, True)),
-            (["Sources/EmbedChecks/Fixtures/token-bucket.png"], (True, True)),
-            (["Sources/EmbedChecks/Fixtures/bar-chart.png"], (True, True)),
             (["Sources/EmbedChecks/Fixtures/nested/README.md"], (True, True)),
             (["Sources/EmbedKit/Tokenizer.swift"], (True, False)),
             (["Sources/EmbedChecks/main.swift", "Sources/EmbedChecks/Fixtures-old/example.json"], (True, False)),
@@ -144,14 +143,6 @@ class SelectionTests(unittest.TestCase):
         with patch.object(ci, "changed_paths", return_value=["windows/tests/NewTests.cs"]):
             selected = ci.selection("pull_request", pr_event(), False)
         self.assertEqual((selected["macos"], selected["windows"], selected["full"]), ("false", "true", "false"))
-
-    def test_shared_embedding_inputs_select_both_lean_platforms(self):
-        for path in ("Sources/EmbedKit/ModelManifest.swift", "Sources/EmbedKit/Embedder.swift",
-                     "Sources/EmbedChecks/Fixtures/tokenizer.json", "Sources/EmbedChecks/Fixtures/embeddings.json",
-                     "Sources/EmbedChecks/Fixtures/token-bucket.png", "Sources/EmbedChecks/Fixtures/bar-chart.png"):
-            with self.subTest(path=path), patch.object(ci, "changed_paths", return_value=[path]):
-                selected = ci.selection("pull_request", pr_event(), False)
-                self.assertEqual((selected["macos"], selected["windows"], selected["full"]), ("true", "true", "false"))
 
     def test_bad_diff_falls_back_to_both_platforms(self):
         with patch.object(ci, "changed_paths", side_effect=subprocess.CalledProcessError(1, "git")), redirect_stdout(StringIO()):
@@ -190,36 +181,36 @@ class SelectionTests(unittest.TestCase):
         coordinated_expression = re.findall(r"\$\{\{(.*?)\}\}", concurrency)[-1]
         self.assertEqual(set(re.findall(r"(?m)^  ([\w-]+):\s*$", workflow.split("jobs:\n", 1)[1])),
                          {"select", "windows-release-gate", "build", "smoke-macos-15", "windows", "windows-package"})
-        # expected: native runners requested, required-check names eligible, metadata-only revocation
+        # expected: native runners requested, required-check names eligible, metadata-only revocation, full suite selected
         cases = [
-            ("skip", "pull_request", pr_event(label="skip-ci"), False, (False, True, False)),
-            ("skip beats lean", "pull_request", pr_event(labels=["run-ci", "skip-ci"]), False, (False, True, False)),
-            ("skip beats full", "pull_request", pr_event(label="run-ci-full", labels=["run-ci-full", "skip-ci"]), True, (False, True, False)),
-            ("skip persists on source push", "pull_request", pr_event("synchronize", None, ["skip-ci"]), False, (False, True, False)),
-            ("skip persists on reopened", "pull_request", pr_event("reopened", None, ["skip-ci"]), False, (False, True, False)),
-            ("skip present on opened", "pull_request", pr_event("opened", None, ["skip-ci"]), False, (False, True, False)),
-            ("skip removed", "pull_request", pr_event("unlabeled", "skip-ci", []), False, (False, True, True)),
-            ("similar skip label has no bypass", "pull_request", pr_event(label="skip-ci-extra"), False, (False, False, False)),
-            ("similar skip label does not block lean", "pull_request", pr_event(labels=["run-ci", "skip-ci-extra"]), False, (True, True, False)),
-            ("similar skip removal does not revoke", "pull_request", pr_event("unlabeled", "skip-ci-extra", []), False, (False, False, False)),
-            ("lean", "pull_request", pr_event(), False, (True, True, False)),
-            ("full", "pull_request", pr_event(label="run-ci-full"), False, (True, True, False)),
-            ("manual quick", "workflow_dispatch", {}, False, (True, True, False)),
-            ("manual full", "workflow_dispatch", {}, True, (True, True, False)),
-            ("unrelated label", "pull_request", pr_event(label="enhancement"), False, (False, False, False)),
-            ("unrelated stale skip snapshot", "pull_request", pr_event(label="enhancement", labels=["skip-ci", "enhancement"]), False, (False, False, False)),
-            ("unrelated removal stale skip", "pull_request", pr_event("unlabeled", "enhancement", ["skip-ci"]), False, (False, False, False)),
-            ("run-ci removal", "pull_request", pr_event("unlabeled", "run-ci", []), False, (False, False, False)),
-            ("normal source push", "pull_request", pr_event("synchronize", None, ["run-ci"]), False, (False, False, False)),
-            ("normal opened", "pull_request", pr_event("opened", None, []), False, (False, False, False)),
-            ("push event", "push", {}, False, (False, False, False)),
+            ("skip", "pull_request", pr_event(label="skip-ci"), False, (False, True, False, False)),
+            ("skip beats lean", "pull_request", pr_event(labels=["run-ci", "skip-ci"]), False, (False, True, False, False)),
+            ("skip beats full", "pull_request", pr_event(label="run-ci-full", labels=["run-ci-full", "skip-ci"]), True, (False, True, False, False)),
+            ("skip persists on source push", "pull_request", pr_event("synchronize", None, ["skip-ci"]), False, (False, True, False, False)),
+            ("skip persists on reopened", "pull_request", pr_event("reopened", None, ["skip-ci"]), False, (False, True, False, False)),
+            ("skip present on opened", "pull_request", pr_event("opened", None, ["skip-ci"]), False, (False, True, False, False)),
+            ("skip removed", "pull_request", pr_event("unlabeled", "skip-ci", []), False, (False, True, True, False)),
+            ("similar skip label has no bypass", "pull_request", pr_event(label="skip-ci-extra"), False, (False, False, False, False)),
+            ("similar skip label does not block lean", "pull_request", pr_event(labels=["run-ci", "skip-ci-extra"]), False, (True, True, False, False)),
+            ("similar skip removal does not revoke", "pull_request", pr_event("unlabeled", "skip-ci-extra", []), False, (False, False, False, False)),
+            ("lean", "pull_request", pr_event(), False, (True, True, False, False)),
+            ("full", "pull_request", pr_event(label="run-ci-full"), False, (True, True, False, True)),
+            ("manual quick", "workflow_dispatch", {}, False, (True, True, False, False)),
+            ("manual full", "workflow_dispatch", {}, True, (True, True, False, True)),
+            ("unrelated label", "pull_request", pr_event(label="enhancement"), False, (False, False, False, False)),
+            ("unrelated stale skip snapshot", "pull_request", pr_event(label="enhancement", labels=["skip-ci", "enhancement"]), False, (False, False, False, False)),
+            ("unrelated removal stale skip", "pull_request", pr_event("unlabeled", "enhancement", ["skip-ci"]), False, (False, False, False, False)),
+            ("run-ci removal", "pull_request", pr_event("unlabeled", "run-ci", []), False, (False, False, False, False)),
+            ("normal source push", "pull_request", pr_event("synchronize", None, ["run-ci"]), False, (False, False, False, False)),
+            ("normal opened", "pull_request", pr_event("opened", None, []), False, (False, False, False, False)),
+            ("push event", "push", {}, False, (False, False, False, False)),
         ]
         for case, event_name, event, full_input, expected in cases:
             with self.subTest(case=case), patch.object(ci, "changed_paths", return_value=["Sources/App/AppController.swift", "windows/src/App.cs"]):
-                native, required_names, revoke = expected
+                native, required_names, revoke, expected_full = expected
                 selected = ci.selection(event_name, event, full_input)
                 policy = ci.event_policy(event_name, event)
-                self.assertEqual((policy["native"], policy["required_names"], policy["revoke"]), expected)
+                self.assertEqual((policy["native"], policy["required_names"], policy["revoke"]), expected[:3])
                 values = {"event_name": event_name, "action": event.get("action", ""),
                           "label": event.get("label", {}).get("name", ""),
                           "labels": [item["name"] for item in event.get("pull_request", {}).get("labels", [])],
@@ -244,7 +235,6 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(bool(evaluate(revocation_guard)), revoke)
                 self.assertEqual(bool(evaluate(scalar("windows", "if"))), native)
                 self.assertEqual(bool(evaluate(scalar("windows-release-gate", "if"))), native)
-                expected_full = native and (full_input or event.get("label", {}).get("name") == "run-ci-full")
                 self.assertEqual(bool(evaluate(scalar("windows-package", "if"))), expected_full)
                 self.assertEqual(evaluate(scalar("smoke-macos-15", "runs-on")), "macos-15" if expected_full else "ubuntu-latest")
                 if not native:
@@ -264,23 +254,6 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(release_gate_path=path), patch.object(ci, "changed_paths", return_value=[path]):
                 selected = ci.selection("pull_request", pr_event(), False)
                 self.assertEqual(bool(workflow_expression(scalar("windows-release-gate", "if"), selected)), expected)
-
-    def test_actual_workflow_selector_failure_or_cancellation_blocks_required_build(self):
-        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
-        build = re.search(r"(?ms)^  build:\n(.*?)(?=^  smoke-macos-15:)", workflow).group(1)
-        failed_selector = re.search(r"(?m)^        if: (.+needs.select.result == 'failure'.+)$", build).group(1)
-        for result in ("failure", "cancelled"):
-            with self.subTest(result=result):
-                values = {"event_name": "pull_request", "action": "labeled", "label": "run-ci", "labels": ["run-ci"],
-                          "select_result": result, "cancelled": result == "cancelled", "macos": "", "windows": "", "full": ""}
-                for key, expected in [("if", True), ("name", "build"), ("runs-on", "ubuntu-latest")]:
-                    expression = re.search(rf"(?m)^    {key}: (.+)$", build).group(1)
-                    self.assertEqual(workflow_expression(expression, values), expected)
-                self.assertTrue(workflow_expression(failed_selector, values))
-        # Intentional skips have a skipped selector, which must never take this failure path.
-        values.update({"label": "skip-ci", "labels": ["skip-ci"], "select_result": "skipped", "cancelled": False})
-        self.assertTrue(workflow_expression(re.search(r"(?m)^    if: (.+)$", build).group(1), values))
-        self.assertFalse(workflow_expression(failed_selector, values))
 
     def test_required_gates_run_for_lean_scopes_and_guard_every_native_step(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/checks.yml").read_text(encoding="utf-8")
@@ -339,6 +312,7 @@ class SelectionTests(unittest.TestCase):
                 values = {**normal, **overrides}
                 self.assertEqual(actual_check_name(build, values), "build")
                 self.assertEqual(gate_result(build, values), "failure")
+                self.assertEqual(workflow_expression(workflow_scalar(build, "runs-on"), values), "ubuntu-latest")
                 values["build_result"] = "failure"
                 self.assertEqual(actual_check_name(smoke, values), "smoke-macos-15")
                 self.assertEqual(gate_result(smoke, values), "failure")

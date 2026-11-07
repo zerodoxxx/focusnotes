@@ -84,7 +84,7 @@ public class InputPanelController
         }
         var content = new InputPanelView(request.Placeholder, request.InitialText, suggestions, selection, request.Title, request.Secondary); view = content;
         var window = new OverlayWindow(content); panel = window;
-        window.CancelHandler = () => { outcome = new Outcome.Escape(); return false; };
+        window.CancelHandler = () => { outcome = new Outcome.Escape(); return CancelResult.Close; };
         content.Field.TextChanged += (_, _) => { if (view != content) return; selection = null; suggestions = request.Suggestions(content.Field.Text); Refresh(); };
         content.Selected += index => { selection = index; Refresh(); };
         window.PreviewKeyDown += HandleKey;

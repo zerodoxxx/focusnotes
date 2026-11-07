@@ -72,6 +72,9 @@ public sealed class CaptureCoordinator
     public bool HasPendingToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id; } } }
     public PendingCapture? PendingWithToast { get { lock (gate) { return pending is not null && pendingToastId == pending.Id ? pending : null; } } }
     public PendingCapture? PendingWithRetryWarning { get { lock (gate) { return pending is not null && pendingNeedsRetryChoice && retryWarningShown ? pending : null; } } }
+    /// The capture a hotkey press reopens the title picker for: the staged toast's or retry warning's capture, same trigger, toast still shown, in a session.
+    public PendingCapture? PickerReopenTarget(CaptureTrigger trigger, bool fromHotkey, bool outsideSession, bool stagedToastVisible) =>
+        !outsideSession && fromHotkey && (PendingWithToast ?? PendingWithRetryWarning) is { } pending && pending.Trigger == trigger && stagedToastVisible ? pending : null;
     internal Task? CommitTail => Pipeline.Unsaved.Tail;
 
     /// Replays the journal, then loads the active session. Returns how many captures were restored.
@@ -232,7 +235,7 @@ public sealed class CaptureCoordinator
         // Resolve the outside fallback before preparation: title matching can pick
         // another Inbox, and preparing then overriding still performs routing work.
         if (destination is null && noteTitle is null && capture.OutsideSession)
-            destination = new(Pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+            destination = Router.InboxDestination(Pipeline.Vault);
         return capture.Png is not null
             ? Pipeline.PrepareImage(capture.Png, capture.Source, noteTitle, capture.Ocr, capture.Id, capture.CreatedAt, destination)
             : Pipeline.PrepareText(capture.Content.Value, capture.Source, noteTitle, null, capture.Id, capture.CreatedAt, destination);
@@ -417,7 +420,7 @@ public sealed class CaptureCoordinator
 
                 if (held)
                 {
-                    log.Error($"{Strings.CouldNotSaveCapture} ({error.GetType().Name}): {error}");
+                    LogFailure(Strings.CouldNotSaveCapture, error);
                     // A commit that failed during quit restored the hold after the drain's last implicit commit: save it to its default now.
                     if (IsTerminating) { _ = CommitPending(); }
                     else if (error is RouterAmbiguousException ambiguous) { ShowRetryChoice(capture, Strings.SeveralNotesTitled(ambiguous.Candidates[0].Title), true); }
@@ -554,7 +557,7 @@ public sealed class CaptureCoordinator
     {
         var vault = Pipeline.Vault;
         var rules = vault.NamingRules;
-        static bool IsHome(NoteSuggestion s) => s.Path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+        static bool IsHome(NoteSuggestion s) => Vault.IsFileUrl(s.Path);
         static bool IsRoot(NoteSuggestion s) => s.Kind == NoteKind.Note && !IsHome(s) && !s.Path.Contains('/');
         var roots = suggestions.Where(IsRoot).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
         var sessions = suggestions.Where(s => s.Kind == NoteKind.Session).GroupBy(s => NoteTitle.MatchKey(s.Title)).ToDictionary(g => g.Key, g => g.Count());
@@ -574,13 +577,13 @@ public sealed class CaptureCoordinator
                 var home = IsHome(suggestion);
                 var url = home ? Vault.DecodeFilePath(suggestion.Path) : vault.UrlForRelativePath(suggestion.Path);
                 var relative = home ? Vault.RelativeUnder(url, vault.HomeRoot) : suggestion.Path;
-                if (relative is null || !relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) { continue; }
+                if (relative is null || !Vault.IsMarkdown(relative)) { continue; }
                 // The file name with .md is unique among the offered values. Nested, HOME and session notes use their
                 // extensionless path instead when the Router resolves it to the same name.
                 var value = home ? "/" + relative : relative;
                 if (!IsRoot(suggestion))
                 {
-                    var stem = relative[..^3];
+                    var stem = relative[..^Vault.MarkdownExtension.Length];
                     var path = home ? "/" + stem : stem;
                     if (RoundTrips(path, stem, rules)) { value = path; }
                 }
@@ -622,7 +625,7 @@ public sealed class CaptureCoordinator
 
     public async Task<IReadOnlyList<NoteSuggestion>> FolderSessionSuggestionsAsync(string folder)
     {
-        var parent = "Sessions/" + new NoteFolder(folder).RawValue;
+        var parent = Vault.SessionsDirectoryName + "/" + new NoteFolder(folder).RawValue;
         return (await SuggestionSnapshotAsync(true).ConfigureAwait(false)).Where(s =>
             string.Equals(s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))], parent, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
@@ -647,7 +650,7 @@ public sealed class CaptureCoordinator
             ActiveSession = outcome.Session;
             host.StatusChanged();
             if (outcome.IdentityUpdatePending)
-                ShowToast(new(AppToastStyle.Warning, $"Session rename pending · {outcome.Session.Name}", "State updates will retry before the next save."));
+                ShowToast(new(AppToastStyle.Warning, Strings.SessionRenamePending(outcome.Session.Name), Strings.SessionRenamePendingDetail));
             else ShowToast(new(AppToastStyle.Session, Strings.SessionStarted(outcome.Session.Name, true),
                 Strings.SessionCapturesGoHere(host.SessionBinding)));
             return outcome;
@@ -732,9 +735,11 @@ public sealed class CaptureCoordinator
         return true;
     }
 
+    private void LogFailure(string title, Exception error) => log.Error($"{title} ({error.GetType().Name}): {error}");
+
     public void Report(Exception error, string title)
     {
-        log.Error($"{title} ({error.GetType().Name}): {error}");
+        LogFailure(title, error);
         ShowToast(new(AppToastStyle.Warning, title));
     }
 
@@ -754,7 +759,7 @@ public sealed class CaptureCoordinator
 
         var registry = error as ExternalNoteRegistryException;
         var (title, subtitle) = Strings.ExternalRegistry(registry?.Kind, registry?.Version, forSave);
-        log.Error($"{title} ({error.GetType().Name}): {error}");
+        LogFailure(title, error);
         ShowToast(new(AppToastStyle.Warning, title, subtitle));
     }
 

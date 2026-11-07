@@ -25,7 +25,7 @@ func cosine(_ a: [Float], _ b: [Float]) -> Float {
     let dot = zip(a, b).reduce(Float(0)) { $0 + $1.0 * $1.1 }
     return dot / sqrt(a.reduce(Float(0)) { $0 + $1 * $1 } * b.reduce(Float(0)) { $0 + $1 * $1 })
 }
-func unit(_ vector: [Float], dimensions: Int = 256) -> Bool {
+func unit(_ vector: [Float], dimensions: Int = EmbedProtocol.defaultDimensions) -> Bool {
     vector.count == dimensions && vector.allSatisfy(\.isFinite) &&
     abs(vector.reduce(Float(0)) { $0 + $1 * $1 } - 1) < 0.0001
 }
@@ -144,6 +144,9 @@ func checkManifestSync() throws {
     if manifest.totalDownloadBytes != 492_067_251 {
         mismatches.append("totalDownloadBytes: manifest=\(manifest.totalDownloadBytes) expected=492067251")
     }
+    if !Embedder.modelID.hasPrefix("\(manifest.huggingFaceRepo)@\(manifest.huggingFaceRevision):") {
+        mismatches.append("Embedder.modelID \(Embedder.modelID) does not start with \(manifest.huggingFaceRepo)@\(manifest.huggingFaceRevision):")
+    }
 
     guard mismatches.isEmpty else {
         for mismatch in mismatches { print("FAIL manifest sync: \(mismatch)") }
@@ -241,7 +244,7 @@ func runChecks() async throws {
     }
     let reopened = try VectorStore(url: storeURL)
     checks.require(try reopened.nearest(to: diagram, limit: 1).first?.key == "token-bucket-diagram", "SQLite persistence + Float16 self-match")
-    var basis = [Float](repeating: 0, count: 256); basis[0] = 1
+    var basis = [Float](repeating: 0, count: EmbedProtocol.defaultDimensions); basis[0] = 1
     let identityURL = temp.appendingPathComponent("model-identity.sqlite")
     let modelFilesA = try makeVectorModelFiles(in: temp.appendingPathComponent("model-a"), sizeOffset: 0)
     let modelFilesB = try makeVectorModelFiles(in: temp.appendingPathComponent("model-b"), sizeOffset: 5)
@@ -262,7 +265,7 @@ func runChecks() async throws {
     checks.require(try VectorStore(url: storeURL, modelID: "different-model").keys().isEmpty, "model isolation")
     checks.require(try VectorStore(url: storeURL, dimensions: 128).keys().isEmpty, "dimension isolation")
     do { _ = try store.nearest(to: [1], limit: 1); checks.require(false, "reject mismatched query dimensions") }
-    catch { checks.require(true, "reject mismatched query dimensions") }
+    catch { checks.require(error is EmbeddingError, "reject mismatched query dimensions") }
     checks.require(try store.nearest(to: diagram, limit: 0).isEmpty, "zero result limit")
     let client = try EmbedClient(helperExecutable: helperURL, modelsDirectory: models, idleSeconds: 3)
     let coldStart = Date()
@@ -290,7 +293,7 @@ func runChecks() async throws {
     let concurrent = try await [a, b]
     checks.require(concurrent.allSatisfy { unit($0) } && cosine(concurrent[0], concurrent[1]) < 0.99, "concurrent callers receive their own vectors")
     do { _ = try await client.embedImage(Data("invalid PNG".utf8)); checks.require(false, "helper error response") }
-    catch { checks.require(true, "helper error response") }
+    catch { checks.require(error is EmbeddingError, "helper error response") }
     let afterError = try await client.ping()
     checks.require(afterError.processID == visionInfo.processID, "helper remains alive after invalid request")
     let idleStart = Date()
@@ -303,7 +306,7 @@ func runChecks() async throws {
     let restarted = try await client.ping()
     checks.require(restarted.processID != visionInfo.processID && !restarted.visionLoaded, "client restarts after idle exit")
     _ = kill(restarted.processID, SIGKILL)
-    try await Task.sleep(for: .milliseconds(100))
+    try await waitUntil({ await client.processID() != restarted.processID })
     _ = try await client.embedQuery("restart after unexpected death")
     let recovered = try await client.ping()
     checks.require(recovered.processID != restarted.processID, "client restarts after unexpected death")

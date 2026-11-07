@@ -37,8 +37,7 @@ internal sealed partial class AppController
     // Hotkeys. Callbacks arrive on the registrar's message thread, so each captures its context first.
     internal void RegisterHotkeys()
     {
-        hotkeys ??= new HotkeyRegistrar();
-        hotkeys.UnregisterAll();
+        Hotkeys.UnregisterAll();
         if (quitting || !Setup.ConsentAnswered) return;
         failures.Clear();
         LoadBindings();
@@ -58,7 +57,7 @@ internal sealed partial class AppController
         };
         foreach (var (action, handler) in handlers)
         {
-            if (disabled.Contains(action.ToString())) { continue; }
+            if (disabled.Contains(HotkeyActionNames.Of(action))) { continue; }
             var chord = Bindings[action];
             if (!AltGrGuard.IsSafe(chord))
             {
@@ -67,7 +66,7 @@ internal sealed partial class AppController
                 continue;
             }
 
-            var result = hotkeys.Register(action, chord, handler);
+            var result = Hotkeys.Register(action, chord, handler);
             if (!result.Succeeded) { failures[action] = result; log.Error($"Hotkey {action} {chord.DisplayString} failed ({result.Win32Error})"); }
         }
 
@@ -79,7 +78,6 @@ internal sealed partial class AppController
         }
     }
 
-    // Tray.
     private void InstallTray()
     {
         tray = new TrayIcon(id => dispatcher.BeginInvoke(() => OnMenu(id)), TrayIconAssets.FindDefault());
@@ -100,21 +98,24 @@ internal sealed partial class AppController
         ? TrayMenuItem.Separator()
         : new TrayMenuItem(entry.Id, entry.Title, entry.Shortcut, entry.Enabled, entry.Checked, entry.Children?.Select(ToTray).ToArray());
 
+    /// The command menu items that show a shortcut; the self-test checks the same list against the defaults.
+    internal static readonly IReadOnlyList<(string MenuId, HotkeyAction Action)> ShortcutMenuItems =
+    [
+        (MenuIds.CaptureSelection, HotkeyAction.CaptureSelection),
+        (MenuIds.CaptureArea, HotkeyAction.CaptureArea),
+        (MenuIds.CaptureSelectionOutsideSession, HotkeyAction.CaptureSelectionOutsideSession),
+        (MenuIds.CaptureAreaOutsideSession, HotkeyAction.CaptureAreaOutsideSession),
+        (MenuIds.Search, HotkeyAction.SearchNotes),
+        (MenuIds.Session, HotkeyAction.ToggleSession),
+        (MenuIds.WriteNote, HotkeyAction.WriteNote),
+        (MenuIds.WriteNoteOutsideSession, HotkeyAction.WriteNoteOutsideSession),
+        (MenuIds.AddSubheading, HotkeyAction.AddSubheading),
+        (MenuIds.OpenFolder, HotkeyAction.OpenNotesFolder)
+    ];
+
     private MenuState BuildMenuState()
     {
-        var bindings = new Dictionary<string, string>
-        {
-            [MenuIds.CaptureSelection] = BindingText(HotkeyAction.CaptureSelection),
-            [MenuIds.CaptureArea] = BindingText(HotkeyAction.CaptureArea),
-            [MenuIds.CaptureSelectionOutsideSession] = BindingText(HotkeyAction.CaptureSelectionOutsideSession),
-            [MenuIds.CaptureAreaOutsideSession] = BindingText(HotkeyAction.CaptureAreaOutsideSession),
-            [MenuIds.Search] = BindingText(HotkeyAction.SearchNotes),
-            [MenuIds.Session] = BindingText(HotkeyAction.ToggleSession),
-            [MenuIds.WriteNote] = BindingText(HotkeyAction.WriteNote),
-            [MenuIds.WriteNoteOutsideSession] = BindingText(HotkeyAction.WriteNoteOutsideSession),
-            [MenuIds.AddSubheading] = BindingText(HotkeyAction.AddSubheading),
-            [MenuIds.OpenFolder] = BindingText(HotkeyAction.OpenNotesFolder)
-        };
+        var bindings = ShortcutMenuItems.ToDictionary(item => item.MenuId, item => BindingText(item.Action));
         foreach (var action in failures.Keys)
         {
             var id = action switch
@@ -141,9 +142,9 @@ internal sealed partial class AppController
     private void OnMenu(string id)
     {
         if (quitting) { return; }
-        if (id == "folder-shortcuts.settings") { OpenSettings(3); return; }
-        if (id.StartsWith("folder-shortcuts.", StringComparison.Ordinal)
-            && Guid.TryParse(id["folder-shortcuts.".Length..], out var bindingId))
+        if (id == FolderSettingsMenuId) { OpenSettings(3); return; }
+        if (id.StartsWith(FolderMenuPrefix, StringComparison.Ordinal)
+            && Guid.TryParse(id[FolderMenuPrefix.Length..], out var bindingId))
         {
             if (folderBindings.FirstOrDefault(binding => binding.Id == bindingId) is { } binding) RunFolderShortcut(binding);
             return;

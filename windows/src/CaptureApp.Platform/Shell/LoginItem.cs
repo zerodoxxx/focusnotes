@@ -58,13 +58,9 @@ public sealed class LoginItem
     public static string QuoteExecutablePath(string executablePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
-        if (executablePath.Contains('"'))
-        {
-            throw new ArgumentException("Executable paths cannot contain a quote character.", nameof(executablePath));
-        }
-
-        var fullPath = Path.GetFullPath(executablePath);
-        var quotedPath = $"\"{fullPath}\"";
+        const string quoteMessage = "Executable paths cannot contain a quote character.";
+        if (executablePath.Contains('"')) throw new ArgumentException(quoteMessage, nameof(executablePath));
+        var quotedPath = ShellPath.Quote(executablePath, nameof(executablePath), quoteMessage);
         if (quotedPath.Length > 260)
         {
             throw new ArgumentException("The quoted executable path must be no longer than 260 characters.", nameof(executablePath));

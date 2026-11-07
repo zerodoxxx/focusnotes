@@ -29,6 +29,23 @@ public sealed class Vault
     public const string InboxTitle = "Inbox";
     public const string SessionsDirectoryName = "Sessions";
     public const string AssetsDirectoryName = "assets";
+    public const string MarkdownExtension = ".md";
+    public static bool IsMarkdown(string path) => Path.GetExtension(path).Equals(MarkdownExtension, StringComparison.OrdinalIgnoreCase);
+    public static bool IsAssetPath(string relativePath) => relativePath.Split('/')[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase);
+    public static string AssetPath(string stamp, string suffix) => $"{AssetsDirectoryName}/{stamp}-{suffix}.png";
+    public static string AssetStamp(DateTimeOffset createdAt, TimeZoneInfo timeZone) => CaptureFormat.LocalStamp(createdAt, "yyyy-MM-dd-HHmmss", timeZone);
+    public static string UrlUnder(string root, string relativePath) => Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+    public static string[] PathComponents(string path)
+    {
+        var parts = path.Split('/');
+        if (path.Length == 0 || Path.IsPathRooted(path) || path.Contains('\\') || NoteTitle.ContainsControlCharacters(path) || parts.Any(p => p is "" or "." or ".."))
+        {
+            throw new VaultFileException(VaultFileError.PermissionDenied);
+        }
+
+        return parts;
+    }
+
     public string Root { get; }
     public string HomeRoot { get; }
     public string InboxUrl => Path.Combine(Root, InboxFileName);
@@ -78,8 +95,6 @@ public sealed class Vault
     }
 
     public ExternalNoteRegistry.Snapshot? ExternalRegistrySnapshot() => ExternalNoteRegistry?.GetSnapshot();
-    public void InvalidateExternalRegistryCache() => ExternalNoteRegistry?.InvalidateCache();
-    public VaultFileSnapshot? ExternalRegistryFingerprint() => ExternalNoteRegistry?.CurrentFingerprint();
     public IReadOnlyList<VaultNoteLocation> ExternalNoteLocations(ExternalNoteRegistry.Snapshot? snapshot = null)
     {
         if (ExternalNoteRegistry is null)
@@ -92,7 +107,7 @@ public sealed class Vault
         {
             try
             {
-                var managed = ManagedLocation(Path.Combine(HomeRoot, path.Replace('/', Path.DirectorySeparatorChar)));
+                var managed = ManagedLocation(UrlUnder(HomeRoot, path));
                 if (managed.Scope == NotePathScope.Home)
                 {
                     result.Add(managed.Note);
@@ -205,7 +220,7 @@ public sealed class Vault
                         _ = NoteFile.SafePath(Root, path + "/.read-check");
                         Visit(path);
                     }
-                    else if (!name.StartsWith("~$", StringComparison.Ordinal) && Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase))
+                    else if (!NoteTitle.IsOwnerFileName(name) && IsMarkdown(name))
                     {
                         value?.Validate();
                         if (value is not null && !value.IsLink)
@@ -231,11 +246,11 @@ public sealed class Vault
     {
         var stem = NamingRules.FileStem(title);
         NamingRules.ValidateComponent(stem);
-        var candidate = Path.Combine(Root, stem + ".md");
+        var candidate = Path.Combine(Root, stem + MarkdownExtension);
         var suffix = 2;
         while (File.Exists(candidate) || Directory.Exists(candidate) || excluding?.Contains(candidate) == true)
         {
-            candidate = Path.Combine(Root, $"{stem} {suffix++}.md");
+            candidate = Path.Combine(Root, $"{stem} {suffix++}{MarkdownExtension}");
         }
 
         return candidate;
@@ -267,7 +282,7 @@ public sealed class Vault
             parents.Add(matched);
         }
 
-        var leaf = name.LeafName + ".md";
+        var leaf = name.LeafName + MarkdownExtension;
         var existing = MatchingName(leaf, Path.Combine(root, string.Join(Path.DirectorySeparatorChar, parents)));
         var relative = string.Join('/', parents.Append(existing ?? leaf));
         return Location(name.Scope, relative);
@@ -276,13 +291,13 @@ public sealed class Vault
     public VaultNoteLocation DeferredNoteLocation(NotePathName name)
     {
         ValidateName(name);
-        return Location(name.Scope, name.RelativePath + ".md");
+        return Location(name.Scope, name.RelativePath + MarkdownExtension);
     }
 
     private VaultNoteLocation Location(NotePathScope scope, string relative)
     {
         var root = scope == NotePathScope.Vault ? Root : HomeRoot;
-        var url = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+        var url = UrlUnder(root, relative);
         if (scope == NotePathScope.Home && RelativeUnder(url, Root) is { } vaultRelative)
         {
             scope = NotePathScope.Vault;
@@ -311,8 +326,8 @@ public sealed class Vault
 
     private void ValidateNoteLocation(NotePathScope scope, string relative)
     {
-        var components = NoteFile.PathComponents(relative);
-        if (components[^1].StartsWith("~$", StringComparison.Ordinal) || scope == NotePathScope.Vault && components[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase))
+        var components = PathComponents(relative);
+        if (NoteTitle.IsOwnerFileName(components[^1]) || scope == NotePathScope.Vault && components[0].Equals(AssetsDirectoryName, StringComparison.OrdinalIgnoreCase))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
@@ -362,10 +377,10 @@ public sealed class Vault
     }
 
     public string NoteId(string url) => ManagedLocation(url).Note.Id;
-    public string UrlForRelativePath(string path) => Path.Combine(Root, path.Replace('/', Path.DirectorySeparatorChar));
+    public string UrlForRelativePath(string path) => UrlUnder(Root, path);
     public string ManagedUrl(string relativePath)
     {
-        _ = NoteFile.PathComponents(relativePath);
+        _ = PathComponents(relativePath);
         var managed = ManagedLocation(UrlForRelativePath(relativePath));
         if (managed.Scope != NotePathScope.Vault || managed.RelativePath != relativePath)
         {
@@ -380,12 +395,14 @@ public sealed class Vault
     {
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         var full = Path.GetFullPath(path);
-        return full.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? full[prefix.Length..].Replace(Path.DirectorySeparatorChar, '/') : null;
+        return full.StartsWith(prefix, PathIdentity.Comparison) ? full[prefix.Length..].Replace(Path.DirectorySeparatorChar, '/') : null;
     }
+
+    public static bool IsFileUrl(string path) => path.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
 
     public static string DecodeFilePath(string path)
     {
-        if (!path.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        if (!IsFileUrl(path))
         {
             return path;
         }
@@ -419,7 +436,7 @@ public sealed class Vault
         }
 
         var managed = ManagedLocation(external ? DecodeFilePath(id) : ManagedUrl(id));
-        if (managed.Note.Id != id || !Path.GetExtension(managed.Url).Equals(".md", StringComparison.OrdinalIgnoreCase) || external && (managed.Scope != NotePathScope.Home || ExternalNoteRegistry?.Paths().Contains(managed.RelativePath, StringComparer.Ordinal) != true))
+        if (managed.Note.Id != id || !IsMarkdown(managed.Url) || external && (managed.Scope != NotePathScope.Home || ExternalNoteRegistry?.Paths().Contains(managed.RelativePath, StringComparer.Ordinal) != true))
         {
             throw new VaultFileException(VaultFileError.PermissionDenied);
         }

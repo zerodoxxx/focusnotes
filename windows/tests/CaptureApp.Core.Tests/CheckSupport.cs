@@ -35,7 +35,7 @@ internal sealed class CheckVault : IDisposable
         Directory.CreateDirectory(Home);
         Vault = new(Path.Combine(Base, "Vault"), registry ? Registry : null, Home, new() { WindowsRules = windowsRules });
         Writer = new(Vault, Zone, Clock);
-        Sessions = new(State, Vault, Zone, Clock);
+        Sessions = new(State, Vault, Clock);
         Service = new(Vault, Sessions, Writer, Clock);
     }
 
@@ -54,6 +54,7 @@ internal sealed class CheckVault : IDisposable
 
     internal static string Read(string path) => File.ReadAllText(path, NoteFile.Utf8);
     internal static string Marker(Guid id) => "<!-- capture:" + id.ToString("D");
+    internal static int Count(string text, string part) => text.Split(part, StringSplitOptions.None).Length - 1;
     internal static Capture Capture(string text = "Hello", CaptureContentKind kind = CaptureContentKind.Text, string? source = "Safari", Guid? id = null) => new(id ?? Guid.NewGuid(), Now, new(kind, text), new(source));
     internal static Destination Destination(string path, string title = "Note") => new(path, title, NoteKind.Note);
     internal void WriteRegistry(string text) => WriteAbsolute(Registry, text);

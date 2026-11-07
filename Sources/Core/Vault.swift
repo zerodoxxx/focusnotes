@@ -188,13 +188,30 @@ struct VaultManagedLocation: Sendable {
     var url: URL { note.url }
 }
 
+enum VaultPathKind: Equatable {
+    case note
+    case asset
+    case ignored
+}
+
 /// The selected vault root contains notes, `Sessions/` and `assets/`.
 /// Explicitly registered HOME notes are listed separately.
 public struct Vault: Sendable {
     public static let inboxFileName = "Inbox.md"
+    static let noteExtension = "md"
+    static func noteFileName(_ stem: String) -> String { "\(stem).\(noteExtension)" }
+    static func isNoteFile(_ url: URL) -> Bool { url.pathExtension.lowercased() == noteExtension }
+    static func isNoteFile(atPath path: String) -> Bool { isNoteFile(URL(fileURLWithPath: path)) }
     public static let inboxTitle = "Inbox"
     public static let sessionsDirectoryName = "Sessions"
     public static let assetsDirectoryName = "assets"
+
+    public static func isAssetPath(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !path.hasPrefix("/") && components.count >= 2
+            && components[0].caseInsensitiveCompare(Self.assetsDirectoryName) == .orderedSame
+            && !components.contains(where: { $0 == "." || $0 == ".." || $0.isEmpty })
+    }
 
     public let root: URL
     let rootAnchor: VaultDirectoryAnchor
@@ -278,7 +295,7 @@ public struct Vault: Sendable {
     /// create a duplicate note.
     private func listedPrefix(in anchor: VaultDirectoryAnchor, relativePath: String) -> Data? {
         do {
-            return try NoteFile.readManagedPrefix(4096, in: anchor, relativePath: relativePath)
+            return try NoteFile.readManagedPrefix(NoteTitle.titlePrefixBytes, in: anchor, relativePath: relativePath)
         } catch let error as POSIXError where error.code == .EAGAIN {
             return Data()
         } catch {
@@ -298,9 +315,7 @@ public struct Vault: Sendable {
                 externalFiles.append(VaultNoteFile(id: location.id, url: location.url, kind: .note, snapshot: snapshot))
             } catch let error as POSIXError where error.code == .EAGAIN {
                 externalFiles.append(VaultNoteFile(id: location.id, url: location.url, kind: .note, snapshot: nil, isChanging: true))
-            } catch let error as POSIXError where
-                error.code == .EACCES || error.code == .ELOOP || error.code == .ENOENT ||
-                error.code == .ENOTDIR || error.code == .EPERM {
+            } catch let error as POSIXError where NoteFile.isAbsent(error) {
                 continue
             }
         }
@@ -311,10 +326,10 @@ public struct Vault: Sendable {
     public func uniqueNoteURL(forTitle title: String, excluding reserved: Set<URL> = []) -> URL {
         let stem = NoteTitle.fileStem(for: title)
         let fm = FileManager.default
-        var candidate = root.appendingPathComponent("\(stem).md")
+        var candidate = root.appendingPathComponent(Self.noteFileName(stem))
         var suffix = 2
         while fm.fileExists(atPath: candidate.path) || reserved.contains(candidate) {
-            candidate = root.appendingPathComponent("\(stem) \(suffix).md")
+            candidate = root.appendingPathComponent(Self.noteFileName("\(stem) \(suffix)"))
             suffix += 1
         }
         return candidate
@@ -344,7 +359,7 @@ public struct Vault: Sendable {
     public func deferredNoteLocation(for pathName: NotePathName) throws -> VaultNoteLocation {
         try validate(pathName)
         let root = pathName.scope == .vault ? self.root : homeRoot
-        let noteRelativePath = "\(pathName.relativePath).md"
+        let noteRelativePath = Self.noteFileName(pathName.relativePath)
         let url = append(relativePath: noteRelativePath, to: root)
         if pathName.scope == .home,
            let vaultRelativePath = relativePath(url, under: self.root) {
@@ -386,7 +401,7 @@ public struct Vault: Sendable {
             components[index] = existing
         }
 
-        let requestedFileName = "\(pathName.leafName).md"
+        let requestedFileName = Self.noteFileName(pathName.leafName)
         let existingFileName = try matchingName(requestedFileName, in: parent, anchor: anchor)
         let leafFileName = existingFileName ?? requestedFileName
         let canonicalRelativePath = (parent + [leafFileName]).joined(separator: "/")
@@ -419,7 +434,7 @@ public struct Vault: Sendable {
             throw NotePathNameError.tooLong
         }
         guard pathName.components.allSatisfy({
-            !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\0")
+            NoteTitle.isNamedComponent($0) && !$0.contains("/") && !$0.contains("\0")
         }) else {
             throw NotePathNameError.invalidComponent
         }
@@ -439,7 +454,7 @@ public struct Vault: Sendable {
         }
         let pathComponents = url.path.split(separator: "/", omittingEmptySubsequences: false)
         guard pathComponents.first == "",
-              pathComponents.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+              pathComponents.dropFirst().allSatisfy({ NoteTitle.isNamedComponent($0) }) else {
             throw CocoaError(.fileWriteInvalidFileName)
         }
         let standardized = url.standardizedFileURL
@@ -485,7 +500,7 @@ public struct Vault: Sendable {
     private func validateManagedPath(_ path: String) throws {
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard !components.isEmpty,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+              components.allSatisfy({ NoteTitle.isNamedComponent($0) }),
               !path.contains("\0") else {
             throw CocoaError(.fileWriteInvalidFileName)
         }
@@ -494,7 +509,7 @@ public struct Vault: Sendable {
     private func validateNoteLocation(scope: NotePathScope, relativePath: String) throws {
         try validateManagedPath(relativePath)
         let components = relativePath.split(separator: "/")
-        guard let leaf = components.last, !leaf.hasPrefix("~$") else {
+        guard let leaf = components.last, !NoteTitle.isOwnerFileName(String(leaf)) else {
             throw NotePathNameError.invalidComponent
         }
         if scope == .vault,
@@ -526,7 +541,6 @@ public struct Vault: Sendable {
         return managed.url
     }
 
-    /// Vault-relative path of a URL inside the vault, or nil when it is outside.
     public func relativePath(of url: URL) -> String? {
         let rootComponents = root.standardizedFileURL.resolvingSymlinksInPath().pathComponents
         let components = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
@@ -542,32 +556,6 @@ public struct Vault: Sendable {
     public func fileSnapshot(relativePath: String, includingContents: Bool = true) throws -> VaultFileSnapshot? {
         try NoteFile.readManagedSnapshot(in: rootAnchor, relativePath: relativePath,
                                          includingContents: includingContents)
-    }
-
-    /// Lexical path for a managed write. Symlinks are checked later through
-    /// openat/O_NOFOLLOW; resolving them here would erase the path to validate.
-    func writePath(of url: URL) throws -> String {
-        guard url.isFileURL else { throw CocoaError(.fileWriteInvalidFileName) }
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        guard path.hasPrefix(prefix) else { throw CocoaError(.fileWriteInvalidFileName) }
-        let relative = String(path.dropFirst(prefix.count))
-        let components = relative.split(separator: "/", omittingEmptySubsequences: false)
-        guard !components.isEmpty,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-              !relative.contains("\0") else { throw CocoaError(.fileWriteInvalidFileName) }
-        return relative
-    }
-
-    func relativeDirectory(forWritePath path: String) -> String {
-        path.split(separator: "/").dropLast().joined(separator: "/")
-    }
-
-    /// Vault-relative folder of a note: `""` for root notes, `"Sessions"` for session notes.
-    func relativeDirectory(of note: URL) -> String {
-        let path = relativePath(of: note) ?? note.lastPathComponent
-        return path.split(separator: "/").dropLast().joined(separator: "/")
     }
 
     /// Returns explicitly registered HOME-relative notes. This is a bounded
@@ -606,6 +594,11 @@ public struct Vault: Sendable {
         return locations.sorted { $0.id < $1.id }
     }
 
+    /// External watch paths also reject backslashes and NUL.
+    private static func isSafeWatchComponent<S: StringProtocol>(_ component: S) -> Bool {
+        NoteTitle.isNamedComponent(component) && !component.contains("\\") && !component.contains("\0")
+    }
+
     /// Opens a registered external note's immediate parent directory through
     /// the retained HOME anchor, rejecting symlinks at every path component.
     /// The returned descriptor is owned by the caller and suitable for vnode
@@ -616,7 +609,7 @@ public struct Vault: Sendable {
             components = []
         } else {
             let values = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-            guard values.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+            guard values.allSatisfy({ Self.isSafeWatchComponent($0) }) else {
                 return nil
             }
             components = values
@@ -660,7 +653,7 @@ public struct Vault: Sendable {
         guard location.scope == .home else { return nil }
         let components = location.relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard let name = components.last,
-              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") }) else {
+              components.allSatisfy({ Self.isSafeWatchComponent($0) }) else {
             return nil
         }
         let parentPath = components.dropLast().joined(separator: "/")
@@ -722,7 +715,7 @@ public struct Vault: Sendable {
                 throw POSIXError(.EPERM)
             }
             guard managed.note.id == id,
-                  URL(fileURLWithPath: managed.relativePath).pathExtension.lowercased() == "md" else {
+                  Self.isNoteFile(atPath: managed.relativePath) else {
                 throw POSIXError(.EPERM)
             }
             return managed
@@ -733,7 +726,7 @@ public struct Vault: Sendable {
         let managed = try managedLocation(of: url)
         guard managed.scope == .vault, managed.relativePath == id,
               managed.note.id == id,
-              URL(fileURLWithPath: managed.relativePath).pathExtension.lowercased() == "md" else {
+              Self.isNoteFile(atPath: managed.relativePath) else {
             throw POSIXError(.EPERM)
         }
         return managed
@@ -747,7 +740,7 @@ public struct Vault: Sendable {
                                                includingContents: includingContents)
     }
 
-    private func noteKind(for relativePath: String) -> NoteKind {
+    static func noteKind(for relativePath: String) -> NoteKind {
         if relativePath == Self.inboxFileName { return .inbox }
         if relativePath.hasPrefix("\(Self.sessionsDirectoryName)/") { return .session }
         return .note
@@ -781,39 +774,38 @@ public struct Vault: Sendable {
                 do {
                     children = try NoteFile.listManagedDirectoryEntries(in: rootAnchor, relativePath: path,
                                                                        includeNoteMetadata: includeNoteMetadata)
-                } catch let error as POSIXError where
-                    error.code == .ENOTDIR || error.code == .ELOOP || error.code == .EPERM ||
-                    error.code == .EACCES || error.code == .ENOENT {
+                } catch let error as POSIXError where NoteFile.isAbsent(error) {
                     continue
                 }
                 notes.append(contentsOf: try markdownFilePaths(in: path, entries: children,
                                                                includeNoteMetadata: includeNoteMetadata))
-            } else if isMarkdownNoteName(name) {
+            } else if Self.classify(path.split(separator: "/").map(String.init)) == .note {
                 // Only the optional no-follow stat can authorize reuse of
                 // metadata; full contents still require a descriptor read.
                 let snapshot = includeNoteMetadata ? entry.noteSnapshot : nil
                 notes.append(VaultNoteFile(id: path, url: root.appendingPathComponent(path),
-                                           kind: noteKind(for: path), snapshot: snapshot,
+                                           kind: Self.noteKind(for: path), snapshot: snapshot,
                                            isChanging: includeNoteMetadata && entry.noteIsChanging))
             }
         }
         return notes.sorted { $0.id < $1.id }
     }
 
-    private func isMarkdownNoteName(_ name: String) -> Bool {
-        !name.hasPrefix("~$") && URL(fileURLWithPath: name).pathExtension.lowercased() == "md"
+    /// The one classifier for vault-relative paths. Hidden components and owner lock
+    /// files are never listed, and anything under a top-level `assets/` is an asset.
+    static func classify(_ components: [String]) -> VaultPathKind {
+        guard let leaf = components.last else { return .ignored }
+        guard !components.contains(where: { $0.hasPrefix(".") }),
+              !NoteTitle.isOwnerFileName(leaf) else { return .ignored }
+        if components[0].caseInsensitiveCompare(Self.assetsDirectoryName) == .orderedSame {
+            return components.count >= 2 ? .asset : .ignored
+        }
+        return Self.isNoteFile(atPath: leaf) ? .note : .ignored
     }
 
     /// Title from a leading `# ` line within the first 4 KB, else the file stem.
     private func title(of url: URL, prefix: Data) -> String {
         let stem = url.deletingPathExtension().lastPathComponent
-        let lineData = prefix.prefix { $0 != 0x0A }
-        var firstLine = String(decoding: lineData, as: UTF8.self)
-        if firstLine.hasPrefix("\u{FEFF}") {
-            firstLine.removeFirst()
-        }
-        guard firstLine.hasPrefix("# ") else { return stem }
-        let title = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
-        return title.isEmpty ? stem : title
+        return NoteTitle.headingTitle(NoteTitle.firstLine(of: prefix)) ?? stem
     }
 }

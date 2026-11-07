@@ -10,7 +10,7 @@ public sealed class TypedNoteSaveTests
     public async Task SaveAsNewReplacesAFailedAppendBeforeReplay()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         const string draft = "# Blocked\n\nreplacementneedle";
         // An existing directory at the file path makes the append fail after its intent is journaled.
@@ -40,7 +40,7 @@ public sealed class TypedNoteSaveTests
     public async Task SaveAsNewRetriesTheSameReservedPathWhenJournalingFailed()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         const string draft = "# Existing\n\nretryneedle";
         File.WriteAllText(Path.Combine(pipeline.Vault.Root, "Existing.md"), "# Existing\n");
@@ -63,7 +63,7 @@ public sealed class TypedNoteSaveTests
     public async Task FailedSubheadingSaveClearsTheCommitTail()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Tradeoffs"));
@@ -78,7 +78,7 @@ public sealed class TypedNoteSaveTests
     public async Task RetypedFailedSubheadingIsWrittenOnceAcrossQuit()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Tradeoffs"));
@@ -94,7 +94,7 @@ public sealed class TypedNoteSaveTests
     public async Task DifferentRetypedSubheadingKeepsTheFailedOneForTheQuitDrain()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         File.WriteAllText(pipeline.Journal.DirectoryPath, "block journal creation");
         await Assert.ThrowsAnyAsync<IOException>(() => coordinator.AddSubheadingAsync("Alpha"));
@@ -112,7 +112,7 @@ public sealed class TypedNoteSaveTests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows file-sharing semantics.");
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         const string draft = "# Locked\n\nkeptneedle";
         var blocked = Path.Combine(pipeline.Vault.Root, "Locked.md");
@@ -136,7 +136,4 @@ public sealed class TypedNoteSaveTests
         Assert.Empty(pipeline.Journal.RecordPaths());
         Assert.Single(pipeline.Index.Search("keptneedle"));
     }
-
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 }

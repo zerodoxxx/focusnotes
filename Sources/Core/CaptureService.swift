@@ -124,7 +124,7 @@ public actor CaptureService {
         }
         guard case .note(let markdown) = capture.content else {
             if intent.outsideSession {
-                return PreparedCapture(capture: capture, destination: Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox))
+                return PreparedCapture(capture: capture, destination: .inbox(in: vault))
             }
             return try await prepare(capture, noteTitle: nil)
         }
@@ -135,7 +135,6 @@ public actor CaptureService {
         return try typedNote(capture, markdown: markdown, newNote: intent.newNote, folder: intent.folder, calendar: calendar)
     }
 
-    /// The active session's note, or nil without a session.
     public func sessionDestination() async throws -> Destination? {
         guard let active = await sessions.current() else { return nil }
         return try Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: vault)
@@ -186,15 +185,11 @@ public actor CaptureService {
 
     private func typedNote(_ capture: Capture, markdown: String, newNote: Bool, folder: NoteFolder?, calendar: Calendar) throws -> PreparedCapture {
         let note = TypedNote(markdown: markdown, createdAt: capture.createdAt, calendar: calendar)
-        guard let parsedName = note.pathName else {
-            throw note.pathNameError ?? NotePathNameError.invalidComponent
-        }
-
-        let pathName = try folder.map { try $0.scoped(parsedName) } ?? parsedName
+        let pathName = try Self.resolvedPath(for: note, folder: folder)
 
         let noteCapture = Capture(id: capture.id, createdAt: capture.createdAt, content: .note(note.body), source: capture.source)
         // A title-only note has no body, so its text (the title line) is appended instead.
-        let hasBody = !note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasBody = !CaptureFormat.isBlank(note.body)
         let appendCapture = hasBody ? noteCapture : capture
         let appendsToMatch = !newNote && !note.isGeneratedTitle
         if appendsToMatch {
@@ -226,6 +221,14 @@ public actor CaptureService {
         return PreparedCapture(capture: noteCapture, destination: destination, createsNote: true, noteMarkerIsIdentity: true)
     }
 
+    /// The typed note's path, confined to the chosen folder. A note without a usable name throws its own error.
+    private static func resolvedPath(for note: TypedNote, folder: NoteFolder?) throws -> NotePathName {
+        guard let parsedName = note.pathName else {
+            throw note.pathNameError ?? NotePathNameError.invalidComponent
+        }
+        return try folder.map { try $0.scoped(parsedName) } ?? parsedName
+    }
+
     /// `name` with ` suffix` appended to its leaf. `fileStem` caps a leaf at 120 characters and 220
     /// bytes, so a leaf at the cap is shortened (by grapheme, from the end) until the whole suffix
     /// survives; otherwise every candidate would equal the occupied path. A near-limit folder path
@@ -251,13 +254,10 @@ public actor CaptureService {
     /// "Inbox", else the exact resolved path when it exists on disk or was reserved. Generated titles never match.
     public static func appendTarget(for note: TypedNote, reserved: Set<URL>, vault: Vault, folder: NoteFolder? = nil) throws -> Destination? {
         guard !note.isGeneratedTitle else { return nil }
-        guard let parsedName = note.pathName else {
-            throw note.pathNameError ?? NotePathNameError.invalidComponent
-        }
-        let pathName = try folder.map { try $0.scoped(parsedName) } ?? parsedName
+        let pathName = try Self.resolvedPath(for: note, folder: folder)
         if folder == nil, pathName.scope == .vault, pathName.components.count == 1,
-           NoteTitle.matchKey(note.title) == NoteTitle.matchKey(Vault.inboxTitle) {
-            return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+           Destination.isInboxTitle(note.title) {
+            return .inbox(in: vault)
         }
         let location = try vault.resolveNoteName(pathName)
         if FileManager.default.fileExists(atPath: location.url.path) {

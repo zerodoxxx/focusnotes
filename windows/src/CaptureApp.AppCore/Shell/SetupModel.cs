@@ -43,6 +43,12 @@ public sealed record RevalidationReport(bool? FolderWritable, IReadOnlyCollectio
 /// Every change is written atomically before it returns, so killing the app at any point resumes there.
 public sealed class SetupState
 {
+    private const string VersionKey = "version";
+    private const string StepsKey = "steps";
+    private const string StatusKey = "status";
+    private const string AtKey = "at";
+    private const string DetailKey = "detail";
+
     private readonly SettingsStore store;
     private readonly TimeProvider clock;
     private int storedVersion;
@@ -76,17 +82,17 @@ public sealed class SetupState
         var section = store.ReadSetup();
         states = [];
         hasStoredState = section is not null;
-        storedVersion = section?["version"] is JsonValue version && version.TryGetValue<int>(out var number) ? number : 0;
-        if (section?["steps"] is not JsonObject steps) { return; }
+        storedVersion = section?[VersionKey] is JsonValue version && version.TryGetValue<int>(out var number) ? number : 0;
+        if (section?[StepsKey] is not JsonObject steps) { return; }
         foreach (var info in SetupSteps.All)
         {
             if (steps[info.Key] is not JsonObject entry) { continue; }
-            var status = entry["status"] is JsonValue text && text.TryGetValue<string>(out var name)
+            var status = entry[StatusKey] is JsonValue text && text.TryGetValue<string>(out var name)
                          && Enum.TryParse<SetupStatus>(name, true, out var parsed) ? parsed : SetupStatus.Pending;
-            DateTimeOffset? at = entry["at"] is JsonValue when && when.TryGetValue<string>(out var stamp)
+            DateTimeOffset? at = entry[AtKey] is JsonValue when && when.TryGetValue<string>(out var stamp)
                                  && DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var time)
                 ? time : null;
-            var detail = entry["detail"] is JsonValue note && note.TryGetValue<string>(out var message) ? message : null;
+            var detail = entry[DetailKey] is JsonValue note && note.TryGetValue<string>(out var message) ? message : null;
             states[info.Id] = new SetupStepState(info.Id, status, at, detail);
         }
     }
@@ -99,15 +105,15 @@ public sealed class SetupState
         {
             var section = existing ?? [];
             // The version is stamped on first write; a later bump is acknowledged explicitly.
-            if (section["version"] is not JsonValue) { section["version"] = SetupSteps.CurrentVersion; }
-            var steps = section["steps"] as JsonObject ?? [];
+            if (section[VersionKey] is not JsonValue) { section[VersionKey] = SetupSteps.CurrentVersion; }
+            var steps = section[StepsKey] as JsonObject ?? [];
             steps[info.Key] = new JsonObject
             {
-                ["status"] = status.ToString().ToLowerInvariant(),
-                ["at"] = next.At!.Value.ToString("O", CultureInfo.InvariantCulture),
-                ["detail"] = detail
+                [StatusKey] = status.ToString().ToLowerInvariant(),
+                [AtKey] = next.At!.Value.ToString("O", CultureInfo.InvariantCulture),
+                [DetailKey] = detail
             };
-            section["steps"] = steps;
+            section[StepsKey] = steps;
             return section;
         });
         states[id] = next;
@@ -122,7 +128,7 @@ public sealed class SetupState
         store.UpdateSetup(existing =>
         {
             var section = existing ?? [];
-            section["version"] = SetupSteps.CurrentVersion;
+            section[VersionKey] = SetupSteps.CurrentVersion;
             return section;
         });
         storedVersion = SetupSteps.CurrentVersion;
@@ -151,7 +157,6 @@ public sealed class SetupState
         FirstIncompleteRequired ?? SetupSteps.All.Where(info => Status(info.Id) == SetupStatus.Failed)
             .Select(info => (SetupStepId?)info.Id).FirstOrDefault();
 
-    /// Launch trigger: Velopack first run, no stored state, or an incomplete Required step.
     public bool ShouldOpenOnLaunch(bool isFirstRun) => isFirstRun || NeverRan || FirstIncompleteRequired is not null;
 
     /// The steps the window shows: everything on a first run or manual open, only new steps after a version bump.
@@ -167,13 +172,13 @@ public sealed class SetupState
         var regressed = new List<SetupStepId>();
         if (!ConsentAnswered) { return regressed; }
 
-        Apply(SetupStepId.NotesFolder, report.FolderWritable, "The notes folder can't be written to.", regressed);
+        Apply(SetupStepId.NotesFolder, report.FolderWritable, Strings.NotesFolderNotWritable, regressed);
         Apply(SetupStepId.Shortcuts, report.FailedShortcuts.Count == 0,
-            report.FailedShortcuts.Count == 1 ? "1 keyboard shortcut couldn't be registered." : $"{report.FailedShortcuts.Count} keyboard shortcuts couldn't be registered.",
+            Strings.ShortcutsNotRegistered(report.FailedShortcuts.Count),
             regressed);
-        Apply(SetupStepId.StartAtLogin, report.RunKeyPresent, "Start at login is no longer registered.", regressed);
+        Apply(SetupStepId.StartAtLogin, report.RunKeyPresent, Strings.StartAtLoginNoLongerRegistered + ".", regressed);
         Apply(SetupStepId.Updates, report.UpdateChoicePresent ? true : Status(SetupStepId.Updates) == SetupStatus.Passed ? false : null,
-            "The update choice is missing.", regressed);
+            Strings.UpdateChoiceMissing, regressed);
         return regressed;
     }
 

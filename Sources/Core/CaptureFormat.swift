@@ -4,9 +4,58 @@ import Foundation
 public enum CaptureFormat {
     public static let markerPrefix = "<!-- capture:"
     public static let markerSuffix = " -->"
+    @_spi(Checks) public static let noteMarkerPrefix = "<!-- note:"
+    static let subheadingMarkerPrefix = "<!-- subheading:"
+    static let uuidLength = 36
+    static let markerStampPattern = "yyyy-MM-dd'T'HH:mm:ssXXX"
+    @_spi(Checks) public static let markerStampKey = " at="
+    static let markerAppKey = " app=\""
+    static let sourceHeadingPrefix = "### "
+    static let sourceLinkPrefix = "[Source](<"
+    static let sourceLinkSuffix = ">)"
+    static let imageLinkPrefix = "![]("
+    static let imageLinkSuffix = ")"
 
-    private static let separator = "\u{00B7}"
-    private static let ellipsis = "\u{2026}"
+    /// The only place that maps a capture's content to its marker kind.
+    enum MarkerKind {
+        case capture, note, subheading
+
+        init(_ capture: Capture) {
+            switch capture.content {
+            case .note: self = .note
+            case .subheading: self = .subheading
+            default: self = .capture
+            }
+        }
+    }
+
+    static func identityPrefix(for capture: Capture) -> String {
+        let uuid = capture.id.uuidString.lowercased()
+        switch MarkerKind(capture) {
+        case .capture: return markerPrefix + uuid
+        case .note: return noteMarkerPrefix + uuid
+        case .subheading: return subheadingMarkerPrefix + uuid
+        }
+    }
+
+    static func bareMarker(for capture: Capture) -> String {
+        identityPrefix(for: capture) + markerSuffix
+    }
+
+    /// Splits a block at its first newline; `body` keeps that newline.
+    static func splitMarkerLine(_ block: String) -> (markerLine: Substring, body: Substring) {
+        let end = block.firstIndex(of: "\n") ?? block.endIndex
+        return (block[..<end], block[end...])
+    }
+
+    /// Notes and subheadings stand alone; only plain captures are grouped under a source heading.
+    static func groupsBySource(_ capture: Capture) -> Bool {
+        MarkerKind(capture) == .capture
+    }
+
+    /// Separates header fields (date · app · window).
+    static let headerSeparator = "\u{00B7}"
+    static let ellipsis = "\u{2026}"
     private static let windowTitleLimit = 80
 
     public static func noteHeader(title: String) -> String {
@@ -19,11 +68,11 @@ public enum CaptureFormat {
     public static func block(for capture: Capture, noteRelativeDir: String, calendar: Calendar,
                              includeSourceHeading: Bool = true, assetPathPrefix: String? = nil) -> String {
         if case .subheading(let text) = capture.content {
-            return "## \(cleanSubheading(text))\n<!-- subheading:\(capture.id.uuidString.lowercased()) -->\n"
+            return "## \(cleanSubheading(text))\n" + identityPrefix(for: capture) + markerSuffix + "\n"
         }
         if case .note(let text) = capture.content {
-            let stamp = localStamp(capture.createdAt, pattern: "yyyy-MM-dd'T'HH:mm:ssXXX", calendar: calendar)
-            return "<!-- note:\(capture.id.uuidString.lowercased()) at=\(stamp) -->\n\n" + noteBody(text) + "\n"
+            let stamp = localStamp(capture.createdAt, pattern: markerStampPattern, calendar: calendar)
+            return identityPrefix(for: capture) + markerStampKey + stamp + markerSuffix + "\n\n" + noteBody(text) + "\n"
         }
         let body: String
         switch capture.content {
@@ -35,9 +84,9 @@ public enum CaptureFormat {
         case .subheading, .note: preconditionFailure("handled above")
         }
         let app = escapeMetadata(cleanPart(capture.source.appName))
-        let stamp = localStamp(capture.createdAt, pattern: "yyyy-MM-dd'T'HH:mm:ssXXX", calendar: calendar)
-        let marker = markerPrefix + capture.id.uuidString.lowercased() + " at=\(stamp) app=\"\(app)\"" + markerSuffix
-        let heading = includeSourceHeading ? "### \(sourceHeading(capture.source))\n" : ""
+        let stamp = localStamp(capture.createdAt, pattern: markerStampPattern, calendar: calendar)
+        let marker = identityPrefix(for: capture) + markerStampKey + stamp + markerAppKey + app + "\"" + markerSuffix
+        let heading = includeSourceHeading ? "\(sourceHeadingPrefix)\(sourceHeading(capture.source))\n" : ""
         let sourceLink = sourceLink(for: capture.source).map { $0 + "\n\n" } ?? ""
         return heading + marker + "\n\n" + sourceLink + body + "\n"
     }
@@ -173,7 +222,7 @@ public enum CaptureFormat {
               components.scheme?.lowercased() == scheme,
               let host = components.host, !host.isEmpty,
               components.url != nil else { return nil }
-        return "[Source](<\(normalized)>)"
+        return "\(sourceLinkPrefix)\(normalized)\(sourceLinkSuffix)"
     }
 
     public static func sourceHeading(_ source: CaptureSource) -> String {
@@ -267,7 +316,7 @@ public enum CaptureFormat {
 
     private static func cleanPart(_ value: String?) -> String {
         guard let value else { return "" }
-        let replaced = value.replacingOccurrences(of: separator, with: "-")
+        let replaced = value.replacingOccurrences(of: headerSeparator, with: "-")
         return NoteTitle.cleanTitle(replaced)
     }
 
@@ -291,8 +340,8 @@ public enum CaptureFormat {
         return body
     }
 
-    private static func isBlank(_ line: String) -> Bool {
-        line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    public static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Returns a relative path from `directory` to `target`, without reading either path.
@@ -321,7 +370,7 @@ public enum CaptureFormat {
         let encoded = path.split(separator: "/", omittingEmptySubsequences: false)
             .map { String($0).addingPercentEncoding(withAllowedCharacters: pathSegmentCharacters) ?? String($0) }
             .joined(separator: "/")
-        return "![](\(encoded))"
+        return "\(imageLinkPrefix)\(encoded)\(imageLinkSuffix)"
     }
 
     private static let pathSegmentCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")

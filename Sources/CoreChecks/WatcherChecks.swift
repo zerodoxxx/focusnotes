@@ -1,58 +1,12 @@
 @_spi(Checks) import Core
 import Foundation
 
-private final class VaultChangeRecorder: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var recorded: [VaultChange] = []
-
-    func append(_ change: VaultChange) {
-        condition.lock()
-        recorded.append(change)
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    func changes() -> [VaultChange] {
-        condition.lock()
-        defer { condition.unlock() }
-        return recorded
-    }
-
-    func waitForChange(after offset: Int = 0, timeout: TimeInterval,
-                       matching predicate: (VaultChange) -> Bool) -> VaultChange? {
-        let deadline = Date().addingTimeInterval(timeout)
-        condition.lock()
-        defer { condition.unlock() }
-        while let change = recorded.dropFirst(offset).first(where: predicate) {
-            return change
-        }
-        while condition.wait(until: deadline) {
-            if let change = recorded.dropFirst(offset).first(where: predicate) {
-                return change
-            }
-        }
-        return nil
-    }
-
-    func waitForQuiet(for interval: TimeInterval) -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        let initialCount = recorded.count
-        let deadline = Date().addingTimeInterval(interval)
-        while Date() < deadline {
-            guard condition.wait(until: deadline) else { break }
-            if recorded.count != initialCount { return false }
-        }
-        return recorded.count == initialCount
-    }
-}
-
 func checkVaultWatcher() throws {
     let root = try checkMakeDirectory("vault-watcher")
     defer { checkRemoveDirectory(root) }
     let vault = Vault(root: root)
     try vault.prepare()
-    let recorder = VaultChangeRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     try require(!watcher.isRunning, "VaultWatcher should not report running before start")
     try require(watcher.maximumVnodeDescriptorsForChecks == 128 &&
@@ -126,6 +80,7 @@ func checkVaultWatcher() throws {
 
     try checkBoundedExternalWatcher()
     try checkVaultWatcherUnavailableRetry()
+    try checkVaultWatcherIgnoresOwnerLockFiles()
     try checkExternalWatcherDescriptorCapAndPolling()
     try checkExternalWatcherParentCap()
     print("Vault watcher checks passed.")
@@ -136,7 +91,7 @@ private func checkVaultWatcherUnavailableRetry() throws {
     defer { checkRemoveDirectory(root) }
     let vault = Vault(root: root)
     try vault.prepare()
-    let recorder = VaultChangeRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     defer { watcher.stop() }
 
@@ -155,6 +110,27 @@ private func checkVaultWatcherUnavailableRetry() throws {
                 "an explicit start retry should create the vault stream")
     try require(!watcher.reportedWatchIssuesForChecks.contains("vault-stream-unavailable"),
                 "a successful explicit retry should clear the stream issue")
+}
+
+private func checkVaultWatcherIgnoresOwnerLockFiles() throws {
+    let root = try checkMakeDirectory("vault-watcher-owner-lock")
+    defer { checkRemoveDirectory(root) }
+    let vault = Vault(root: root)
+    try vault.prepare()
+    let recorder = CheckChangeRecorder()
+    let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
+    defer { watcher.stop() }
+    watcher.start()
+    try require(watcher.isRunning, "VaultWatcher should start for the owner lock file check")
+
+    try checkWrite("lock", to: root.appendingPathComponent("~$lock.md"))
+    try checkWrite("lock", to: root.appendingPathComponent("Folder/~$lock.md"))
+    try checkWrite("# Sentinel\n", to: root.appendingPathComponent("sentinel.md"))
+    let sentinelChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains("sentinel.md") }
+    try require(sentinelChange != nil, "VaultWatcher did not report sentinel.md within 3 seconds")
+    try require(recorder.changes().allSatisfy { change in
+        !change.notesChanged.union(change.assetsChanged).contains { $0.split(separator: "/").last?.hasPrefix("~$") == true }
+    }, "an Office or editor owner lock file must never be reported as a change")
 }
 
 private func checkExternalWatcherDescriptorCapAndPolling() throws {
@@ -179,7 +155,7 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
     let vault = Vault(root: root, externalNoteRegistryURL: registryURL, homeDirectoryURL: home)
     try vault.prepare()
     let noteIDs = try noteURLs.map { try vault.noteID(for: $0) }
-    let recorder = VaultChangeRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     watcher.configureWatchFallbackForChecks(maximumVnodeDescriptors: 8,
                                              maximumParentVnodeDescriptors: 3,
@@ -233,12 +209,9 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
 
     try FileManager.default.removeItem(at: noteURLs.last!)
     try checkWrite("# Group 9\n\nrepaired snapshot\n", to: noteURLs.last!)
-    let snapshotRecoveryDeadline = Date().addingTimeInterval(2.0)
-    while watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey) && Date() < snapshotRecoveryDeadline {
-        Thread.sleep(forTimeInterval: 0.01)
+    try waitUntil("a successful snapshot should clear its per-note issue key", timeout: 2.0) {
+        !watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey)
     }
-    try require(!watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey),
-                "a successful snapshot should clear its per-note issue key")
 
     try FileManager.default.removeItem(at: noteURLs.last!)
     try FileManager.default.createSymbolicLink(at: noteURLs.last!, withDestinationURL: snapshotTarget)
@@ -247,24 +220,18 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
                 "a cleared snapshot issue should request another full sync when it recurs")
     try FileManager.default.removeItem(at: noteURLs.last!)
     try checkWrite("# Group 9\n\nrepaired again\n", to: noteURLs.last!)
-    let repeatedRecoveryDeadline = Date().addingTimeInterval(2.0)
-    while watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey) && Date() < repeatedRecoveryDeadline {
-        Thread.sleep(forTimeInterval: 0.01)
+    try waitUntil("the recurring snapshot issue should clear after the note is repaired", timeout: 2.0) {
+        !watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey)
     }
-    try require(!watcher.reportedWatchIssuesForChecks.contains(snapshotIssueKey),
-                "the recurring snapshot issue should clear after the note is repaired")
 
     offset = recorder.changes().count
     try Data(#"{"version":1,"paths":["Group09/Note.md"]}"#.utf8)
         .write(to: registryURL, options: .atomic)
     try require(recorder.waitForChange(after: offset, timeout: 2.0) { $0.needsFullSync } != nil,
                 "reducing the registry should request reconciliation")
-    let recoveryDeadline = Date().addingTimeInterval(2.0)
-    while watcher.pollingFallbackCountForChecks != 0 && Date() < recoveryDeadline {
-        Thread.sleep(forTimeInterval: 0.01)
+    try waitUntil("freed descriptor slots should restore file and parent vnode coverage", timeout: 2.0) {
+        watcher.pollingFallbackCountForChecks == 0
     }
-    try require(watcher.pollingFallbackCountForChecks == 0,
-                "freed descriptor slots should restore file and parent vnode coverage")
     let recoveredIssues = watcher.reportedWatchIssuesForChecks
     try require(!recoveredIssues.contains("file-watch-cap") &&
                 !recoveredIssues.contains("parent-watch-cap") &&
@@ -293,7 +260,7 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
     try checkWrite(#"{"version":1,"paths":["Projects/Note.md"]}"#, to: healthyRegistry)
     let healthyVault = Vault(root: healthyRoot, externalNoteRegistryURL: healthyRegistry, homeDirectoryURL: healthyHome)
     try healthyVault.prepare()
-    let healthyRecorder = VaultChangeRecorder()
+    let healthyRecorder = CheckChangeRecorder()
     let healthyWatcher = VaultWatcher(vault: healthyVault, latency: 0.1) { healthyRecorder.append($0) }
     healthyWatcher.configureWatchFallbackForChecks(maximumVnodeDescriptors: 8,
                                                     maximumParentVnodeDescriptors: 3,
@@ -303,12 +270,9 @@ private func checkExternalWatcherDescriptorCapAndPolling() throws {
     try require(healthyWatcher.isRunning, "fully watched external note should start")
     try require(healthyWatcher.pollingFallbackCountForChecks == 0,
                 "a note with file and parent vnode coverage should not enter the polling fallback")
-    let startupDeadline = Date().addingTimeInterval(2.0)
-    var startupSettled = false
-    while !startupSettled && Date() < startupDeadline {
-        startupSettled = healthyRecorder.waitForQuiet(for: 0.25)
+    try waitUntil("healthy watcher did not settle after its initial FSEvents delivery", timeout: 2.0) {
+        healthyRecorder.waitForQuiet(for: 0.25)
     }
-    try require(startupSettled, "healthy watcher did not settle after its initial FSEvents delivery")
     let startupChanges = healthyRecorder.changes()
     try require(startupChanges.count <= 1 && startupChanges.allSatisfy { change in
         change.notesChanged == ["Inbox.md"] && change.assetsChanged.isEmpty && !change.needsFullSync &&
@@ -396,7 +360,7 @@ private func checkBoundedExternalWatcher() throws {
     let deepID = try vault.noteID(for: deep)
     let addedID = try vault.noteID(for: added)
     let lateID = try vault.noteID(for: late)
-    let recorder = VaultChangeRecorder()
+    let recorder = CheckChangeRecorder()
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     defer { watcher.stop() }
     watcher.start()
@@ -476,8 +440,7 @@ private func checkBoundedExternalWatcher() throws {
     try require(recorder.changes().count == offset,
                 "unrelated HOME activity must not force a full vault sync")
 
-    // Simulate a second process atomically adding one exact path to the
-    // registry. The registry-parent vnode must invalidate the in-memory map.
+    // The registry-parent vnode must invalidate the in-memory map.
     offset = recorder.changes().count
     try Data(
         #"{"version":1,"paths":["Added/Folder/Added.md","Direct.md","Late/Folder/Late.md","Projects/Research/Science/Deep.md"]}"#.utf8

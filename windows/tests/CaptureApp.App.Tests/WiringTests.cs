@@ -5,8 +5,8 @@ using CaptureApp.App;
 using CaptureApp.AppCore;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
+using CaptureApp.ModelInstall;
 using CaptureApp.Overlay;
-using CaptureApp.Platform.Hotkeys;
 using System.Windows.Input;
 using Xunit;
 
@@ -90,19 +90,7 @@ public sealed class WiringTests
         var action = Assert.Single(ActionItem.Standard(false, true, canWriteOutsideSession: true), item => item.Id == NoteActionId.WriteOutsideSession);
         Assert.Equal("Write outside session", action.Title);
         Assert.Equal(new[] { "Ctrl", "Shift", "N" }, action.Keys);
-    }
-
-    [Fact]
-    public void OutsideQuickNoteHotkeyIsGlobalAndLeavesThePanelToggleOnControlShiftN()
-    {
-        var chord = HotkeyDefaults.For(HotkeyAction.WriteNoteOutsideSession);
-        Assert.Equal("Ctrl+Shift+W", chord.DisplayString);
-        Assert.True(HotkeyValidator.Validate(chord).IsValid);
         Assert.Null(QuickNoteView.ShortcutAction(Key.W, ModifierKeys.Control | ModifierKeys.Shift));
-        Assert.False(HotkeyValidator.Validate(KeyChord.Parse("Ctrl+Shift+N")).IsValid);
-        var session = new Destination("session.md", "Thermo", NoteKind.Session);
-        Assert.True(new QuickNoteState(session, outsideSession: true).OutsideSession);
-        Assert.Equal(session, new QuickNoteState(session).Destination);
     }
 
     [Theory]
@@ -155,6 +143,17 @@ public sealed class WiringTests
         Directory.CreateDirectory(directory);
         try
         {
+            Assert.False(AppController.ModelsInstalled(directory));
+            var paths = new List<string>();
+            foreach (var file in ModelManifest.Current.RequiredFiles)
+            {
+                var path = Path.Combine(directory, file.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, []);
+                paths.Add(path);
+            }
+            Assert.True(AppController.ModelsInstalled(directory));
+            File.Delete(paths[^1]);
             Assert.False(AppController.ModelsInstalled(directory));
         }
         finally
@@ -224,6 +223,7 @@ public sealed class MenuCaptureFlowTests
         Assert.Equal(ForegroundTracker.Decision.Clear, ForegroundTracker.Decide(11, 10, "Progman"));
         Assert.Equal(ForegroundTracker.Decision.Clear, ForegroundTracker.Decide(11, 10, "WorkerW"));
         Assert.Equal(ForegroundTracker.Decision.Keep, ForegroundTracker.Decide(10, 10, "Notepad"));
+        Assert.Equal(ForegroundTracker.Decision.Keep, ForegroundTracker.Decide(0, 10, "Notepad"));
         Assert.Equal(ForegroundTracker.Decision.Keep, ForegroundTracker.Decide(11, 10, "Shell_TrayWnd"));
         Assert.Equal(ForegroundTracker.Decision.Keep, ForegroundTracker.Decide(11, 10, "NotifyIconOverflowWindow"));
         Assert.Equal(ForegroundTracker.Decision.Track, ForegroundTracker.Decide(11, 10, "Notepad"));
@@ -259,14 +259,5 @@ public sealed class MenuCaptureFlowTests
     {
         var probe = new FakeProbe { ContextWindow = 5 };
         Assert.Equal((1, 0), await Run(probe));
-    }
-
-    [Fact]
-    public void OwnProcessAndShellWindowsAreNotTracked()
-    {
-        Assert.False(ForegroundTracker.ShouldTrack(10, 10, "Notepad"));
-        Assert.False(ForegroundTracker.ShouldTrack(0, 10, "Notepad"));
-        Assert.False(ForegroundTracker.ShouldTrack(11, 10, "Shell_TrayWnd"));
-        Assert.True(ForegroundTracker.ShouldTrack(11, 10, "Notepad"));
     }
 }

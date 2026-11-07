@@ -71,17 +71,8 @@ extension AppController {
         }
         // No explicit sync/reindex between the editor write and this assertion.
         let externalStart = ContinuousClock.now
-        let externalDeadline = externalStart.advanced(by: .seconds(5))
-        var externalFound = false
-        while ContinuousClock.now < externalDeadline {
-            if try await pipeline.index.search("watcherexternalneedle").contains(where: { $0.captureID == external.id }) {
-                externalFound = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        guard externalFound, ContinuousClock.now < externalDeadline else {
-            throw SelfTestFailure("External edit was not searchable through the watcher within 5 seconds")
+        try await waitUntil("the external edit to become searchable through the watcher", timeout: .seconds(5), poll: .milliseconds(50)) {
+            try await pipeline.index.search("watcherexternalneedle").contains(where: { $0.captureID == external.id })
         }
         let externalDuration = externalStart.duration(to: .now)
         let externalSeconds = Double(externalDuration.components.seconds) + Double(externalDuration.components.attoseconds) / 1e18
@@ -98,11 +89,7 @@ extension AppController {
                 _ = await deferredOCR.value
                 await completion.finish()
             }
-            let deadline = ContinuousClock.now.advanced(by: .seconds(90))
-            while !(await completion.isFinished()), ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            guard await completion.isFinished() else { throw SelfTestFailure("Deferred OCR did not finish within 90 seconds") }
+            try await waitUntil("deferred OCR to finish", timeout: .seconds(90), poll: .milliseconds(50)) { await completion.isFinished() }
         }
 
         // Join deferred OCR and its detached index update before checking vector backfill.
@@ -162,7 +149,7 @@ extension AppController {
             guard blocks.filter({ $0.kind != .image }).allSatisfy({ keys.contains($0.key) }) else {
                 throw SelfTestFailure("Text backfill missed captures")
             }
-            semanticImageVectors = keys.filter { $0 == imageHit.embeddingKey || $0 == imageHit.embeddingKey + "#ocr" }.count
+            semanticImageVectors = keys.filter { $0 == imageHit.embeddingKey || $0 == SemanticIndexer.ocrKey(for: imageHit.embeddingKey) }.count
             if SemanticIndexer.imagesAllowed && semanticImageVectors != 2 {
                 throw SelfTestFailure("Image and OCR vectors were not both indexed")
             }
@@ -232,8 +219,8 @@ extension AppController {
         let next = CapturePipeline.selection(text: "secondacquisitionneedle", context: context)
         guard controller.beginAcquisition({ next }) else { throw SelfTestFailure("Another capture was ignored during OCR") }
         _ = try await selfTestValue(of: Task {
-            // Yield until the second interactive operation has entered the ordered processing queue.
-            while controller.acquisitionInProgress { await Task.yield() }
+            // Wait until the second interactive operation has entered the ordered processing queue.
+            try await waitUntil("the second acquisition to release the acquisition lock", timeout: .seconds(5)) { !controller.acquisitionInProgress }
             await controller.captures.waitForProcessing()
             guard let tail = controller.captures.commitPending() else { throw SelfTestFailure("Second acquisition was not staged") }
             return try await tail.value
@@ -284,10 +271,10 @@ extension AppController {
         let draftText = "typednoteneedle A personal **note**  \n- [ ] Follow up\n"
         try live.drafts.store(draftText)
         let restoredDrafts = NoteDraftStore(stateDirectory: base.appendingPathComponent("State"))
-        guard try restoredDrafts.load() == draftText else { throw SelfTestFailure("Draft was not persisted/restored") }
+        guard try restoredDrafts.loadSnapshot().text == draftText else { throw SelfTestFailure("Draft was not persisted/restored") }
         await controller.captures.stage(CapturePipeline.selection(text: "Fourth paragraph.", context: browser))
-        guard let typed = try await controller.addNote(try restoredDrafts.load()) else { throw SelfTestFailure("Typed note was not saved through controller") }
-        guard try live.drafts.load().isEmpty, !FileManager.default.fileExists(atPath: live.drafts.url.path),
+        guard let typed = try await controller.addNote(try restoredDrafts.loadSnapshot().text) else { throw SelfTestFailure("Typed note was not saved through controller") }
+        guard try live.drafts.loadSnapshot().text.isEmpty, !FileManager.default.fileExists(atPath: live.drafts.url.path),
               let hit = try await live.index.search("typednoteneedle").first,
               hit.captureID == typed.captureID, hit.title == "Feedback", hit.blockKind == .note,
               let typedDate = hit.createdAt else { throw SelfTestFailure("Note search or draft cleanup failed") }
@@ -303,13 +290,13 @@ extension AppController {
               preceding.lowerBound < noteBody.lowerBound,
               try await live.index.captureCount(notePath: session.notePath) == 5 else { throw SelfTestFailure("Typed note pending-first/source grouping failed") }
         try live.drafts.store("Discard this empty draft")
-        guard try await controller.addNote(" \n\t") == nil, try live.drafts.load().isEmpty else { throw SelfTestFailure("Whitespace-only input did not clear draft") }
+        guard try await controller.addNote(" \n\t") == nil, try live.drafts.loadSnapshot().text.isEmpty else { throw SelfTestFailure("Whitespace-only input did not clear draft") }
         _ = try await controller.endSession(session)
         let rootDraft = "# independentnoteneedle\n\nA personal **thought**  \n- [ ] Follow up\n"
         let inboxBefore = try Data(contentsOf: live.vault.inboxURL)
         guard let created = try await controller.addNote(rootDraft), created.destination.kind == .note,
               created.destination.url == live.vault.root.appendingPathComponent("independentnoteneedle.md"),
-              try live.drafts.load().isEmpty,
+              try live.drafts.loadSnapshot().text.isEmpty,
               let createdHit = try await live.index.search("independentnoteneedle").first,
               createdHit.captureID == created.captureID, createdHit.title == "independentnoteneedle",
               createdHit.body == "\nA personal **thought**  \n- [ ] Follow up",
@@ -319,13 +306,13 @@ extension AppController {
         let rootJob = CaptureJob(prepared: PreparedCapture(capture: rootCapture, destination: created.destination, createsNote: true), png: nil, ocr: nil, noteDraft: rootDraft)
         try live.drafts.store(rootDraft)
         try await live.selfCheck.journal.store(rootJob)
-        guard await live.replayUnsaved() == 1, try live.drafts.load().isEmpty,
+        guard await live.replayUnsaved() == 1, try live.drafts.loadSnapshot().text.isEmpty,
               try Data(contentsOf: created.destination.url) == rootBytes,
               !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path) else { throw SelfTestFailure("New-note replay changed its path/bytes or retained the original draft") }
         guard let duplicateTitle = try await controller.addNote(rootDraft),
               duplicateTitle.destination.url == created.destination.url,
               !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path),
-              try String(contentsOf: duplicateTitle.destination.url, encoding: .utf8).contains("<!-- note:\(duplicateTitle.captureID.uuidString.lowercased()) at=") else {
+              NoteParser.parse(contents: try String(contentsOf: duplicateTitle.destination.url, encoding: .utf8), notePath: duplicateTitle.destination.url.path, titleFallback: "", calendar: live.calendar).blocks.contains(where: { $0.captureID == duplicateTitle.captureID }) else {
             throw SelfTestFailure("Controller typed-note collision did not append to the existing note")
         }
         guard let savedAsNew = try await controller.addNote(rootDraft, newNote: true),
@@ -346,6 +333,19 @@ extension AppController {
         try Data("{not json".utf8).write(to: pins.url)
         guard NotePinStore(stateDirectory: pinState).paths().isEmpty, try reloadedPins.toggle("d.md"),
               NotePinStore(stateDirectory: pinState).paths() == ["d.md"] else { throw SelfTestFailure("Pin store did not recover from a corrupt file") }
+        try JSONEncoder().encode(["keep.md"]).write(to: pins.url)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: pins.url.path)
+        let enforcesPermissions = getuid() != 0
+        var unreadableWriteAccepted = false
+        if enforcesPermissions {
+            do { _ = try pins.toggle("x.md"); unreadableWriteAccepted = true } catch {}
+            do { try pins.set("y.md", pinned: true); unreadableWriteAccepted = true } catch {}
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: pins.url.path)
+        if enforcesPermissions {
+            guard !unreadableWriteAccepted else { throw SelfTestFailure("Pin store must not overwrite an unreadable pin file") }
+            guard try JSONDecoder().decode([String].self, from: Data(contentsOf: pins.url)) == ["keep.md"] else { throw SelfTestFailure("Pin store erased pins after a failed read") }
+        }
         _ = await controller.beginTermination().value
         return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     }
@@ -421,7 +421,7 @@ extension AppController {
         try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
         guard state.outsideSession, state.destination == nil,
               try state.togglePinOnSave(in: live.drafts),
-              let saved = try await controller.addNote(try live.drafts.load(), destination: state.destination,
+              let saved = try await controller.addNote(try live.drafts.loadSnapshot().text, destination: state.destination,
                                                      pinOnSave: state.pinOnSave, outsideSession: state.outsideSession),
               live.vault.relativePath(of: saved.destination.url) == "science/Biology.md",
               live.pins.isPinned("science/Biology.md"),
@@ -596,7 +596,7 @@ extension AppController {
         }
         try reopenedStore.store(pinnedDraft, pinOnSave: true)
         try reopenedState.resetPinOnSave(in: reopenedStore)
-        guard !(try reopenedStore.loadSnapshot().pinOnSave), try reopenedStore.load() == pinnedDraft else {
+        guard !(try reopenedStore.loadSnapshot().pinOnSave), try reopenedStore.loadSnapshot().text == pinnedDraft else {
             throw SelfTestFailure("New Note/destination reset failed to clear pin intent while preserving text")
         }
         try reopenedStore.store(pinnedDraft, pinOnSave: true)
@@ -609,7 +609,7 @@ extension AppController {
         let legacyURL = legacyState.appendingPathComponent("draft-note.md")
         try Data(pinnedDraft.utf8).write(to: legacyURL, options: .atomic)
         let migrating = NoteDraftStore(stateDirectory: legacyState)
-        guard try migrating.load() == pinnedDraft, !(try migrating.loadSnapshot().pinOnSave) else {
+        guard try migrating.loadSnapshot().text == pinnedDraft, !(try migrating.loadSnapshot().pinOnSave) else {
             throw SelfTestFailure("Legacy Markdown draft did not load")
         }
         try migrating.store(pinnedDraft, pinOnSave: true)
@@ -645,9 +645,14 @@ extension AppController {
             } catch let error as POSIXError where error.code == .EACCES {
                 // NoteFile cannot create its temporary note in the read-only vault.
             }
-            guard retryController.captures.commitTailForChecks == nil else {
-                throw SelfTestFailure("Failed note save left a stale commit tail that blocks the editor")
-            }
+        }
+        let retryFlushed = SelfTestCompletion()
+        Task {
+            await retryController.captures.waitForCommits()
+            await retryFlushed.finish()
+        }
+        guard (try? await waitUntil("the failed note save to release its commit tail", timeout: .seconds(5)) { await retryFlushed.isFinished() }) != nil else {
+            throw SelfTestFailure("Failed note save left a stale commit tail that blocks the editor")
         }
         let failedJobs = try await selfTestJournalJobs(retryPipeline.selfCheck.journal)
         let reopened = try NoteDraftStore(stateDirectory: retryBase.appendingPathComponent("State")).loadSnapshot()
@@ -661,11 +666,14 @@ extension AppController {
         guard !(try reopenedState.togglePinOnSave(in: retryPipeline.drafts)),
               let retried = try await retryController.addNote(reopened.text, pinOnSave: reopenedState.pinOnSave),
               retried.captureID == job.prepared.capture.id, retried.destination == job.prepared.destination,
-              !retryPipeline.pins.isPinned("PinRetry.md"), try retryPipeline.drafts.load().isEmpty,
+              !retryPipeline.pins.isPinned("PinRetry.md"), try retryPipeline.drafts.loadSnapshot().text.isEmpty,
               try await retryPipeline.selfCheck.journal.recordURLs().isEmpty,
               try await retryPipeline.index.search("PinRetry").count == 1,
               !fm.fileExists(atPath: root.appendingPathComponent("PinRetry 2.md").path) else {
             throw SelfTestFailure("Retry after removing draft pin intent pinned or duplicated the note")
+        }
+        guard try await retryController.addNote("# FollowUpSave\n\nThe same controller saves again once the vault is writable.") != nil else {
+            throw SelfTestFailure("Failed note save left a stale commit tail that blocks the editor")
         }
         _ = await retryController.beginTermination().value
 
@@ -676,7 +684,7 @@ extension AppController {
         let pinController = AppController(pipeline: pinPipeline, presentsUI: false, onToast: { toasts.append($0) })
         let pinDraft = "# PinFailure\n\nSaving the note must succeed even if its pin cannot be stored."
         // Atomic pin-file replacement throws when its destination is a directory.
-        try fm.createDirectory(at: pinPipeline.pins.url, withIntermediateDirectories: false)
+        try breakPinStorage(pinPipeline)
         guard let saved = try await pinController.addNote(pinDraft, pinOnSave: true),
               saved.destination.url.lastPathComponent == "PinFailure.md", fm.fileExists(atPath: saved.destination.url.path),
               toasts.count == 1, toasts.last?.style == .warning,
@@ -691,7 +699,7 @@ extension AppController {
         let savedBytes = try Data(contentsOf: saved.destination.url)
         try fm.removeItem(at: pinPipeline.pins.url)
         // A cleared-draft save and recovery replay must have nothing left to retry.
-        guard try await pinController.addNote(try pinPipeline.drafts.load()) == nil,
+        guard try await pinController.addNote(try pinPipeline.drafts.loadSnapshot().text) == nil,
               await pinPipeline.replayUnsaved() == 0,
               try Data(contentsOf: saved.destination.url) == savedBytes,
               toasts.count == 1, toasts.last?.title == "Note saved, but not pinned",
@@ -708,7 +716,8 @@ extension AppController {
             stateDirectory: resolveBase.appendingPathComponent("State"), calendar: pipeline.calendar)
         let resolvePipeline = CapturePipeline(vault: opened.vault, sessions: opened.selfCheck.sessions, service: opened.selfCheck.service,
             index: opened.index, semantic: opened.semantic, monitor: opened.monitor, journal: opened.selfCheck.journal,
-            drafts: opened.drafts, pins: opened.pins, calendar: opened.calendar, logger: opened.logger,
+            drafts: opened.drafts, pins: opened.pins, folderShortcuts: opened.folderShortcuts,
+            calendar: opened.calendar, logger: opened.logger,
             noteIDForPin: { _ in throw CocoaError(.fileReadInvalidFileName) })
         var resolveToasts: [Toast] = []
         let resolveController = AppController(pipeline: resolvePipeline, presentsUI: false, onToast: { resolveToasts.append($0) })
@@ -742,16 +751,34 @@ extension AppController {
             if (try? await failController.addSubheading("Blocked")) != nil {
                 throw SelfTestFailure("Read-only subheading commit unexpectedly succeeded")
             }
-            guard failController.captures.commitTailForChecks == nil else {
-                throw SelfTestFailure("Failed subheading save left a stale commit tail that blocks the editor")
-            }
+        }
+        let failFlushed = SelfTestCompletion()
+        Task {
+            await failController.captures.waitForCommits()
+            await failFlushed.finish()
+        }
+        guard (try? await waitUntil("the failed subheading save to release its commit tail", timeout: .seconds(5)) { await failFlushed.isFinished() }) != nil else {
+            throw SelfTestFailure("Failed subheading save left a stale commit tail that blocks the editor")
+        }
+        guard try await failController.addSubheading("Recovered after the journal is writable") != nil else {
+            throw SelfTestFailure("Failed subheading save left a stale commit tail that blocks the editor")
         }
         _ = await failController.beginTermination().value
     }
 
     private func checkQuickNotePinRecovery(in base: URL) async throws {
         let fm = FileManager.default
-        for name in ["ShutdownPinned", "ShutdownCleared", "StartupPinned", "StartupCleared", "StartupDiscarded", "StartupReplaced", "StartupPinFailure"] {
+        let recoveryCases = [
+            PinRecoveryCase(name: "ShutdownPinned", shutdown: true, change: .pinned),
+            PinRecoveryCase(name: "ShutdownCleared", shutdown: true, change: .cleared),
+            PinRecoveryCase(name: "StartupPinned", shutdown: false, change: .pinned),
+            PinRecoveryCase(name: "StartupCleared", shutdown: false, change: .cleared),
+            PinRecoveryCase(name: "StartupDiscarded", shutdown: false, change: .discarded),
+            PinRecoveryCase(name: "StartupReplaced", shutdown: false, change: .replaced),
+            PinRecoveryCase(name: "StartupPinFailure", shutdown: false, change: .pinFailure),
+        ]
+        for recovery in recoveryCases {
+            let name = recovery.name
             let directory = base.appendingPathComponent(name, isDirectory: true)
             let root = directory.appendingPathComponent("Vault")
             let stateDirectory = directory.appendingPathComponent("State")
@@ -775,16 +802,16 @@ extension AppController {
             guard jobs.count == 1, let job = jobs.first, try original.drafts.loadSnapshot().pinOnSave else {
                 throw SelfTestFailure("\(name): failed save did not retain the pinned draft and job")
             }
-            if name.hasSuffix("Cleared") { try original.drafts.setPinOnSave(false) }
-            if name.hasSuffix("Discarded") { try original.drafts.store("") }
+            if recovery.change == .cleared { try original.drafts.setPinOnSave(false) }
+            if recovery.change == .discarded { try original.drafts.store("") }
             let replacement = "# Replacement\n\nThis new draft's pin must not apply to the older recovered note."
-            if name.hasSuffix("Replaced") { try original.drafts.store(replacement, pinOnSave: true) }
-            let pinFailure = name.hasSuffix("PinFailure")
-            if pinFailure { try fm.createDirectory(at: original.pins.url, withIntermediateDirectories: false) }
+            if recovery.change == .replaced { try original.drafts.store(replacement, pinOnSave: true) }
+            let pinFailure = recovery.change == .pinFailure
+            if pinFailure { try breakPinStorage(original) }
 
             let recovered: CapturePipeline
             var toasts: [Toast] = []
-            if name.hasPrefix("Shutdown") {
+            if recovery.shutdown {
                 // Exercise the actual preparedJobs shutdown retry, without another interactive save.
                 _ = await originalController.beginTermination().value
                 recovered = original
@@ -796,7 +823,7 @@ extension AppController {
                 _ = await reopened.beginTermination().value
             }
             let path = "\(name).md"
-            let expectedPin = name.hasSuffix("Pinned")
+            let expectedPin = recovery.change == .pinned
             let snapshot = try recovered.drafts.loadSnapshot()
             guard recovered.pins.isPinned(path) == expectedPin,
                   try await recovered.selfCheck.journal.recordURLs().isEmpty,
@@ -805,7 +832,7 @@ extension AppController {
                   !fm.fileExists(atPath: root.appendingPathComponent("\(name) 2.md").path) else {
                 throw SelfTestFailure("\(name): recovery lost pin intent, changed the identity or duplicated the note")
             }
-            if name.hasSuffix("Replaced") {
+            if recovery.change == .replaced {
                 guard snapshot.text == replacement, snapshot.pinOnSave else { throw SelfTestFailure("Recovery consumed another draft's pin intent") }
             } else {
                 guard snapshot.text.isEmpty, !snapshot.pinOnSave else { throw SelfTestFailure("\(name): recovery did not consume draft intent") }
@@ -849,7 +876,7 @@ extension AppController {
               jobs.allSatisfy({ $0.prepared.destination.url.pathComponents == note.pathComponents }) else { throw SelfTestFailure("Failed captures were not journaled") }
         guard let imageJob = jobs.first(where: { $0.png != nil }),
               case .image(let imagePath) = imageJob.prepared.capture.content else { throw SelfTestFailure("Image journal record missing") }
-        try Data(png.prefix(3)).write(to: original.assetURL(imagePath))
+        try Data(png.prefix(3)).write(to: CapturePipeline.assetURL(imagePath, vault: original.vault))
         try FileManager.default.removeItem(at: note)
         try header.write(to: note)
         _ = try await original.selfCheck.sessions.start(name: "Replacement session")
@@ -915,14 +942,18 @@ extension AppController {
         let live = try await CapturePipeline.open(vaultRoot: base.appendingPathComponent("Vault"), stateDirectory: base.appendingPathComponent("State"), calendar: pipeline.calendar)
         let controller = AppController(pipeline: live, presentsUI: false)
         await controller.captures.stage(CapturePipeline.selection(text: "quit pending work", context: context))
+        let latch = SelfTestLatch()
+        defer { latch.release() }
         let accepted = controller.beginAcquisition {
-            try? await Task.sleep(for: .milliseconds(120))
+            await latch.hold()
             return CapturePipeline.selection(text: "quit in-flight work", context: context)
         }
+        if accepted { await latch.waitUntilHeld() }
         var overlapped = false
         let rejected = controller.beginAcquisition { overlapped = true; return nil }
         let quit = controller.beginTermination()
         let afterQuit = controller.beginAcquisition { overlapped = true; return nil }
+        latch.release()
         _ = await quit.value
         let hits = try await live.index.search("quit")
         guard accepted, !rejected, !afterQuit, !overlapped, hits.count == 2 else { throw SelfTestFailure("Acquisition/quit ordering failed") }
@@ -1016,13 +1047,10 @@ private actor SelfTestCompletion {
 
 private actor SemanticRetryProbe {
     private var attempts = 0
-    private let failingAttempts: Set<Int>
-
-    init(failingAttempts: Set<Int> = [1]) { self.failingAttempts = failingAttempts }
 
     func reconcile() throws {
         attempts += 1
-        if failingAttempts.contains(attempts) { throw ProbeFailure.expectedFailure }
+        if attempts == 1 { throw ProbeFailure.expectedFailure }
     }
 
     func count() -> Int { attempts }
@@ -1034,4 +1062,15 @@ private func selfTestJournalJobs(_ journal: CaptureJournal) async throws -> [Cap
     var jobs: [CaptureJob] = []
     for url in try await journal.recordURLs() { jobs.append(try await journal.load(record: url)) }
     return jobs
+}
+
+private func breakPinStorage(_ pipeline: CapturePipeline) throws {
+    try FileManager.default.createDirectory(at: pipeline.pins.url, withIntermediateDirectories: false)
+}
+
+private struct PinRecoveryCase {
+    enum Change { case pinned, cleared, discarded, replaced, pinFailure }
+    let name: String
+    let shutdown: Bool
+    let change: Change
 }

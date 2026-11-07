@@ -36,7 +36,7 @@ public sealed class CaptureServiceTests
         var nested = service.Prepare(CheckVault.Capture("Create nested destination"), "Science/New Folder/New Note");
         service.Save(nested);
         service.Save(nested);
-        Assert.Equal(1, Count(CheckVault.Read(nested.Destination.Url), CheckVault.Marker(nested.Capture.Id)));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(nested.Destination.Url), CheckVault.Marker(nested.Capture.Id)));
         Assert.Throws<NotePathNameException>(() => service.Prepare(CheckVault.Capture("unsafe"), "Science/../escape"));
         var nestedImage = service.SaveImage(png, new(), "science/new folder/new note");
         Assert.Contains("![](../../assets/", CheckVault.Read(nestedImage.Destination.Url), StringComparison.Ordinal);
@@ -56,7 +56,7 @@ public sealed class CaptureServiceTests
         var saved = service.Save(retry);
         Assert.Equal(saved, service.Save(retry));
         Assert.Equal(retry.Destination, saved.Destination);
-        Assert.Equal(1, Count(CheckVault.Read(saved.Destination.Url), CheckVault.Marker(saved.CaptureId)));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(saved.Destination.Url), CheckVault.Marker(saved.CaptureId)));
         Assert.Equal(retry.Capture.CreatedAt, Assert.Single(NoteParser.Parse(CheckVault.Read(saved.Destination.Url), "Retry.md", "", CheckVault.Zone).Blocks).CreatedAt);
     }
 
@@ -133,6 +133,4 @@ public sealed class CaptureServiceTests
             Assert.Equal(prepared, JsonSerializer.Deserialize<PreparedCapture>(text));
         }
     }
-
-    private static int Count(string text, string part) => text.Split(part, StringSplitOptions.None).Length - 1;
 }

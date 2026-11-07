@@ -16,12 +16,12 @@ public sealed class SessionStoreTests
         Assert.Equal("Sessions/Design Review.md", started.NotePath);
         Assert.Equal(CheckVault.Now, started.StartedAt);
         Assert.Equal("# Design Review\n", CheckVault.Read(e.Vault.UrlForRelativePath(started.NotePath)));
-        var reopened = new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock);
+        var reopened = new SessionStore(e.State, e.Vault, CheckVault.Clock);
         Assert.Equal(started, reopened.Current());
         e.Write(started.NotePath, "# Design Review\nextra line\n");
         e.Sessions.Start("Design Review");
         Assert.Equal("# Design Review\nextra line\n", CheckVault.Read(e.Vault.UrlForRelativePath(started.NotePath)));
-        var later = new SessionStore(e.State, e.Vault, CheckVault.Zone, new FixedTimeProvider(CheckVault.Now.AddDays(1)));
+        var later = new SessionStore(e.State, e.Vault, new FixedTimeProvider(CheckVault.Now.AddDays(1)));
         var resumed = later.Start("design review");
         Assert.True(resumed.Resumed);
         Assert.Equal(started.NotePath, resumed.NotePath);
@@ -82,11 +82,11 @@ public sealed class SessionStoreTests
         Assert.Null(e.Sessions.Current());
         Assert.False(File.Exists(e.Sessions.StateFileUrl));
         e.Sessions.End();
-        Assert.Null(new SessionStore(e.State, e.Vault, CheckVault.Zone).Current());
+        Assert.Null(new SessionStore(e.State, e.Vault).Current());
         CheckVault.WriteAbsolute(e.Sessions.StateFileUrl, "{not json");
-        Assert.Null(new SessionStore(e.State, e.Vault, CheckVault.Zone).Current());
+        Assert.Null(new SessionStore(e.State, e.Vault).Current());
         CheckVault.WriteAbsolute(e.Sessions.StateFileUrl, "{\"name\":\"Legacy\",\"notePath\":\"Sessions/2026-10-12 Legacy.md\",\"startedAt\":\"2026-10-13T09:00:00Z\"}");
-        Assert.Equal("Sessions/2026-10-12 Legacy.md", new SessionStore(e.State, e.Vault, CheckVault.Zone).Current()!.NotePath);
+        Assert.Equal("Sessions/2026-10-12 Legacy.md", new SessionStore(e.State, e.Vault).Current()!.NotePath);
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public sealed class SessionStoreTests
     {
         using var e = new CheckVault();
         CheckVault.WriteAbsolute(e.Sessions.StateFileUrl, "{\"name\":\"S\",\"notePath\":\"Sessions/S.md\",\"startedAt\":\"2026-10-13T09:00:00Z\",\"resumed\":\"false\"}");
-        Assert.Null(new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock).Current());
+        Assert.Null(new SessionStore(e.State, e.Vault, CheckVault.Clock).Current());
     }
 
     [UnixFact]
@@ -136,7 +136,7 @@ public sealed class SessionStoreTests
         CheckVault.SetMode(e.State, 320);
         try
         {
-            Assert.ThrowsAny<Exception>(e.Sessions.End);
+            Assert.Throws<UnauthorizedAccessException>(e.Sessions.End);
             Assert.Equal(kept, e.Sessions.Current());
             Assert.True(File.Exists(e.Sessions.StateFileUrl));
         }
@@ -162,7 +162,7 @@ public sealed class SessionStoreTests
         Assert.False(File.Exists(e.Sessions.StateFileUrl));
         Directory.Delete(e.Vault.SessionsUrl);
         e.Vault.Prepare();
-        var store = new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock, beforeNoteWrite: _ =>
+        var store = new SessionStore(e.State, e.Vault, CheckVault.Clock, beforeNoteWrite: _ =>
         {
             Directory.Move(e.Vault.SessionsUrl, e.Vault.SessionsUrl + ".old");
             CheckVault.SymbolicLink(e.Vault.SessionsUrl, outside, true);

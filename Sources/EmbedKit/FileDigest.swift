@@ -11,6 +11,14 @@ public enum FileDigest {
         while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
             hasher.update(data: chunk)
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return hex(hasher.finalize())
+    }
+
+    public static func sha256Hex(_ data: Data) -> String {
+        hex(SHA256.hash(data: data))
+    }
+
+    private static func hex(_ digest: SHA256.Digest) -> String {
+        digest.map { String(format: "%02x", $0) }.joined()
     }
 }

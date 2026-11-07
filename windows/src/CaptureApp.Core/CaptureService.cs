@@ -97,7 +97,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         }
 
         // Outside a session an untitled capture goes to Inbox, even when a session or note is named Inbox.
-        return intent.OutsideSession ? new(capture, new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox)) : Prepare(capture);
+        return intent.OutsideSession ? new(capture, Router.InboxDestination(vault)) : Prepare(capture);
     }
 
     /// The active session's note, or null without a session.
@@ -236,7 +236,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         if (folder is null && name.Scope == NotePathScope.Vault && name.Components.Count == 1 &&
             NoteTitle.MatchKey(note.Title) == NoteTitle.MatchKey(Vault.InboxTitle))
         {
-            return new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+            return Router.InboxDestination(vault);
         }
 
         var location = vault.ResolveNoteName(name);
@@ -290,7 +290,7 @@ public sealed class CaptureService(Vault vault, SessionStore sessions, NoteWrite
         }
         catch (IOException error) when (error is not ExternalNoteRegistryException && (snapshot?.Paths.Count ?? 0) == 0 &&
             (error is VaultFileException { Kind: VaultFileError.Unavailable } ||
-             (OperatingSystem.IsWindows() ? (error.HResult & 0xFFFF) is 21 or 55 or 1117 or 1167 : (error.HResult & 0xFFFF) is 5 or 6 or 19)))
+             FileErrors.IsUnavailableCode(FileErrors.Code(error))))
         {
             return [];
         }

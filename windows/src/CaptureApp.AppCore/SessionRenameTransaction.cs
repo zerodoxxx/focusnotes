@@ -45,7 +45,7 @@ internal sealed class SessionRenameTransaction
         {
             var oldUrl = vault.ManagedUrl(plan.OldPath);
             var ids = journal.CaptureIdsTargeting(oldUrl)
-                .Concat(unsaved.PreparedTargeting(prepared => SameUrl(prepared.Url, oldUrl)))
+                .Concat(unsaved.PreparedTargeting(prepared => CaptureJournal.SameUrl(prepared.Url, oldUrl)))
                 .Distinct().ToArray();
             intent = new(plan, ids);
             DurableFile.Write(intentPath, JsonSerializer.SerializeToUtf8Bytes(intent));
@@ -134,10 +134,9 @@ internal sealed class SessionRenameTransaction
         }
         catch (Exception error) when (error is JsonException or NotSupportedException)
         {
-            var corrupt = Path.Combine(journal.DirectoryPath, "corrupt");
-            Directory.CreateDirectory(corrupt);
+            var corrupt = CorruptFiles.CreateDirectory(journal.DirectoryPath);
             var stem = Path.GetFileNameWithoutExtension(intentPath);
-            var target = File.Exists(Path.Combine(corrupt, stem + ".json")) ? stem + "-" + Guid.NewGuid().ToString("N") : stem;
+            var target = CorruptFiles.Stem(corrupt, stem, ".json");
             File.Move(intentPath, Path.Combine(corrupt, target + ".json"));
             logger.Error($"Corrupt session rename intent quarantined: {error.Message}");
             return null;
@@ -180,7 +179,4 @@ internal sealed class SessionRenameTransaction
         }
         File.Delete(intentPath);
     }
-
-    private static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
-        Path.GetFullPath(right).Normalize(), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 }

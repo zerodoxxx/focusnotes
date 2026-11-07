@@ -39,8 +39,14 @@ public sealed class VaultChange : IEquatable<VaultChange>
 public sealed class VaultWatcher : IDisposable
 {
     internal const int BufferSize = 64 * 1024; // Also valid for UNC/network roots.
-    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private static readonly StringComparer PathComparer = PathIdentity.Comparer;
     private static readonly TimeSpan ExternalDebounce = TimeSpan.FromMilliseconds(40);
+    // Errors carry across native watcher replacements, so this is a budget per watched path.
+    private const int MaxWatchErrors = 3;
+    private const int MaxParentRetries = 5;
+    private const double MinimumRetryMilliseconds = 30000;
+    private const double FallbackIntervalsPerRetry = 4;
+    private const double DefaultLatencySeconds = 1.0;
     private readonly object gate = new();
     private readonly Vault vault;
     private readonly TimeSpan latency;
@@ -76,14 +82,12 @@ public sealed class VaultWatcher : IDisposable
         internal int Errors { get; set; }
     }
 
-    public VaultWatcher(Vault vault, Action<VaultChange> onChange, double latency = 1.0)
+    public VaultWatcher(Vault vault, Action<VaultChange> onChange, double latency = DefaultLatencySeconds)
     {
         this.vault = vault;
         this.onChange = onChange;
-        this.latency = TimeSpan.FromSeconds(double.IsFinite(latency) ? Math.Max(0, latency) : 1);
+        this.latency = TimeSpan.FromSeconds(double.IsFinite(latency) ? Math.Max(0, latency) : DefaultLatencySeconds);
     }
-
-    public VaultWatcher(Vault vault, double latency, Action<VaultChange> onChange) : this(vault, onChange, latency) { }
 
     public bool IsRunning { get { lock (gate) { return running; } } }
 
@@ -106,8 +110,7 @@ public sealed class VaultWatcher : IDisposable
             rootSnapshot = ScanRoot();
             ReconcileParents(); // Subscribe before reading the registry, then bracket the read with stats.
             RefreshRegistry(force: true, requestSync: false);
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
     }
 
@@ -141,8 +144,7 @@ public sealed class VaultWatcher : IDisposable
             if (!running) { return; }
             ReconcileParents();
             RefreshRegistry(force: false, requestSync: true);
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
     }
 
@@ -223,8 +225,7 @@ public sealed class VaultWatcher : IDisposable
     private static bool Affects(string path, string target)
     {
         var prefix = Path.EndsInDirectorySeparator(path) ? path : path + Path.DirectorySeparatorChar;
-        return PathComparer.Equals(path, target) || target.StartsWith(prefix,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        return PathComparer.Equals(path, target) || target.StartsWith(prefix, PathIdentity.Comparison);
     }
 
     private void HandleError(DirectoryWatch watch, bool recursive, Exception error)
@@ -247,11 +248,11 @@ public sealed class VaultWatcher : IDisposable
 
             // An overflow loses event details but does not stop the native watcher.
             // Other errors can stop it; recreate it immediately, or enter fallback.
-            if (watch.Errors >= 3 || error is not InternalBufferOverflowException)
+            if (watch.Errors >= MaxWatchErrors || error is not InternalBufferOverflowException)
             {
                 var path = watch.Watcher.Path;
                 watch.Watcher.Dispose();
-                var replacement = watch.Errors < 3 ? CreateWatch(path, recursive) : null;
+                var replacement = watch.Errors < MaxWatchErrors ? CreateWatch(path, recursive) : null;
                 if (replacement is not null) { replacement.Errors = watch.Errors; }
                 if (recursive)
                 {
@@ -264,12 +265,11 @@ public sealed class VaultWatcher : IDisposable
                     // A watched directory deleted and recreated in place races this handler (Windows reports
                     // access-denied on deletion). Let ReconcileParents decide so a missing path is not poisoned.
                     if (replacement is not null) { parents[path] = replacement; }
-                    else if (watch.Errors >= 3) { failedParents.Add(path); }
+                    else if (watch.Errors >= MaxWatchErrors) { failedParents.Add(path); }
                 }
 
-                if (replacement is null && (recursive || watch.Errors >= 3)) { ReportIssue("watch-unavailable:" + path); }
-                ReconcileParents();
-                UpdateFallbackTimer();
+                if (replacement is null && (recursive || watch.Errors >= MaxWatchErrors)) { ReportIssue(WatchUnavailableIssue(path)); }
+                ReconcileAndUpdateFallback();
             }
         }
     }
@@ -345,7 +345,7 @@ public sealed class VaultWatcher : IDisposable
             if (before?.IsDirectory == true || after?.IsDirectory == true)
             {
                 if (before?.IsDirectory == true && (after is null || !before.SameDirectory(after))) { fullSync = true; }
-                if (IsAsset(path)) { Classify(path, notes, assets); }
+                if (Vault.IsAssetPath(path)) { Classify(path, notes, assets); }
             }
             else { Classify(path, notes, assets); }
         }
@@ -357,7 +357,7 @@ public sealed class VaultWatcher : IDisposable
             if (before?.IsDirectory == true || after?.IsDirectory == true)
             {
                 if ((kind & (WatcherChangeTypes.Deleted | WatcherChangeTypes.Renamed)) != 0) { fullSync = true; }
-                if (IsAsset(path)) { Classify(path, notes, assets); }
+                if (Vault.IsAssetPath(path)) { Classify(path, notes, assets); }
             }
             else { Classify(path, notes, assets); }
         }
@@ -368,20 +368,19 @@ public sealed class VaultWatcher : IDisposable
         Publish(notes, assets, fullSync);
     }
 
-    private static bool IsAsset(string path) => path.Split('/')[0].Equals(Vault.AssetsDirectoryName, StringComparison.OrdinalIgnoreCase);
     private static bool IsReportable(string path)
     {
         var parts = path.Split('/');
         var name = parts[^1];
-        return !parts.Any(p => p.StartsWith('.')) && !name.StartsWith("~$", StringComparison.Ordinal)
+        return !parts.Any(p => p.StartsWith('.')) && !NoteTitle.IsOwnerFileName(name)
             && !name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".icloud", StringComparison.OrdinalIgnoreCase)
-            && (IsAsset(path) ? parts.Length >= 2 : Path.GetExtension(name).Equals(".md", StringComparison.OrdinalIgnoreCase));
+            && (Vault.IsAssetPath(path) ? parts.Length >= 2 : Vault.IsMarkdown(name));
     }
 
     private static void Classify(string path, HashSet<string> notes, HashSet<string> assets)
     {
         if (!IsReportable(path)) { return; }
-        if (IsAsset(path)) { assets.Add(path); }
+        if (Vault.IsAssetPath(path)) { assets.Add(path); }
         else { notes.Add(path); }
     }
 
@@ -400,7 +399,7 @@ public sealed class VaultWatcher : IDisposable
                     throw new ExternalNoteRegistryException(ExternalNoteRegistryError.UnreadableRegistry);
                 }
 
-                vault.InvalidateExternalRegistryCache();
+                registry.InvalidateCache();
                 ExternalNoteRegistry.Snapshot? snapshot;
                 try { snapshot = vault.ExternalRegistrySnapshot(); }
                 catch (ExternalNoteRegistryException)
@@ -446,7 +445,7 @@ public sealed class VaultWatcher : IDisposable
             registryFingerprint = before;
             if (registryFailure == failure) { return; }
             registryFailure = failure;
-            vault.InvalidateExternalRegistryCache();
+            registry.InvalidateCache();
             external.Clear(); fingerprints.Clear(); pendingExternal.Clear();
             issues.Add("registry-snapshot");
             Publish([], [], true, failure.Item2, version: failure.Item3);
@@ -459,12 +458,12 @@ public sealed class VaultWatcher : IDisposable
         {
             var value = WatchSnapshot.Managed(vault.HomeRoot, location.RelativePath);
             if (value?.IsDirectory == true) { throw new VaultFileException(VaultFileError.PermissionDenied); }
-            issues.Remove("snapshot:" + location.Id);
+            issues.Remove(SnapshotIssue(location.Id));
             return value;
         }
         catch (Exception error) when (IsWatchFailure(error))
         {
-            ReportIssue("snapshot:" + location.Id);
+            ReportIssue(SnapshotIssue(location.Id));
             return fingerprints.GetValueOrDefault(location.Id);
         }
     }
@@ -477,7 +476,7 @@ public sealed class VaultWatcher : IDisposable
             try
             {
                 var value = !managed || PathComparer.Equals(candidate, boundary) ? WatchSnapshot.At(candidate)
-                    : WatchSnapshot.Managed(boundary, Path.GetRelativePath(boundary, candidate).Replace(Path.DirectorySeparatorChar, '/'), directory: true);
+                    : WatchSnapshot.Managed(boundary, CaptureFormat.RelativePath(boundary, candidate), directory: true);
                 value?.Metadata?.Validate(directory: true);
                 if (value is { IsDirectory: true, IsLink: false, IsPlaceholder: false }) { return candidate; }
             }
@@ -518,16 +517,16 @@ public sealed class VaultWatcher : IDisposable
             if (watch is null)
             {
                 failedParents.Add(path);
-                ReportIssue("watch-unavailable:" + path);
+                ReportIssue(WatchUnavailableIssue(path));
                 ScheduleParentRetry(path);
             }
-            else { parents[path] = watch; parentRetries.Remove(path); issues.Remove("watch-unavailable:" + path); }
+            else { parents[path] = watch; parentRetries.Remove(path); issues.Remove(WatchUnavailableIssue(path)); }
         }
 
         fallbackIds.Clear();
         foreach (var (id, path) in parentById)
         {
-            if (path is null || !parents.ContainsKey(path) || issues.Contains("snapshot:" + id)) { fallbackIds.Add(id); }
+            if (path is null || !parents.ContainsKey(path) || issues.Contains(SnapshotIssue(id))) { fallbackIds.Add(id); }
         }
         if (parentById.Values.OfType<string>().Distinct(PathComparer).Count() > maximumParents) { ReportIssue("parent-watch-cap"); }
         else { issues.Remove("parent-watch-cap"); }
@@ -544,21 +543,20 @@ public sealed class VaultWatcher : IDisposable
             if (fingerprints.GetValueOrDefault(id) != current) { fingerprints[id] = current; changed.Add(id); }
         }
         pendingExternal.Clear();
-        ReconcileParents();
-        UpdateFallbackTimer();
+        ReconcileAndUpdateFallback();
         Publish(changed, [], false);
     }
 
     private void PollFallbacks()
     {
         if (rootFallback) { FlushRoot(); }
-        if (vault.ExternalNoteRegistry is not null && (registryParent is null || !parents.ContainsKey(registryParent)))
+        if (RegistryNeedsPolling)
         {
             RefreshRegistry(force: false, requestSync: true);
         }
         pendingExternal.UnionWith(fallbackIds);
         FlushExternal();
-        if (Environment.TickCount64 - lastRetry >= Math.Max(30000, fallbackInterval.TotalMilliseconds * 4))
+        if (Environment.TickCount64 - lastRetry >= Math.Max(MinimumRetryMilliseconds, fallbackInterval.TotalMilliseconds * FallbackIntervalsPerRetry))
         {
             lastRetry = Environment.TickCount64;
             failedParents.Clear();
@@ -566,17 +564,23 @@ public sealed class VaultWatcher : IDisposable
             {
                 root = CreateWatch(vault.Root, recursive: true);
                 rootFallback = root is null;
-                if (!rootFallback) { issues.Remove("watch-unavailable:" + vault.Root); }
+                if (!rootFallback) { issues.Remove(WatchUnavailableIssue(vault.Root)); }
             }
-            ReconcileParents();
-            UpdateFallbackTimer();
+            ReconcileAndUpdateFallback();
         }
+    }
+
+    private bool RegistryNeedsPolling => vault.ExternalNoteRegistry is not null && (registryParent is null || !parents.ContainsKey(registryParent));
+
+    private void ReconcileAndUpdateFallback()
+    {
+        ReconcileParents();
+        UpdateFallbackTimer();
     }
 
     private void UpdateFallbackTimer()
     {
-        var needed = rootFallback || fallbackIds.Count != 0 || vault.ExternalNoteRegistry is not null
-            && (registryParent is null || !parents.ContainsKey(registryParent));
+        var needed = rootFallback || fallbackIds.Count != 0 || RegistryNeedsPolling;
         if (!needed) { fallbackTimer?.Dispose(); fallbackTimer = null; return; }
         if (fallbackTimer is not null || !running) { return; }
         var generation = epoch;
@@ -593,7 +597,7 @@ public sealed class VaultWatcher : IDisposable
     private void ScheduleParentRetry(string path)
     {
         var attempts = parentRetries.GetValueOrDefault(path);
-        if (attempts >= 5) { return; }
+        if (attempts >= MaxParentRetries) { return; }
         parentRetries[path] = attempts + 1;
         if (parentRetryTimer is not null) { return; }
         var generation = epoch;
@@ -603,9 +607,8 @@ public sealed class VaultWatcher : IDisposable
             {
                 if (generation != epoch || !running) { return; }
                 parentRetryTimer?.Dispose(); parentRetryTimer = null;
-                failedParents.RemoveWhere(p => parentRetries.GetValueOrDefault(p) is > 0 and < 5);
-                ReconcileParents();
-                UpdateFallbackTimer();
+                failedParents.RemoveWhere(p => parentRetries.GetValueOrDefault(p) is > 0 and < MaxParentRetries);
+                ReconcileAndUpdateFallback();
             }
         }, null, TimeSpan.FromMilliseconds(100), Timeout.InfiniteTimeSpan);
     }
@@ -639,6 +642,10 @@ public sealed class VaultWatcher : IDisposable
             }
         }, null, ExternalDebounce, Timeout.InfiniteTimeSpan);
     }
+
+    private static string WatchUnavailableIssue(string path) => "watch-unavailable:" + path;
+
+    private static string SnapshotIssue(string id) => "snapshot:" + id;
 
     private void ReportIssue(string key)
     {
@@ -688,7 +695,6 @@ public sealed class VaultWatcher : IDisposable
         or System.ComponentModel.Win32Exception or NotSupportedException;
 
     internal int StreamGenerationForChecks { get { lock (gate) { return streamGeneration; } } }
-    internal int ParentWatcherCountForChecks { get { lock (gate) { return parents.Count; } } }
     internal int PollingFallbackCountForChecks { get { lock (gate) { return fallbackIds.Count; } } }
     internal bool HasPollingTimerForChecks { get { lock (gate) { return fallbackTimer is not null; } } }
     internal IReadOnlySet<string> ParentPathsForChecks { get { lock (gate) { return parents.Keys.ToFrozenSet(PathComparer); } } }

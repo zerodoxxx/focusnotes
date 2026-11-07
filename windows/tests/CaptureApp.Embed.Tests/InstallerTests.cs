@@ -124,7 +124,6 @@ public sealed class InstallerTests
                 }
 
                 var slice = body.AsSpan((int)start).ToArray();
-                // Truncation: advertise the full length, send half, then drop the connection.
                 await Send(stream, status, headers, fault == Fault.TruncateHalf ? slice[..(slice.Length / 2)] : slice, slice.Length);
             }
             catch (Exception)
@@ -158,20 +157,22 @@ public sealed class InstallerTests
             {
                 foreach (var client in clients)
                 {
-                    try { client.Dispose(); } catch (Exception) { }
+                    client.Dispose();
                 }
             }
 
-            try { loop.Wait(TimeSpan.FromSeconds(2)); } catch (Exception) { }
+            try { loop.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException error) when (error.Flatten().InnerExceptions.All(IsShutdown)) { }
             Task[] pending;
             lock (clients)
             {
                 pending = [.. handlers];
             }
 
-            try { Task.WaitAll(pending, TimeSpan.FromSeconds(2)); } catch (Exception) { }
+            try { Task.WaitAll(pending, TimeSpan.FromSeconds(2)); } catch (AggregateException error) when (error.Flatten().InnerExceptions.All(IsShutdown)) { }
             stop.Dispose();
         }
+
+        private static bool IsShutdown(Exception e) => e is OperationCanceledException or ObjectDisposedException or System.Net.Sockets.SocketException or IOException;
     }
 
     private sealed class Fixture : IDisposable
@@ -434,7 +435,7 @@ public sealed class InstallerTests
         Directory.CreateDirectory(backup);
         File.WriteAllText(Path.Combine(backup, "kept.txt"), "x");
 
-        fixture.Installer().RecoverInterruptedCommit();
+        fixture.Installer();
 
         Assert.True(File.Exists(Path.Combine(fixture.Models, "kept.txt")));
         Assert.False(Directory.Exists(backup));

@@ -1,31 +1,40 @@
 import Foundation
 
-@MainActor
-private final class ShutdownRace {
-    var worker: Task<Void, Never>?
-    var deadline: Task<Void, Never>?
-    private var continuation: CheckedContinuation<Bool, Never>?
+private actor DeadlineRace<T: Sendable> {
+    enum Outcome: Sendable { case finished(T), expired }
+    private var outcome: Outcome?
+    private var continuation: CheckedContinuation<Outcome, Never>?
 
-    init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
-
-    func finish(_ completed: Bool) {
-        guard let continuation else { return }
-        self.continuation = nil
-        worker?.cancel(); worker = nil
-        deadline?.cancel(); deadline = nil
-        continuation.resume(returning: completed)
+    func resolve(_ value: Outcome) {
+        guard outcome == nil else { return }
+        outcome = value
+        continuation?.resume(returning: value)
+        continuation = nil
     }
+
+    func wait() async -> Outcome {
+        if let outcome { return outcome }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+}
+
+/// Returns `work`'s result, or nil at `deadline` without awaiting it. `work` keeps running either way.
+func withDeadline<T: Sendable>(_ deadline: ContinuousClock.Instant,
+                               _ work: @escaping @Sendable () async -> T) async -> T? {
+    let race = DeadlineRace<T>()
+    Task { await race.resolve(.finished(await work())) }
+    let timer = Task {
+        do { try await Task.sleep(until: deadline, clock: .continuous) }
+        catch { return } // An on-time result cancels the one-shot deadline.
+        await race.resolve(.expired)
+    }
+    let outcome = await race.wait()
+    timer.cancel()
+    guard case .finished(let value) = outcome else { return nil }
+    return value
 }
 
 @MainActor
 func waitForShutdown(_ task: Task<Void, Never>, until deadline: ContinuousClock.Instant) async -> Bool {
-    await withCheckedContinuation { continuation in
-        let race = ShutdownRace(continuation)
-        race.worker = Task { await task.value; race.finish(true) }
-        race.deadline = Task {
-            do { try await Task.sleep(until: deadline, clock: .continuous) }
-            catch { return }
-            race.finish(false)
-        }
-    }
+    await withDeadline(deadline) { await task.value } != nil
 }

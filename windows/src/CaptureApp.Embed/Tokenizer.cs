@@ -33,7 +33,7 @@ public sealed class Tokenizer
         mergeReader.Field("model");
         mergeReader.Field("merges");
         var pairs = mergeReader.MergePairs();
-        if (!vocabulary.TryGetValue(Latin1("<bos>"), out var bos) || bos != 2 || !vocabulary.TryGetValue(Latin1("<eos>"), out var eos) || eos != 1)
+        if (!vocabulary.TryGetValue(Latin1("<bos>"), out var bos) || bos != GemmaModelConfig.BosTokenId || !vocabulary.TryGetValue(Latin1("<eos>"), out var eos) || eos != GemmaModelConfig.EosTokenId)
         {
             throw EmbeddingException.Invalid("Invalid BOS/EOS vocabulary IDs");
         }
@@ -109,14 +109,14 @@ public sealed class Tokenizer
     }
 
     /// maxLength includes BOS/EOS; truncation always retains both template tokens.
-    public long[] Encode(string text, int maxLength = 2048)
+    public long[] Encode(string text, int maxLength = GemmaModelConfig.MaxTokens)
     {
         if (maxLength < 2)
         {
             throw EmbeddingException.Invalid("maxLength must be at least two");
         }
 
-        var ids = new List<long> { 2 };
+        var ids = new List<long> { GemmaModelConfig.BosTokenId };
         var position = 0;
         while (position < text.Length)
         {
@@ -154,7 +154,7 @@ public sealed class Tokenizer
 
         var result = new long[Math.Min(ids.Count, maxLength - 1) + 1];
         ids.CopyTo(0, result, 0, result.Length - 1);
-        result[^1] = 1;
+        result[^1] = GemmaModelConfig.EosTokenId;
         return result;
     }
 
@@ -252,9 +252,11 @@ public sealed class Tokenizer
     {
         private int index;
 
+        private static bool IsJsonWhitespace(byte b) => b is 9 or 10 or 13 or 32;
+
         private void Whitespace()
         {
-            while (index < data.Length && data[index] is 9 or 10 or 13 or 32)
+            while (index < data.Length && IsJsonWhitespace(data[index]))
             {
                 index++;
             }
@@ -378,7 +380,6 @@ public sealed class Tokenizer
             }
         }
 
-        /// Returns the string's UTF-8 bytes widened to Latin-1 chars.
         private string ReadString()
         {
             Expect((byte)'"');
@@ -445,8 +446,6 @@ public sealed class Tokenizer
             throw EmbeddingException.Invalid("Unterminated JSON string");
         }
 
-        private static string Latin1(string ascii) => Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(ascii));
-
         private int Hex()
         {
             if (index + 4 > data.Length || !int.TryParse(Encoding.ASCII.GetString(data, index, 4), System.Globalization.NumberStyles.AllowHexSpecifier, null, out var value))
@@ -501,7 +500,7 @@ public sealed class Tokenizer
                 }
             }
 
-            while (index < data.Length && data[index] is not (9 or 10 or 13 or 32 or (byte)',' or (byte)']' or (byte)'}'))
+            while (index < data.Length && !(IsJsonWhitespace(data[index]) || data[index] is (byte)',' or (byte)']' or (byte)'}'))
             {
                 index++;
             }

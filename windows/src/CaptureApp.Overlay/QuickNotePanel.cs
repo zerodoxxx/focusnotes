@@ -194,7 +194,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
         UpdateTitle();
         TextChanged?.Invoke(Editor.Text);
         if (suppressMeasure) return;
-        if (Editor.TextLength > Tokens.EditorRestyleLimit) { measureTimer.Stop(); measureTimer.Start(); return; } // Debounce measuring for large notes.
+        if (Editor.TextLength > Tokens.EditorRestyleLimit) { measureTimer.Stop(); measureTimer.Start(); return; }
         if (measurePending) return;
         measurePending = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Send, () => { measurePending = false; if (!disposed) Remeasure(true); });
@@ -331,7 +331,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 break;
             case NoteActionId.SaveAsNewNote:
                 if (AppendsToExisting) ActionRequested?.Invoke(id);
-                else SaveRequested?.Invoke(); // Nothing to escape: use the default save.
+                else SaveRequested?.Invoke();
                 break;
             default: ActionRequested?.Invoke(id); break;
         }
@@ -437,22 +437,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
 
     // MARK: Keys
 
-    internal static NoteActionId? ShortcutAction(Key key, ModifierKeys modifiers)
-    {
-        var ctrl = modifiers == ModifierKeys.Control; var shift = modifiers == (ModifierKeys.Control | ModifierKeys.Shift);
-        return key switch
-        {
-            Key.C when shift => NoteActionId.CopyMarkdown,
-            Key.P when shift => NoteActionId.Pin,
-            Key.P when ctrl => NoteActionId.Browse,
-            Key.N when ctrl => NoteActionId.NewNote,
-            Key.N when shift => NoteActionId.WriteOutsideSession,
-            Key.O when ctrl => NoteActionId.OpenAsNote,
-            Key.Back when shift => NoteActionId.DiscardDraft,
-            Key.Enter when modifiers == (ModifierKeys.Control | ModifierKeys.Alt) => NoteActionId.SaveAsNewNote,
-            _ => null
-        };
-    }
+    internal static NoteActionId? ShortcutAction(Key key, ModifierKeys modifiers) => NoteShortcuts.Action(key, modifiers);
     /// <summary>Panel-level keys (window preview): Ctrl+Enter, Ctrl+Alt+Enter, Ctrl+K/P/N/O, Ctrl+Shift+P/C/Backspace and the open card's keys.</summary>
     public bool HandleKey(KeyEventArgs e)
     {
@@ -467,7 +452,7 @@ public sealed class QuickNoteView : OverlaySurface, IDisposable
                 if (open is NoteBrowseView)
                 {
                     if (key != Key.K || modifiers != ModifierKeys.Control) return false;
-                    ShowActions(); return true; // Swaps Browse for Actions.
+                    ShowActions(); return true;
                 }
                 if (ShortcutAction(key, modifiers) is not { } shortcut) return false;
                 HideActions(); Perform(shortcut); return true;
@@ -521,7 +506,7 @@ public sealed class QuickNoteController
             try { handlers.OnDraft(content.Editor.Text); return true; }
             catch (Exception exception) { handlers.OnError(exception); return false; }
         };
-        window.CancelHandler = content.CloseOverlay;
+        window.CancelHandler = () => content.CloseOverlay() ? CancelResult.Suppress : CancelResult.Close;
         window.Resigned += content.OnResigned;
         window.PreviewKeyDown += (_, e) => { if (content.HandleKey(e)) e.Handled = true; };
         content.Resized += animated => window.ResizeVisible(content.SurfaceSize, animated);

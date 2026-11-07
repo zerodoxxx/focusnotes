@@ -13,13 +13,11 @@ public sealed class TrustedKeys
 
     public bool IsEmpty => keys.Count == 0;
 
-    public IReadOnlyCollection<string> KeyIds => keys.Keys;
-
     /// <summary>Blank input gives an empty set (updates disabled); malformed entries throw.</summary>
     public static TrustedKeys Parse(string? list)
     {
         var parsed = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-        foreach (var raw in (list ?? "").Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var raw in (list ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var separator = raw.IndexOf(':');
             if (separator <= 0 || separator == raw.Length - 1)

@@ -37,8 +37,10 @@ func checkNoteTitle() throws {
     try require(qualifiedResolved.components == ["science", "math"],
                 "well-formed slash names should remain qualified paths")
     for unsafe in ["science/../escape", "/outside/"] {
-        try require((try? NoteTitle.resolvedPathName(for: unsafe)) == nil,
-                    "unsafe and HOME-qualified names should not fall back to flat names: \(unsafe)")
+        try expectRejection("unsafe and HOME-qualified names should not fall back to flat names: \(unsafe)",
+                            matching: { ($0 as? NotePathNameError) == .invalidComponent }) {
+            _ = try NoteTitle.resolvedPathName(for: unsafe)
+        }
     }
     let homeName = try NoteTitle.pathName(for: "/Desktop/science/math/trigonometry")
     try require(homeName.scope == .home && homeName.relativePath == "Desktop/science/math/trigonometry",
@@ -48,14 +50,24 @@ func checkNoteTitle() throws {
     let longDisplayName = try NoteTitle.pathName(for: "folder/" + String(repeating: "word ", count: 15))
     try require(longDisplayName.displayTitle.count <= 61 && longDisplayName.displayTitle.hasSuffix("…"),
                 "path display titles should keep the existing 60-character cap")
-    for invalid in ["", "/", "science/", "science//math", "./math", "science/../math", "math\u{0000}x", "science/~$draft"] {
-        try require((try? NoteTitle.pathName(for: invalid)) == nil, "unsafe note path should be rejected: \(invalid.debugDescription)")
+    for (invalid, expected) in [("", NotePathNameError.emptyPath), ("/", .emptyPath), ("science/", .invalidComponent),
+                                ("science//math", .invalidComponent), ("./math", .invalidComponent),
+                                ("science/../math", .invalidComponent), ("math\u{0000}x", .invalidComponent),
+                                ("science/~$draft", .invalidComponent)] {
+        try expectRejection("unsafe note path should be rejected: \(invalid.debugDescription)",
+                            matching: { ($0 as? NotePathNameError) == expected }) {
+            _ = try NoteTitle.pathName(for: invalid)
+        }
     }
     let excessiveDepth = Array(repeating: "x", count: 33).joined(separator: "/")
-    try require((try? NoteTitle.pathName(for: excessiveDepth)) == nil, "note path depth should be bounded")
+    try expectRejection("note path depth should be bounded", matching: { ($0 as? NotePathNameError) == .tooDeep }) {
+        _ = try NoteTitle.pathName(for: excessiveDepth)
+    }
     let longComponent = String(repeating: "x", count: 120)
     let excessiveLength = Array(repeating: longComponent, count: 8).joined(separator: "/")
-    try require((try? NoteTitle.pathName(for: excessiveLength)) == nil, "total note path length should be bounded")
+    try expectRejection("total note path length should be bounded", matching: { ($0 as? NotePathNameError) == .tooLong }) {
+        _ = try NoteTitle.pathName(for: excessiveLength)
+    }
     try require(NoteTitle.fileStem(for: "a/b:c") == "a-b-c", "fileStem should replace / and :")
     try require(NoteTitle.fileStem(for: "a\\b") == "a-b", "fileStem should replace backslash")
     try require(NoteTitle.fileStem(for: "Plan\u{0007}X") == "Plan-X", "fileStem should replace control characters")

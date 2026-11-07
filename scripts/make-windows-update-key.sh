@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 ENV_FILE="$ROOT_DIR/Config/app.env"
 
 fail() {
@@ -21,11 +22,7 @@ if [[ $# -ne 1 || ! "$SLOT" =~ ^[12]$ ]]; then
     exit 2
 fi
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-    esac
-done < "$ENV_FILE"
+app_env_load "$ENV_FILE" APPNAME
 [[ -n "${APPNAME:-}" ]] || fail "APPNAME is missing from Config/app.env"
 
 BACKUP="$HOME/$APPNAME-windows-update-key-K$SLOT.txt"
@@ -48,7 +45,7 @@ ENTRY="$(tail -n 1 <<<"$OUTPUT")"
 (umask 077 && mv "$WORK/key.txt" "$BACKUP")
 chmod 600 "$BACKUP"
 
-CURRENT="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' "$ENV_FILE")"
+CURRENT="$(app_env_value "$ENV_FILE" WINDOWS_UPDATE_ED_KEYS)"
 if [[ -n "$CURRENT" ]]; then
     UPDATED="$CURRENT,$ENTRY"
 else

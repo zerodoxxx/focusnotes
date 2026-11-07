@@ -6,10 +6,10 @@ namespace CaptureApp.Core.Tests;
 public sealed class NoteFileReplaceTests
 {
     private static string Recovered(string dir, string name = "note.md", char id = 'a') =>
-        Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string(id, 32), name));
+        Path.Combine(dir, NoteFile.RecoveredName(TempNames.PendingPrefix + new string(id, 32), name));
 
     private static string Plain(string dir, char id = 'a') =>
-        Path.Combine(dir, NoteFile.RecoveredName(".pending-" + new string(id, 32), null));
+        Path.Combine(dir, NoteFile.RecoveredName(TempNames.PendingPrefix + new string(id, 32), null));
 
     // Puts a different file at path; writing it before the old one goes away keeps the inode from being reused.
     private static void Swap(string path, string contents)
@@ -24,7 +24,7 @@ public sealed class NoteFileReplaceTests
     {
         var dir = Directory.CreateDirectory(Path.Combine(e.Base, "replace")).FullName;
         var target = Path.Combine(dir, "note.md");
-        var temporary = Path.Combine(dir, ".pending-" + new string('a', 32));
+        var temporary = Path.Combine(dir, TempNames.PendingPrefix + new string('a', 32));
         File.WriteAllText(target, "old");
         File.WriteAllText(temporary, "new");
         return (dir, target, temporary);
@@ -33,7 +33,17 @@ public sealed class NoteFileReplaceTests
     private static void Replace(string temporary, string target, Action<string, string>? replace = null, Action<string, string>? move = null)
     {
         var lost = false;
-        NoteFile.ReplaceFile(temporary, target, FileMetadata.At(target)!, ref lost, replace, move);
+        try
+        {
+            NoteFile.ReplaceHook.Value = replace;
+            NoteFile.MoveHook.Value = move;
+            NoteFile.ReplaceFile(temporary, target, FileMetadata.At(target)!, ref lost);
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
     }
 
     [Fact]
@@ -108,9 +118,17 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
-            (_, d) => { File.Delete(d); throw Lost(); },
-            (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); }));
+        try
+        {
+            NoteFile.ReplaceHook.Value = (_, d) => { File.Delete(d); throw Lost(); };
+            NoteFile.MoveHook.Value = (_, d) => { File.WriteAllText(d, "other"); throw new IOException("exists"); };
+            Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost));
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
         Assert.True(lost);
         NoteFile.CleanupTemporary(temporary, target, before, lost);
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
@@ -125,8 +143,16 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         var lost = false;
-        Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost,
-            (_, d) => { Swap(d, "other"); throw Lost(); }));
+        try
+        {
+            NoteFile.ReplaceHook.Value = (_, d) => { Swap(d, "other"); throw Lost(); };
+            Assert.Throws<IOException>(() => NoteFile.ReplaceFile(temporary, target, before, ref lost));
+        }
+        finally
+        {
+            NoteFile.ReplaceHook.Value = null;
+            NoteFile.MoveHook.Value = null;
+        }
         Assert.True(lost);
         NoteFile.CleanupTemporary(temporary, target, before, lost);
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
@@ -151,7 +177,12 @@ public sealed class NoteFileReplaceTests
         var (dir, target, temporary) = ReplaceSetup(e);
         var before = FileMetadata.At(target)!;
         File.Delete(target);
-        NoteFile.CleanupTemporary(temporary, target, before, true, (_, _) => throw new IOException("locked"));
+        try
+        {
+            NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+            NoteFile.CleanupTemporary(temporary, target, before, true);
+        }
+        finally { NoteFile.MoveHook.Value = null; }
         Assert.Equal("new", File.ReadAllText(Recovered(dir)));
         NoteFile.SweepStaleTemporaries(e.Base, TimeSpan.Zero);
         Assert.Equal("new", File.ReadAllText(target));
@@ -197,7 +228,11 @@ public sealed class NoteFileReplaceTests
         public Hooks()
         {
             NoteFile.ReplaceHook.Value = (_, d) => { File.Delete(d); throw Lost(); };
-            NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
+            NoteFile.MoveHook.Value = (source, destination) =>
+            {
+                if (Path.GetFileName(destination).StartsWith(TempNames.RecoveredPrefix, StringComparison.Ordinal)) { File.Move(source, destination, false); return; }
+                throw new IOException("locked");
+            };
         }
 
         public void Dispose() { NoteFile.ReplaceHook.Value = null; NoteFile.MoveHook.Value = null; }
@@ -213,7 +248,7 @@ public sealed class NoteFileReplaceTests
             Assert.Throws<IOException>(() => NoteFile.AtomicWrite("new"u8.ToArray(), e.Vault.Root, relative));
         }
         Assert.False(File.Exists(path));
-        Assert.Equal("new", File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, ".recovered-*"))));
+        Assert.Equal("new", File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, TempNames.RecoveredPrefix + "*"))));
         return path;
     }
 
@@ -227,14 +262,13 @@ public sealed class NoteFileReplaceTests
         {
             Assert.Throws<IOException>(() => NoteFile.AtomicWrite("{\"version\":1,\"paths\":[\"Desktop/A.md\"]}"u8.ToArray(), Path.GetDirectoryName(e.Registry)!, "external-notes.json"));
         }
-        var kept = Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, ".recovered-*"));
+        var kept = Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, TempNames.RecoveredPrefix + "*"));
         var content = File.ReadAllText(kept);
         Assert.False(File.Exists(e.Registry));
         registry.Register("Desktop/B.md");
-        // The fresh registry is installed; the old copy is retired under a plain name, content intact.
         Assert.True(File.Exists(e.Registry));
         Assert.NotEqual(content, File.ReadAllText(e.Registry));
-        Assert.Equal(content, File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, ".recovered-*"))));
+        Assert.Equal(content, File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, TempNames.RecoveredPrefix + "*"))));
     }
 
     [Fact]
@@ -254,7 +288,7 @@ public sealed class NoteFileReplaceTests
         var text = CheckVault.Read(path);
         Assert.StartsWith("# Note\n\nkept\n", text, StringComparison.Ordinal);
         Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
-        Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+        Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, TempNames.RecoveredPrefix + "*"));
     }
 
     [Fact]
@@ -268,7 +302,7 @@ public sealed class NoteFileReplaceTests
             Assert.Throws<IOException>(() => NoteFile.AtomicWrite("# Note\n\nkept\n"u8.ToArray(), e.Vault.Root, "Note.md"));
         }
         var path = e.Vault.UrlForRelativePath("Note.md");
-        var recovered = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+        var recovered = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, TempNames.RecoveredPrefix + "*"));
         var capture = CheckVault.Capture("appended");
         NoteFile.MoveHook.Value = (_, _) => throw new IOException("locked");
         try
@@ -277,14 +311,13 @@ public sealed class NoteFileReplaceTests
             Assert.Contains("Note.md", error.Message, StringComparison.Ordinal);
         }
         finally { NoteFile.MoveHook.Value = null; }
-        // No fresh note was created and the hidden history is untouched.
         Assert.False(File.Exists(path));
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(recovered));
         e.Writer.Append(capture, path, "Note");
         var text = CheckVault.Read(path);
         Assert.StartsWith("# Note\n\nkept\n", text, StringComparison.Ordinal);
         Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
-        Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
+        Assert.Empty(Directory.EnumerateFiles(e.Vault.Root, TempNames.RecoveredPrefix + "*"));
     }
 
     [Fact]
@@ -301,7 +334,7 @@ public sealed class NoteFileReplaceTests
             }
             return e.Vault.UrlForRelativePath(name);
         }
-        string Kept(string name) => Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*-" + Hex(name)));
+        string Kept(string name) => Assert.Single(Directory.EnumerateFiles(e.Vault.Root, TempNames.RecoveredPrefix + "*-" + Hex(name)));
 
         var restored = Lose("restore.md");
         var appended = Lose("append.md");
@@ -325,7 +358,6 @@ public sealed class NoteFileReplaceTests
             Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
         }
         finally { NoteFile.MoveHook.Value = null; }
-        // The recovered copies stay where they were.
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("restore.md")));
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("append.md")));
     }
@@ -339,7 +371,7 @@ public sealed class NoteFileReplaceTests
     [InlineData("C:\\evil.md")]
     [InlineData("sub/evil.md")]
     [InlineData(".hidden.md")]
-    [InlineData(".pending-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData(TempNames.PendingPrefix + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     [InlineData("..")]
     [InlineData("a:b.md")]
     [InlineData("nul\0.md")]
@@ -360,7 +392,7 @@ public sealed class NoteFileReplaceTests
         using var e = new CheckVault();
         e.Vault.Prepare();
         var dir = Directory.CreateDirectory(Path.Combine(e.Vault.Root, "sub")).FullName;
-        var kept = Path.Combine(dir, ".recovered-" + new string('a', 32) + "-" + suffix);
+        var kept = Path.Combine(dir, TempNames.RecoveredPrefix + new string('a', 32) + "-" + suffix);
         File.WriteAllText(kept, "data");
         var before = Directory.EnumerateFileSystemEntries(e.Base, "*", SearchOption.AllDirectories).Order().ToArray();
         NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
@@ -408,14 +440,14 @@ public sealed class NoteFileReplaceTests
     {
         using var e = new CheckVault();
         var path = LoseTarget(e);
-        var kept = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, ".recovered-*"));
-        var id = Path.GetFileName(kept)[".recovered-".Length..][..32];
+        var kept = Assert.Single(Directory.EnumerateFiles(e.Vault.Root, TempNames.RecoveredPrefix + "*"));
+        var id = Path.GetFileName(kept)[TempNames.RecoveredPrefix.Length..][..32];
         NoteFile.Create("fresh"u8.ToArray(), e.Vault.Root, "note.md");
         Assert.Equal("fresh", File.ReadAllText(path));
         File.Delete(path);
         NoteFile.SweepStaleTemporaries(e.Vault.Root, TimeSpan.FromHours(1));
         Assert.False(File.Exists(path));
-        Assert.Equal("new", File.ReadAllText(Path.Combine(e.Vault.Root, ".recovered-" + id)));
+        Assert.Equal("new", File.ReadAllText(Path.Combine(e.Vault.Root, TempNames.RecoveredPrefix + id)));
     }
 
     [Fact]

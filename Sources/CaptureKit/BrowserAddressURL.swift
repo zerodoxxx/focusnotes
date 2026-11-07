@@ -3,13 +3,15 @@ import Foundation
 
 @_spi(Testing)
 public enum BrowserAddressURL {
-    private static let supportedBundles: Set<String> = [
-        "com.apple.Safari", "com.google.Chrome", "com.microsoft.edgemac"
+    private enum AddressField { case safari, chromium }
+
+    private static let addressFields: [String: AddressField] = [
+        "com.apple.Safari": .safari, "com.google.Chrome": .chromium, "com.microsoft.edgemac": .chromium
     ]
 
     @MainActor
     static func capture(bundleIdentifier: String?, processIdentifier: pid_t, window: AXUIElement) -> String? {
-        guard let bundleIdentifier, supportedBundles.contains(bundleIdentifier), processIdentifier > 0,
+        guard let bundleIdentifier, addressFields[bundleIdentifier] != nil, processIdentifier > 0,
               belongsToProcess(window, processIdentifier) else { return nil }
 
         // AX can stall or expose an enormous page tree. Inspect only a small part of
@@ -51,15 +53,13 @@ public enum BrowserAddressURL {
     @_spi(Testing)
     public static func recognizedField(bundleIdentifier: String?, role: String, identifier: String?,
                                        title: String?, description: String?, insideToolbar: Bool) -> Bool {
-        guard let bundleIdentifier, supportedBundles.contains(bundleIdentifier), insideToolbar,
+        guard let bundleIdentifier, let field = addressFields[bundleIdentifier], insideToolbar,
               role == kAXTextFieldRole as String else { return false }
-        switch bundleIdentifier {
-        case "com.apple.Safari":
+        switch field {
+        case .safari:
             return identifier == "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD"
-        case "com.google.Chrome", "com.microsoft.edgemac":
+        case .chromium:
             return title == "Address and search bar" || description == "Address and search bar"
-        default:
-            return false
         }
     }
 

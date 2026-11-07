@@ -35,6 +35,8 @@ internal sealed partial class AppController : IDisposable
     private UiHost host = null!;
     private TrayIcon? tray;
     private HotkeyRegistrar? hotkeys;
+    /// Created on first registration; quit and pause paths use the field so they never create one.
+    private HotkeyRegistrar Hotkeys => hotkeys ??= new HotkeyRegistrar();
     private PowerMonitor? power;
     private SemanticIndexer? semantic;
     private bool openedSetupThisLaunch;
@@ -66,7 +68,7 @@ internal sealed partial class AppController : IDisposable
     {
         pipeline = testPipeline;
         Coordinator = new(testPipeline, new HeadlessCaptureHost());
-        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
+        WireChooseNote();
     }
 
     public string SettingsPath { get; }
@@ -126,7 +128,7 @@ internal sealed partial class AppController : IDisposable
         host = new UiHost(dispatcher, trigger => BindingText(trigger == CaptureTrigger.Selection ? HotkeyAction.CaptureSelection : HotkeyAction.CaptureArea),
             () => BindingText(HotkeyAction.ToggleSession), RefreshMenu);
         Coordinator = new CaptureCoordinator(pipeline, host);
-        Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
+        WireChooseNote();
         host.OnExpire = Coordinator.ToastExpired;
         LoadBindings();
         LoadFolderBindings();
@@ -160,7 +162,7 @@ internal sealed partial class AppController : IDisposable
     }
 
     public string BindingText(HotkeyAction action) =>
-        Settings.DisabledShortcuts.Contains(action.ToString()) ? "" : (Bindings.TryGetValue(action, out var chord) ? chord : HotkeyDefaults.For(action)).DisplayString;
+        Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(action)) ? "" : (Bindings.TryGetValue(action, out var chord) ? chord : HotkeyDefaults.For(action)).DisplayString;
 
     /// Called when a second instance asks the running one to show itself.
     public void ShowRequested() => dispatcher.BeginInvoke(() =>
@@ -169,6 +171,8 @@ internal sealed partial class AppController : IDisposable
         if (Setup.NeedsAttention) { OpenSetup(manual: true); }
         else { Coordinator.ShowToast(new(AppToastStyle.Success, $"{AppInfo.Name} is already running", "Open the tray icon for commands")); }
     });
+
+    private void WireChooseNote() => Coordinator.ChooseNoteRequested = id => dispatcher.BeginInvoke(() => ShowTitlePicker(id));
 
     private void Revalidate()
     {
@@ -211,7 +215,6 @@ internal sealed partial class AppController : IDisposable
         }
     }
 
-    // Quit and the shutdown drain.
     public void RequestQuit(bool restartForUpdate = false) => _ = QuitAsync(restartForUpdate);
 
     private async Task QuitAsync(bool restartForUpdate)
@@ -240,18 +243,8 @@ internal sealed partial class AppController : IDisposable
 
     private void FinishQuit(bool restartForUpdate)
     {
-        var update = updates;
-        try
-        {
-            if (update?.Snapshot.Status == UpdateStatus.ReadyToRestart)
-            {
-                // Both run after the drain; ApplyAndRestart ends this process itself.
-                if (restartForUpdate) { update.ApplyAndRestart(); }
-                else { update.ApplyOnExit(); }
-            }
-        }
-        // The ledger normally still holds the pending apply, so the next launch counts it as a failed attempt.
-        catch (Exception error) { log.Error($"Applying the update failed ({error.GetType().Name}): {error.Message}"); }
+        // Runs after the drain.
+        ApplyReadyUpdate(restartForUpdate, "Applying the update failed");
 
         try { Dispose(); }
         finally { app.Shutdown(); }
@@ -264,7 +257,7 @@ internal sealed partial class AppController : IDisposable
         PrepareTermination();
         var drain = Coordinator.BeginTermination();
         UiWait.Pump(drain, TimeSpan.FromSeconds(5));
-        ApplyUpdateOnExitIfReady();
+        ApplyReadyUpdate(restart: false, "Applying the update at sign-out failed");
     }
 
     public void Dispose()

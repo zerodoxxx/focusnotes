@@ -9,7 +9,6 @@ public sealed class UnsavedCaptures
 {
     private sealed class Entry
     {
-        // The job and store of the last Record for this id.
         public Task<CaptureJob>? Recorded;
         public Task? Stored;
         // The job being committed, or kept for retry once Kept is set.
@@ -92,7 +91,7 @@ public sealed class UnsavedCaptures
                     pipeline.Stage(job);
                     await TryWait(previous).ConfigureAwait(false);
                     var saved = save(job);
-                    lock (gate) { if (entries.GetValueOrDefault(id) is { } done && done.Job == preparation) { entries.Remove(id); } }
+                    RemoveIfJob(id, preparation);
                     return saved;
                 }
                 catch
@@ -132,7 +131,7 @@ public sealed class UnsavedCaptures
         foreach (var (id, job) in discarded)
         {
             pipeline.Discard(id);
-            lock (gate) { if (entries.GetValueOrDefault(id) is { } entry && entry.Job == job) { entries.Remove(id); } }
+            RemoveIfJob(id, job);
         }
 
         if (retry is not { Key: var retryId, Value: var retryJob }) { return null; }
@@ -201,7 +200,7 @@ public sealed class UnsavedCaptures
                 var job = await preparation.ConfigureAwait(false);
                 pipeline.Stage(job);
                 save(job);
-                lock (gate) { if (entries.GetValueOrDefault(id) is { } entry && entry.Job == preparation) { entries.Remove(id); } }
+                RemoveIfJob(id, preparation);
             }
             catch (Exception error) { log.Error($"Shutdown save retained in journal: {error.GetType().Name}"); }
         }
@@ -245,6 +244,11 @@ public sealed class UnsavedCaptures
         return entry;
     }
 
+    private void RemoveIfJob(Guid id, Task<CaptureJob>? job)
+    {
+        lock (gate) { if (entries.GetValueOrDefault(id) is { } entry && entry.Job == job) { entries.Remove(id); } }
+    }
+
     private KeyValuePair<Guid, Task<CaptureJob>>[] KeptJobs() => entries
         .Where(pair => pair.Value.Kept && pair.Value.Job is not null)
         .OrderBy(pair => pair.Value.Order)
@@ -253,17 +257,19 @@ public sealed class UnsavedCaptures
 
     private Task[] Stores() => entries.Values.Select(entry => entry.Stored).OfType<Task>().ToArray();
 
-    private static async Task TryWait(Task? task)
+    private async Task TryWait(Task? task)
     {
         if (task is null) { return; }
         try { await task.ConfigureAwait(false); }
-        catch (Exception) { }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { log.Error($"Unsaved capture task failed: {error.Message}"); }
     }
 
-    private static async Task<T?> TryResult<T>(Task<T>? task) where T : class
+    private async Task<T?> TryResult<T>(Task<T>? task) where T : class
     {
         if (task is null) { return null; }
         try { return await task.ConfigureAwait(false); }
-        catch (Exception) { return null; }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception error) { log.Error($"Unsaved capture task failed: {error.Message}"); return null; }
     }
 }

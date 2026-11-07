@@ -47,11 +47,11 @@ public sealed class NoteWriterTests
         await Task.WhenAll(captures.Select(c => Task.Run(() => new NoteWriter(e.Vault, CheckVault.Zone).Append(c, file, "Concurrent"))));
         var text = CheckVault.Read(file);
         Assert.StartsWith("# Concurrent\n\n", text, StringComparison.Ordinal);
-        Assert.Equal(1, Count(text, "# Concurrent\n"));
-        Assert.Equal(50, Count(text, "<!-- capture:"));
+        Assert.Equal(1, CheckVault.Count(text, "# Concurrent\n"));
+        Assert.Equal(50, CheckVault.Count(text, "<!-- capture:"));
         foreach (var c in captures)
         {
-            Assert.Equal(1, Count(text, CheckVault.Marker(c.Id)));
+            Assert.Equal(1, CheckVault.Count(text, CheckVault.Marker(c.Id)));
         }
     }
 
@@ -94,7 +94,7 @@ public sealed class NoteWriterTests
         e.Writer.AppendIfMissing(replay, target, png);
         Assert.Equal(png, File.ReadAllBytes(e.Vault.UrlForRelativePath("assets/Replay.png")));
         e.Writer.AppendIfMissing(replay, target, png);
-        Assert.Equal(1, Count(CheckVault.Read(target.Url), CheckVault.Marker(replay.Id)));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(target.Url), CheckVault.Marker(replay.Id)));
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public sealed class NoteWriterTests
 
         )
         {
-            Assert.ThrowsAny<Exception>(() => e.Writer.AppendIfMissing(CheckVault.Capture(asset, CaptureContentKind.Image), CheckVault.Destination(e.Vault.UrlForRelativePath("Bad.md")), [1]));
+            Assert.Throws<VaultFileException>(() => e.Writer.AppendIfMissing(CheckVault.Capture(asset, CaptureContentKind.Image), CheckVault.Destination(e.Vault.UrlForRelativePath("Bad.md")), [1]));
         }
     }
 
@@ -178,13 +178,13 @@ public sealed class NoteWriterTests
         };
         e.Writer.AppendIfMissing(second, destination);
         var repeated = CheckVault.Read(file);
-        Assert.Equal(1, Count(repeated, "### Safari\n"));
+        Assert.Equal(1, CheckVault.Count(repeated, "### Safari\n"));
         Assert.Contains("Hello\n\n" + CheckVault.Marker(second.Id), repeated, StringComparison.Ordinal);
         e.Writer.AppendIfMissing(second, destination);
         Assert.Equal(repeated, CheckVault.Read(file));
         e.Writer.AppendIfMissing(CheckVault.Capture("```markdown\n## fenced\n```"), destination);
         e.Writer.AppendIfMissing(CheckVault.Capture(), destination);
-        Assert.Equal(1, Count(CheckVault.Read(file), "### Safari\n"));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(file), "### Safari\n"));
         var subheading = CheckVault.Capture("### Details\nnext", CaptureContentKind.Subheading);
         e.Writer.AppendIfMissing(subheading, destination);
         var saved = CheckVault.Read(file);
@@ -192,7 +192,7 @@ public sealed class NoteWriterTests
         Assert.Equal(saved, CheckVault.Read(file));
         Assert.Contains("## Details next\n<!-- subheading:", saved, StringComparison.Ordinal);
         e.Writer.AppendIfMissing(CheckVault.Capture(), destination);
-        Assert.Equal(2, Count(CheckVault.Read(file), "### Safari\n"));
+        Assert.Equal(2, CheckVault.Count(CheckVault.Read(file), "### Safari\n"));
         var changed = CheckVault.Capture() with
         {
             Source = new("Safari", "Other page")
@@ -231,7 +231,7 @@ public sealed class NoteWriterTests
             e.Writer.AppendIfMissing(capture, destination);
             var saved = File.ReadAllBytes(file);
             Assert.True(saved.AsSpan().StartsWith(before));
-            Assert.Equal(2, Count(CheckVault.Read(file), CheckVault.Marker(capture.Id)));
+            Assert.Equal(2, CheckVault.Count(CheckVault.Read(file), CheckVault.Marker(capture.Id)));
             var parsed = NoteParser.Parse(CheckVault.Read(file), Path.GetFileName(file), "", CheckVault.Zone);
             var body = Assert.Single(parsed.Blocks, b => b.CaptureId == capture.Id);
             Assert.Equal("Hello", body.Body);
@@ -261,7 +261,7 @@ public sealed class NoteWriterTests
         e.Writer.AppendIfMissing(note, destination, noteMarkerIsIdentity: true);
         var saved = File.ReadAllBytes(file);
         Assert.Equal("# Rollback\n\nexisting\n\n" + CaptureFormat.Block(note, "", CheckVault.Zone), CheckVault.Read(file));
-        Assert.Equal(1, Count(CheckVault.Read(file), "<!-- note:" + note.Id.ToString("D")));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(file), "<!-- note:" + note.Id.ToString("D")));
         e.Writer.AppendIfMissing(note, destination, noteMarkerIsIdentity: true);
         Assert.Equal(saved, File.ReadAllBytes(file));
     }
@@ -312,7 +312,7 @@ public sealed class NoteWriterTests
             e.Writer.AppendIfMissing(capture with { Id = Guid.NewGuid() }, CheckVault.Destination(e.Vault.UrlForRelativePath($"Cache limit {i}.md")));
         }
 
-        Assert.InRange(e.Writer.AppendCacheStatistics.CachedFiles, 0, 8);
+        Assert.Equal(8, e.Writer.AppendCacheStatistics.CachedFiles);
         var scans = e.Writer.AppendCacheStatistics.FullScans;
         e.Writer.AppendIfMissing(capture, d);
         Assert.Equal(scans + 1, e.Writer.AppendCacheStatistics.FullScans);
@@ -357,7 +357,7 @@ public sealed class NoteWriterTests
 
             )
             {
-                Assert.True(NoteWriter.SourceGroupingMatchesFullParser(CheckVault.Read(cached), source, CheckVault.Zone));
+                Assert.True(SourceGroupingAgreesWithFullParser(CheckVault.Read(cached), source));
             }
         }
 
@@ -372,7 +372,7 @@ public sealed class NoteWriterTests
 
         )
         {
-            Assert.True(NoteWriter.SourceGroupingMatchesFullParser(legacy + suffix, "Safari", CheckVault.Zone));
+            Assert.True(SourceGroupingAgreesWithFullParser(legacy + suffix, "Safari"));
         }
     }
 
@@ -399,7 +399,7 @@ public sealed class NoteWriterTests
         Assert.Equal(2, writer.AppendCacheStatistics.FullScans);
         Assert.Contains("### Chrome\n" + CheckVault.Marker(first.Id), CheckVault.Read(file), StringComparison.Ordinal);
         Assert.Contains("### Safari\n" + CheckVault.Marker(second.Id), CheckVault.Read(file), StringComparison.Ordinal);
-        Assert.Equal(1, Count(CheckVault.Read(file), CheckVault.Marker(second.Id)));
+        Assert.Equal(1, CheckVault.Count(CheckVault.Read(file), CheckVault.Marker(second.Id)));
     }
 
     [UnixFact]
@@ -427,7 +427,7 @@ public sealed class NoteWriterTests
             });
             writer.AppendIfMissing(capture, CheckVault.Destination(file, "Replacement"));
             var text = CheckVault.Read(file);
-            Assert.Equal(1, Count(text, CheckVault.Marker(capture.Id)));
+            Assert.Equal(1, CheckVault.Count(text, CheckVault.Marker(capture.Id)));
             Assert.Contains("Hello\n", text, StringComparison.Ordinal);
             if (!copy)
             {
@@ -439,5 +439,10 @@ public sealed class NoteWriterTests
         Assert.Equal(VaultFileError.Changed, Assert.Throws<VaultFileException>(() => unstable.AppendIfMissing(capture, CheckVault.Destination(e.Vault.UrlForRelativePath("Unstable.md")))).Kind);
     }
 
-    private static int Count(string text, string part) => text.Split(part, StringSplitOptions.None).Length - 1;
+    private static bool SourceGroupingAgreesWithFullParser(string contents, string source)
+    {
+        var state = new NoteParser.SourceHeadingState();
+        state.Consume(contents, CheckVault.Zone);
+        return state.NeedsHeading(source, CheckVault.Zone) == NoteParser.NeedsSourceHeading(source, contents, CheckVault.Zone);
+    }
 }

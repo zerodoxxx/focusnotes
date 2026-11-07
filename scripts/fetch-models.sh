@@ -40,7 +40,7 @@ fetch() {
     mv "$WORK/download" "$path"
 }
 
-# Keep in sync with the expected hash in Sources/EmbedKit/ONNXRuntime.swift.
+# Keep in sync with the expected hash in Sources/EmbedKit/ModelManifest.swift.
 DYLIB_HASH=2a50a63e7f41f8d4d551d3ee47248df3864f6540109fce8ad520ca3b51af4b70
 LICENSE_HASH=2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c
 NOTICES_HASH=143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3

@@ -8,6 +8,9 @@ namespace CaptureApp.Core;
 [JsonConverter(typeof(NoteFolderJsonConverter))]
 public sealed record NoteFolder
 {
+    // The Sessions segment and the leaf note take two of the path's levels.
+    private const int ReservedDepth = 2;
+
     public string RawValue { get; }
     public IReadOnlyList<string> Components => RawValue.Split('/');
 
@@ -15,8 +18,8 @@ public sealed record NoteFolder
     {
         if (string.IsNullOrEmpty(rawValue)) throw new NotePathNameException(NotePathNameError.EmptyPath);
         var parts = rawValue.Split('/');
-        if (parts.Length > NotePathName.MaximumPathDepth - 2) throw new NotePathNameException(NotePathNameError.TooDeep);
-        if (Encoding.UTF8.GetByteCount(rawValue) > NotePathName.MaximumRelativePathBytes - 240)
+        if (parts.Length > NotePathName.MaximumPathDepth - ReservedDepth) throw new NotePathNameException(NotePathNameError.TooDeep);
+        if (Encoding.UTF8.GetByteCount(rawValue) > NotePathName.MaximumRelativePathBytes - NotePathName.LeafReserveBytes)
             throw new NotePathNameException(NotePathNameError.TooLong);
         if (parts.Any(p => p.Length == 0 || p.StartsWith('.') || p.StartsWith('~') ||
             p != NoteTitle.FileStem(p) || p != NoteTitle.CleanTitle(p)))

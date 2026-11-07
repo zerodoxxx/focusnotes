@@ -9,6 +9,8 @@ namespace CaptureApp.App;
 
 internal sealed partial class AppController
 {
+    /// Win32 ERROR_INVALID_PARAMETER, the code HotkeyRegistrar reports for a rejected chord.
+    private const int ErrorInvalidParameter = 87;
     private SetupWindow? setupWindow;
     private SettingsWindow? settingsWindow;
 
@@ -62,7 +64,6 @@ internal sealed partial class AppController
         window.Activate();
     }
 
-    /// Setup or Settings changed something the tray shows.
     internal void OnSetupChanged() => RefreshMenu();
 
     /// Step 0 was answered: hotkeys come alive and the update schedule follows the choice.
@@ -74,7 +75,7 @@ internal sealed partial class AppController
     }
 
     internal bool IsRegistered(HotkeyAction action) => hotkeys is not null && Setup.ConsentAnswered && !failures.ContainsKey(action)
-                                                       && !Settings.DisabledShortcuts.Contains(action.ToString());
+                                                       && !Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(action));
 
     internal void PauseHotkeys() => hotkeys?.UnregisterAll();
 
@@ -94,7 +95,7 @@ internal sealed partial class AppController
 
         foreach (var (other, existing) in Bindings)
         {
-            if (other != action && existing == chord && !Settings.DisabledShortcuts.Contains(other.ToString()))
+            if (other != action && existing == chord && !Settings.DisabledShortcuts.Contains(HotkeyActionNames.Of(other)))
             {
                 return $"{existing.DisplayString} is already used by another shortcut.";
             }
@@ -106,21 +107,20 @@ internal sealed partial class AppController
     /// Test-registers the combination before saving it (§4 guard 3).
     internal HotkeyRegistrationResult TrySaveBinding(HotkeyAction action, KeyChord chord)
     {
-        hotkeys ??= new HotkeyRegistrar();
-        if (ValidateBinding(action, chord) is { } error) { return new(action, chord, false, 87, error); }
+        if (ValidateBinding(action, chord) is { } error) { return new(action, chord, false, ErrorInvalidParameter, error); }
         try
         {
-            var result = BindingStore.SaveIfAvailable(action, chord, hotkeys);
+            var result = BindingStore.SaveIfAvailable(action, chord, Hotkeys);
             if (result.Succeeded)
             {
                 var set = Settings.DisabledShortcuts.ToHashSet(StringComparer.Ordinal);
-                if (set.Remove(action.ToString())) { TrySave(() => Settings.DisabledShortcuts = set); }
+                if (set.Remove(HotkeyActionNames.Of(action))) { TrySave(() => Settings.DisabledShortcuts = set); }
                 LoadBindings();
             }
 
             return result;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception exception) when (SettingsFailures.IsSaveError(exception))
         {
             if (exception is not InvalidDataException) { ReportSaveFailure(exception); }
             return new(action, chord, false, 0, exception.Message);
@@ -237,9 +237,11 @@ internal sealed partial class AppController
         ? "Restart the app to use this folder. Existing notes stay in their current folder."
         : "This folder is already in use. Existing notes stay in place.";
 
+    internal static int RegisteredShortcutCount(int failed, int disabled) => HotkeyDefaults.All.Count - failed - disabled;
+
     internal IReadOnlyList<CapabilityStatus> CapabilityTable() => Capabilities.Evaluate(new CapabilityInputs(
         Setup.ConsentAnswered,
-        7 - failures.Count - Settings.DisabledShortcuts.Count,
+        RegisteredShortcutCount(failures.Count, Settings.DisabledShortcuts.Count),
         failures.Count,
         Settings.DisabledShortcuts.Count,
         Settings.ClipboardFallback,

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib/app-env.sh"
 
 env_file="${1:-Config/app.env}"
 if [[ ! -r "$env_file" ]]; then
@@ -7,7 +8,7 @@ if [[ ! -r "$env_file" ]]; then
   exit 1
 fi
 
-keys="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' "$env_file" | head -n 1)"
+keys="$(app_env_value "$env_file" WINDOWS_UPDATE_ED_KEYS)"
 if [[ -z "$keys" || ! "$keys" =~ ^[^,:[:space:]]+:[^,[:space:]]+(,[^,:[:space:]]+:[^,[:space:]]+)*$ ]]; then
   echo "WINDOWS_UPDATE_ED_KEYS is missing or malformed in Config/app.env; run scripts/make-windows-update-key.sh." >&2
   exit 1

@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 
 if [[ $# -ne 2 ]]; then
     printf 'Usage: %s <path/to/App.app> <output.dmg>\n' "$0" >&2
@@ -26,12 +27,7 @@ if [[ ! -d "$OUTPUT_DIR" ]]; then
     exit 2
 fi
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-        VERSION) VERSION="$value" ;;
-    esac
-done < "$ROOT_DIR/Config/app.env"
+app_env_load "$ROOT_DIR/Config/app.env" APPNAME VERSION
 
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/make-dmg.XXXXXX")"
 trap 'if [[ -n "${STAGING:-}" && -d "$STAGING" ]]; then rm -rf "$STAGING"; fi' EXIT

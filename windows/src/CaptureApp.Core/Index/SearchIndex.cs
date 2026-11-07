@@ -135,8 +135,7 @@ public sealed class SearchIndex : IDisposable
         {
             database.Transaction(() =>
             {
-                database.Execute("DELETE FROM blocks_fts WHERE rowid IN (SELECT b.id FROM blocks b JOIN notes n ON n.id = b.note_id WHERE n.path = ?)", SQLiteValue.Text(path));
-                database.Execute("DELETE FROM notes WHERE path = ?", SQLiteValue.Text(path));
+                DeleteNoteBlocks("SELECT b.id FROM blocks b JOIN notes n ON n.id = b.note_id WHERE n.path = ?", "DELETE FROM notes WHERE path = ?", SQLiteValue.Text(path));
             });
         }
 
@@ -148,7 +147,7 @@ public sealed class SearchIndex : IDisposable
         VaultManagedLocation location;
         try
         {
-            if (!Path.GetExtension(Vault.DecodeFilePath(noteUrl)).Equals(".md", StringComparison.OrdinalIgnoreCase))
+            if (!Vault.IsMarkdown(Vault.DecodeFilePath(noteUrl)))
             {
                 throw new SearchIndexException("The note must be a managed Markdown file.");
             }
@@ -356,15 +355,11 @@ public sealed class SearchIndex : IDisposable
         var hits = new Dictionary<string, SearchHit>(StringComparer.Ordinal);
         foreach (var key in keys.Distinct(StringComparer.Ordinal))
         {
-            var separator = key.LastIndexOf('#');
-            if (separator < 0)
+            if (!TryParseBlockKey(key, out var path, out var identity, out var ordinal))
             {
                 continue;
             }
 
-            var path = key[..separator];
-            var identity = key[(separator + 1)..];
-            long? ordinal = identity.StartsWith("loose-", StringComparison.Ordinal) && long.TryParse(identity.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture, out var parsedOrdinal) ? parsedOrdinal : null;
             if (ordinal is null && !Guid.TryParse(identity, out _))
             {
                 continue;
@@ -422,6 +417,13 @@ public sealed class SearchIndex : IDisposable
     // Like Swift's String(decoding:as:): invalid bytes become U+FFFD instead of failing the sync.
     private static readonly System.Text.Encoding LenientUtf8 = new System.Text.UTF8Encoding(false, false);
 
+    // FTS rows go first: they are found through the base rows.
+    private void DeleteNoteBlocks(string blockIds, string deleteBase, SQLiteValue key)
+    {
+        database.Execute($"DELETE FROM blocks_fts WHERE rowid IN ({blockIds})", key);
+        database.Execute(deleteBase, key);
+    }
+
     private void Index(byte[] contents, string path, NoteKind kind, string titleFallback, Fingerprint fingerprint)
     {
         var parsed = NoteParser.Parse(LenientUtf8.GetString(contents), path, titleFallback, timeZone, vault.AssetsUrl);
@@ -440,8 +442,7 @@ public sealed class SearchIndex : IDisposable
             }
 
             var noteId = row.Int(0);
-            database.Execute("DELETE FROM blocks_fts WHERE rowid IN (SELECT id FROM blocks WHERE note_id = ?)", SQLiteValue.Int(noteId));
-            database.Execute("DELETE FROM blocks WHERE note_id = ?", SQLiteValue.Int(noteId));
+            DeleteNoteBlocks("SELECT id FROM blocks WHERE note_id = ?", "DELETE FROM blocks WHERE note_id = ?", SQLiteValue.Int(noteId));
             using var insert = database.Prepare("""
                 INSERT INTO blocks(note_id, ord, capture_id, kind, created_at, source_app, window_title, body, asset_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -468,7 +469,26 @@ public sealed class SearchIndex : IDisposable
         row.Text(3) is { } id && Guid.TryParse(id, out var captureId) ? captureId : null,
         BlockKindOf(row.Text(4)), row.IsNull(5) ? null : FromUnixSeconds(row.Double(5)), row.Text(6), row.Text(7), row.Text(8), snippet, matches);
 
-    private static string EmbeddingKey(SQLiteStatement row) => (row.Text(0) ?? "") + "#" + (row.Text(3) ?? "loose-" + row.Int(11).ToString(CultureInfo.InvariantCulture));
+    private static string EmbeddingKey(SQLiteStatement row) => BlockKey(row.Text(0) ?? "", row.Text(3), row.Int(11));
+
+    private static string BlockKey(string path, string? captureId, long ordinal) => path + "#" + (captureId ?? LooseKeyPrefix + ordinal.ToString(CultureInfo.InvariantCulture));
+
+    private static bool TryParseBlockKey(string key, out string path, out string identity, out long? ordinal)
+    {
+        path = "";
+        identity = "";
+        ordinal = null;
+        var separator = key.LastIndexOf('#');
+        if (separator < 0)
+        {
+            return false;
+        }
+
+        path = key[..separator];
+        identity = key[(separator + 1)..];
+        ordinal = identity.StartsWith(LooseKeyPrefix, StringComparison.Ordinal) && long.TryParse(identity.AsSpan(LooseKeyPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out var parsedOrdinal) ? parsedOrdinal : null;
+        return true;
+    }
 
     private static NoteKind NoteKindOf(string? name) => name switch
     {
@@ -663,6 +683,8 @@ public sealed class SearchIndex : IDisposable
             throw;
         }
     }
+
+    private const string LooseKeyPrefix = "loose-";
 
     private const string HitColumns = "n.path, n.title, n.kind, b.capture_id, b.kind, b.created_at, b.source_app, b.window_title, b.asset_path, b.id, b.body, b.ord";
 

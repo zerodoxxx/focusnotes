@@ -52,7 +52,7 @@ final class CaptureCommitQueue {
     func beginQuit() { isQuitting = true }
     func close() { isClosed = true }
     func hasPreparedJobForChecks(_ id: UUID) -> Bool { preparedJobs[id] != nil }
-    var commitTailForChecks: Task<SavedCapture, Error>? { commitTail }
+    func isPending(_ id: UUID) -> Bool { pending?.id == id }
 
     /// Every job the queue may still write, for redirecting a session rename.
     func knownJobs() async -> [CaptureJob] {
@@ -60,7 +60,8 @@ final class CaptureCommitQueue {
         var tasks = Array(preparedJobs.values) + Array(recoveryJobs.values)
         if let stagedJob { tasks.append(stagedJob.preparation) }
         for task in tasks {
-            if let job = try? await task.value { knownJobs.append(job) }
+            do { knownJobs.append(try await task.value) }
+            catch { logger.error("Capture preparation failed (\(AppErrorLog.summary(error), privacy: .public))") }
         }
         return knownJobs
     }
@@ -96,7 +97,7 @@ final class CaptureCommitQueue {
         var previousNotice: String?
         if needsRetryChoice, let held = pending {
             let staged = stagedJob.flatMap { $0.id == held.id ? $0 : nil }
-            let destination = try? await staged?.preparation.value.prepared.destination
+            let destination = await stagedDestination(staged?.preparation)
             if needsRetryChoice, pending?.id == held.id, let commit = commitPending(force: true) {
                 // Finish A, including its failure handling, before B is staged.
                 let succeeded = (try? await commit.value) != nil
@@ -152,7 +153,7 @@ final class CaptureCommitQueue {
             if let recovered = try? await recovery?.value { target = .resolved(recovered.prepared.destination) }
             else if let pick { target = .pick(pick) }
             else if let noteTitle { target = .title(noteTitle) }
-            else if let staged = try? await staged?.preparation.value { target = .resolved(staged.prepared.destination) }
+            else if let destination = await stagedDestination(staged?.preparation) { target = .resolved(destination) }
             else { target = .automatic }
             return try await pipeline.prepare(capture, intent: CaptureIntent(target, outsideSession: outsideSession))
         }
@@ -178,7 +179,7 @@ final class CaptureCommitQueue {
                         self?.needsRetryChoice = true
                         self?.host?.captureHeldForChoice(capture, error: error)
                     } else {
-                        let fallback = try? await staged.preparation.value.prepared.destination
+                        let fallback = await stagedDestination(staged.preparation)
                         self?.preparedJobs[capture.id] = staged.preparation
                         self?.host?.previousCaptureWillRetry(destination: fallback)
                     }
@@ -196,7 +197,7 @@ final class CaptureCommitQueue {
     func addNote(_ rawText: String, destination: Destination?, pinOnSave: Bool, newNote: Bool, outsideSession: Bool, folder: NoteFolder?,
                  onNoteSaved: @escaping @MainActor @Sendable (SavedCapture, Bool, Bool, String?) -> Void) async throws -> SavedCapture? {
         let text = CaptureFormat.noteBody(rawText)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard !CaptureFormat.isBlank(text) else { return nil }
         await commitEarlierCaptures(waitingForThem: true)
         let pipeline = pipeline
         var retry: Task<CaptureJob, Error>?
@@ -289,8 +290,7 @@ final class CaptureCommitQueue {
         let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard await beforeWaiting() else { return false }
         let tail = commitTail
-        _ = try? await pendingCommit?.value
-        _ = try? await processedCommit?.value
+        await awaitEarlierCommits(pendingCommit, processedCommit)
         _ = try? await tail?.value
         return true
     }
@@ -320,9 +320,7 @@ final class CaptureCommitQueue {
         // capture, never its title or destination routing.
         for (id, preparation) in preparedJobs {
             do {
-                let job = try await preparation.value
-                try await pipeline.stage(job)
-                _ = try await pipeline.commit(job) { [weak self] saved, pinFailed in
+                _ = try await Self.stageAndCommit(try await preparation.value, pipeline: pipeline) { [weak self] saved, pinFailed in
                     self?.host?.noteSaved(saved, pinFailed: pinFailed)
                 }
                 preparedJobs.removeValue(forKey: id)
@@ -335,6 +333,10 @@ final class CaptureCommitQueue {
     private func commitEarlierCaptures(waitingForThem: Bool) async {
         let (pendingCommit, processedCommit) = await flushEarlierCaptures()
         guard waitingForThem else { return }
+        await awaitEarlierCommits(pendingCommit, processedCommit)
+    }
+
+    private func awaitEarlierCommits(_ pendingCommit: Task<SavedCapture, Error>?, _ processedCommit: Task<SavedCapture, Error>?) async {
         _ = try? await pendingCommit?.value
         _ = try? await processedCommit?.value
     }
@@ -355,16 +357,28 @@ final class CaptureCommitQueue {
         let task = Task.detached(priority: .userInitiated) {
             let job = try await preparation.value
             for journal in journals { _ = try? await journal.value }
-            try await pipeline.stage(job)
-            _ = try? await previous?.value
-            return try await pipeline.commit(job, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
+            return try await Self.stageAndCommit(job, pipeline: pipeline, after: previous, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
         }
         commitTail = task
         commitGeneration += 1
         return (task, commitGeneration)
     }
 
+    /// Shared by the commit chain and the quit retry: journal, wait for earlier writes, then save.
+    private nonisolated static func stageAndCommit(_ job: CaptureJob, pipeline: CapturePipeline,
+                                                   after previous: Task<SavedCapture, Error>? = nil, pinOnSave: Bool? = nil,
+                                                   onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
+        try await pipeline.stage(job)
+        _ = try? await previous?.value
+        return try await pipeline.commit(job, pinOnSave: pinOnSave, onNoteSaved: onNoteSaved)
+    }
+
     private func releaseCommitTail(_ generation: Int) {
         if commitGeneration == generation { commitTail = nil }
     }
+}
+
+/// Destination a staged capture resolved to, if its preparation succeeded.
+private func stagedDestination(_ preparation: Task<CaptureJob, Error>?) async -> Destination? {
+    try? await preparation?.value.prepared.destination
 }

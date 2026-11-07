@@ -16,7 +16,6 @@ public static class Strings
     public const string FinishSetupToCaptureTitle = "Finish Setup to capture";
     public const string CapturePausedTitle = "Capturing is paused";
     public const string NotesFolderUnavailableTitle = "Notes folder unavailable";
-    public const string NoTextSelectedTitle = "No text selected";
     public const string CouldNotCaptureArea = "Couldn't capture area";
     public const string CouldNotJournal = "Couldn't journal capture";
     public const string CouldNotSaveCapture = "Couldn't save capture";
@@ -68,6 +67,8 @@ public static class Strings
     public const string RenameSessionMissingHint = "This session no longer exists. Choose another session.";
     public const string RenameSessionChangedHint = "This session changed. Select it again before renaming.";
     public const string CouldNotRenameSession = "Couldn't rename session";
+    public const string SessionRenamePendingDetail = "State updates will retry before the next save.";
+    public static string SessionRenamePending(string name) => $"Session rename pending · {name}";
     public const string SubheadingPlaceholder = "Subheading";
     public const string AddSubheadingTitle = "Add subheading";
     public const string RecentSection = "Recent";
@@ -186,6 +187,16 @@ public static class Strings
     public static string DownloadModelsBody(string size) =>
         $"{AppInfo.Name} will download about {size} from huggingface.co: the EmbeddingGemma model (Apache-2.0). Each file is checked against a pinned SHA-256 hash before use. Your notes never leave your computer, and you can remove the models at any time.";
 
-    // Tray tooltip and badge.
-    public static string TrayTooltip => AppInfo.Name;
+    // Shared with Capabilities and SetupState so each reason is spelled once.
+    public const string FinishSetupReason = "Setup isn't finished yet";
+    public const string ShortcutsTurnedOff = "You turned the shortcuts off";
+    public const string ClipboardFallbackTurnedOff = "You turned the clipboard fallback off";
+    public const string NotesFolderNotWritableReason = "The notes folder can't be written to; captures are kept safely until it works again";
+    public const string NotesFolderNotWritable = "The notes folder can't be written to.";
+    public const string StartAtLoginTurnedOff = "You turned start at login off";
+    public const string StartAtLoginNoLongerRegistered = "Start at login is no longer registered";
+    public const string UpdatesUnavailable = "Updates aren't available in this install";
+    public const string UpdatesCheckedOnRequest = "Updates are checked only when you ask";
+    public const string UpdateChoiceMissing = "The update choice is missing.";
+    public static string ShortcutsNotRegistered(int count) => count == 1 ? "1 keyboard shortcut couldn't be registered." : $"{count} keyboard shortcuts couldn't be registered.";
 }

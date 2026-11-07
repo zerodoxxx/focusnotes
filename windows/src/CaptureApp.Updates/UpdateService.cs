@@ -54,8 +54,6 @@ public sealed class UpdateService
 
     public UpdateSnapshot Snapshot => snapshot;
 
-    public UpdateLedger Ledger => ledger;
-
     /// <summary>Call once at launch: settles the previous apply and arranges the single retry.</summary>
     public async Task StartAsync(CancellationToken cancellationToken)
     {

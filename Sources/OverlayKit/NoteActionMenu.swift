@@ -1,5 +1,12 @@
 import AppKit
 
+/// Editor state that only the quick-note editor's Actions menu needs.
+struct EditorContext {
+    /// The typed title names an existing note, so saving would append; the escape row is then live.
+    var appendsToExisting = false
+    var hasActiveSession = false
+}
+
 struct NoteActionItem {
     var id: NoteActionID
     var title: String
@@ -9,22 +16,21 @@ struct NoteActionItem {
     /// Rows in different groups are divided by a separator.
     var group: Int
 
-    /// `appendsToExisting`: the typed title names an existing note, so saving would append; the escape row is then live.
-    @MainActor static func standard(isPinned: Bool, hasText: Bool, appendsToExisting: Bool = false, hasActiveSession: Bool = false) -> [NoteActionItem] {
+    @MainActor static func standard(isPinned: Bool, hasText: Bool, editor: EditorContext = EditorContext()) -> [NoteActionItem] {
         var items = [
-            NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: "⌘N", isEnabled: true, group: 0),
-            NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: "⌥⌘↩",
-                           isEnabled: appendsToExisting, group: 0),
+            NoteActionItem(id: .newNote, title: "New Note", symbolName: "plus", shortcut: PanelShortcuts.glyph(for: .newNote), isEnabled: true, group: 0),
+            NoteActionItem(id: .saveAsNewNote, title: "Save as New Note", symbolName: "doc.badge.plus", shortcut: PanelShortcuts.glyph(for: .saveAsNewNote),
+                           isEnabled: editor.appendsToExisting, group: 0),
             NoteActionItem(id: .pin, title: isPinned ? "Remove from Pinned" : "Add to Pinned", symbolName: isPinned ? "pin.slash" : "pin",
-                           shortcut: "⇧⌘P", isEnabled: true, group: 0),
+                           shortcut: PanelShortcuts.glyph(for: .pin), isEnabled: true, group: 0),
             NoteActionItem(id: .openAsNote, title: "Open as Note", symbolName: "arrow.up.left.and.arrow.down.right",
-                           shortcut: "⌘O", isEnabled: true, group: 1),
-            NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: "⇧⌘C", isEnabled: hasText, group: 1),
-            NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: "⇧⌘⌫", isEnabled: hasText, group: 1),
+                           shortcut: PanelShortcuts.glyph(for: .openAsNote), isEnabled: true, group: 1),
+            NoteActionItem(id: .copyMarkdown, title: "Copy as Markdown", symbolName: "doc.on.doc", shortcut: PanelShortcuts.glyph(for: .copyMarkdown), isEnabled: hasText, group: 1),
+            NoteActionItem(id: .discardDraft, title: "Discard Draft", symbolName: "trash", shortcut: PanelShortcuts.glyph(for: .discardDraft), isEnabled: hasText, group: 1),
         ]
-        if hasActiveSession {
+        if editor.hasActiveSession {
             items.insert(NoteActionItem(id: .writeOutsideSession, title: "Write outside session", symbolName: "arrow.turn.up.right",
-                                        shortcut: "⇧⌘N", isEnabled: true, group: 0), at: 1)
+                                        shortcut: PanelShortcuts.glyph(for: .writeOutsideSession), isEnabled: true, group: 0), at: 1)
         }
         return items
     }
@@ -142,7 +148,7 @@ private final class ActionRowView: NoteCardRowView {
     let icon: NSImageView
     let title: NSTextField
     let keys: KeycapBoxesView
-    var isSelected = false { didSet { needsLayout = true; icon.contentTintColor = isSelected ? OverlayTheme.textColor : OverlayTheme.secondaryColor; setAccessibilityValue(isSelected ? "Selected" : "") } }
+    var isSelected = false { didSet { needsLayout = true; icon.contentTintColor = isSelected ? OverlayTheme.textColor : OverlayTheme.secondaryColor; setAccessibilitySelectedValue(isSelected) } }
     var onClick: (() -> Void)?
 
     init(item: NoteActionItem) {
@@ -167,8 +173,7 @@ private final class ActionRowView: NoteCardRowView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = isSelected ? OverlayTheme.menuSelectedFill.cgColor : nil
         }
-        // The row sits menuRowInset inside the card; content insets are measured from the card's edges.
-        let inset = OverlayTheme.menuContentInset - OverlayTheme.menuRowInset
+        let inset = OverlayTheme.menuRowContentInset
         let size = OverlayTheme.menuIconSize
         icon.frame = NSRect(x: inset, y: (bounds.height - size) / 2, width: size, height: size)
         let keysWidth = keys.desiredWidth
@@ -216,14 +221,14 @@ final class NoteActionMenuView: NoteCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func handle(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 125, 126: move(event.keyCode == 125 ? 1 : -1); return true
-        case 36, 76:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .moveDown, .moveUp: move(command == .moveDown ? 1 : -1); return true
+        case .submit:
             if let index = selection, visible.indices.contains(index), visible[index].isEnabled { onRun?(visible[index].id) }
             return true
-        case 53: onClose?(); return true
-        case 40 where event.shortcutFlags == .command: onClose?(); return true
-        default: return false
+        case .cancel, .toggleActions: onClose?(); return true
+        case .complete, .toggleBrowse: return false
         }
     }
 
@@ -282,7 +287,6 @@ final class NoteActionMenuView: NoteCardView {
         var divider = 0
         for (index, row) in rows.enumerated() {
             if index > 0, visible[index].group != visible[index - 1].group {
-                // Separators are inset like the filter field, measured from the card's edges.
                 let inset = OverlayTheme.cardFieldInset
                 dividers[divider].frame = NSRect(x: inset, y: y + OverlayTheme.menuGroupMargin,
                                                  width: rowsContainer.bounds.width - inset * 2, height: OverlayTheme.borderWidth)

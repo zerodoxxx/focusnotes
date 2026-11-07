@@ -101,6 +101,12 @@ public enum OverlayPreview {
         if let menu = view as? NoteActionMenuView { return menu.selectedID.map { String(describing: $0) } }
         return (view as? NoteBrowseView)?.selectedID
     }
+    /// The Actions card's shortcut label per row, with every conditional row present.
+    @_spi(Checks)
+    public static func noteActionShortcuts() -> [(id: NoteActionID, shortcut: String)] {
+        NoteActionItem.standard(isPinned: false, hasText: true, editor: EditorContext(appendsToExisting: true, hasActiveSession: true))
+            .map { ($0.id, $0.shortcut) }
+    }
     @_spi(Checks)
     public static func isDragHandle(in view: NSView, at point: NSPoint) -> Bool {
         (view as? NoteEditorView)?.isDragHandle(at: point) ?? false

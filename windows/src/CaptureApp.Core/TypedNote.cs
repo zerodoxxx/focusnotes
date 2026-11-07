@@ -4,6 +4,9 @@ namespace CaptureApp.Core;
 
 public sealed class TypedNote
 {
+    private const string HtmlCommentPattern = @"<!--[\s\S]*?(?:-->|$)";
+    private const string LineBreakClass = @"[\r\n\u000B\u000C\u0085\u2028\u2029]";
+
     public string RawName { get; }
     public NotePathName? PathName { get; }
     public NotePathNameError? PathNameError { get; }
@@ -14,8 +17,8 @@ public sealed class TypedNote
     public TypedNote(string markdown, DateTimeOffset createdAt, TimeZoneInfo timeZone, VaultNamingRules? namingRules = null)
     {
         namingRules ??= new();
-        var without = Regex.Replace(markdown, @"<!--[\s\S]*?(?:-->|$)", "");
-        var first = Regex.Split(without, @"[\r\n\u000B\u000C\u0085\u2028\u2029]").FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
+        var without = Regex.Replace(markdown, HtmlCommentPattern, "");
+        var first = Regex.Split(without, LineBreakClass).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
         var stripped = Strip(first);
         IsGeneratedTitle = stripped.Length == 0;
         var extracted = stripped.Length == 0 ? "Note " + CaptureFormat.LocalStamp(createdAt, "yyyy-MM-dd HH.mm", timeZone) : stripped;
@@ -30,14 +33,14 @@ public sealed class TypedNote
             error = failure.Kind;
         }
 
-        var fallbackInput = namingRules.WindowsRules ? extracted.Replace('\\', '/') : extracted;
+        var fallbackInput = namingRules.NormalizeSeparators(extracted);
         var fallback = NoteTitle.CanFallBackToFlatName(fallbackInput, error);
         var resolved = parsed;
         if (fallback)
         {
             try
             {
-                resolved = NotePathName.Validated(NotePathScope.Vault, [namingRules.FileStem(extracted)], namingRules);
+                resolved = NotePathName.FlatName(extracted, namingRules);
             }
             catch (NotePathNameException)
             {
@@ -45,17 +48,17 @@ public sealed class TypedNote
             }
         }
 
-        var qualified = parsed is not null && !fallback && (parsed.Scope == NotePathScope.Home || parsed.Components.Count > 1);
+        var qualified = parsed is not null && !fallback && parsed.IsQualified;
         RawName = extracted;
         PathName = resolved;
         PathNameError = resolved is null ? error : null;
-        var normalized = namingRules.WindowsRules ? extracted.Replace('\\', '/') : extracted;
-        Title = NoteTitle.BoundedTitle(qualified ? NoteTitle.CleanTitle(normalized.Split('/')[^1]) : extracted);
-        var physicalFirst = Regex.Split(markdown, @"[\r\n\u000B\u000C\u0085\u2028\u2029]")[0];
+        var normalized = namingRules.NormalizeSeparators(extracted);
+        Title = NoteTitle.BoundedTitle(qualified ? NoteTitle.LastSegmentTitle(normalized) : extracted);
+        var physicalFirst = Regex.Split(markdown, LineBreakClass)[0];
         var structural = @"^(?:[ \t]*(?:[-*+][ \t]+|[0-9]+[.)][ \t]+|>|`|~{3})|\t| {4})";
         if (stripped.Length > 0 && Strip(physicalFirst) == (qualified ? extracted : Title) && !Regex.IsMatch(physicalFirst, structural))
         {
-            var newline = Regex.Match(markdown, @"\r\n|[\r\n\u000B\u000C\u0085\u2028\u2029]");
+            var newline = Regex.Match(markdown, @"\r\n|" + LineBreakClass);
             Body = newline.Success ? CaptureFormat.NoteBody(markdown[(newline.Index + newline.Length)..]) : "";
         }
         else
@@ -66,7 +69,7 @@ public sealed class TypedNote
 
     private static string Strip(string line)
     {
-        var text = Regex.Replace(line, @"<!--[\s\S]*?(?:-->|$)", "");
+        var text = Regex.Replace(line, HtmlCommentPattern, "");
         const string prefix = @"^[ \t]*(?:#+[ \t]+|[-*+][ \t]+(?:\[[ xX]\][ \t]*)?|[0-9]+[.)][ \t]+|>[ \t]*)";
         while (true)
         {

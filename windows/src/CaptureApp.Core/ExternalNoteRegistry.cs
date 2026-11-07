@@ -91,18 +91,6 @@ public sealed class ExternalNoteRegistry
         }
     }
 
-    public VaultFileSnapshot? CurrentFingerprint()
-    {
-        try
-        {
-            return NoteFile.ReadManagedSnapshot(directory, name, false);
-        }
-        catch (IOException error)
-        {
-            throw new ExternalNoteRegistryException(ExternalNoteRegistryError.UnreadableRegistry, inner: error);
-        }
-    }
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -172,5 +160,5 @@ public sealed class ExternalNoteRegistry
         }
     }
 
-    public static bool IsSafeRelativeMarkdownPath(string path) => path.Length > 0 && Encoding.UTF8.GetByteCount(path) <= 4096 && !Path.IsPathRooted(path) && Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase) && !path.Contains('\\') && !NoteTitle.ContainsControlCharacters(path) && path.Split('/').All(p => p is not ("" or "." or ".."));
+    public static bool IsSafeRelativeMarkdownPath(string path) => path.Length > 0 && Encoding.UTF8.GetByteCount(path) <= 4096 && !Path.IsPathRooted(path) && Vault.IsMarkdown(path) && !path.Contains('\\') && !NoteTitle.ContainsControlCharacters(path) && path.Split('/').All(p => p is not ("" or "." or ".."));
 }

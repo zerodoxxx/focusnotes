@@ -196,7 +196,6 @@ internal sealed class TargetForm : Form
         if (!Open()) return values;
         try
         {
-            // Deliberately inspect the known native formats, plus the two restore flags.
             foreach (var format in new[] { 13U, rich, html, Native.RegisterClipboardFormat("CanIncludeInClipboardHistory"), Native.RegisterClipboardFormat("CanUploadToCloudClipboard") })
             {
                 if (!Native.IsClipboardFormatAvailable(format)) continue;

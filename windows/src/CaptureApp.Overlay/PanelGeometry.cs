@@ -20,11 +20,14 @@ public sealed class MemoryPanelPositionStore : IPanelPositionStore
 }
 public static class PanelGeometry
 {
-    public const string NotePositionKey = "NoteEditorPanel.topCenter";
+    // Shared by every movable panel; the value is a persisted legacy settings key and must not change.
+    public const string SharedPositionKey = "NoteEditorPanel.topCenter";
     public static PanelPosition TopCenter(Rect visible, Rect workArea) => new((visible.Left + visible.Width / 2 - workArea.Left) / Math.Max(Tokens.One, workArea.Width), (workArea.Bottom - visible.Top) / Math.Max(Tokens.One, workArea.Height));
     public static Rect FromPosition(PanelPosition point, Size size, Rect workArea) => Clamp(new Rect(workArea.Left + workArea.Width * point.X - size.Width / 2, workArea.Bottom - workArea.Height * point.Y, size.Width, size.Height), workArea);
     public static Rect Default(Size size, Rect workArea, bool interactive) => Clamp(new Rect(workArea.Left + (workArea.Width - size.Width) / 2, interactive ? workArea.Top + workArea.Height * Tokens.PanelTopFraction : workArea.Bottom - Tokens.ToastBottomOffset - size.Height, size.Width, size.Height), workArea);
     public static Rect Clamp(Rect rect, Rect workArea) => new(Math.Max(workArea.Left, Math.Min(rect.Left, workArea.Right - rect.Width)), Math.Max(workArea.Top, Math.Min(rect.Top, workArea.Bottom - rect.Height)), rect.Width, rect.Height);
     public static Rect Resize(Rect visible, Size size, Rect workArea) => Clamp(new Rect(visible.Left + (visible.Width - size.Width) / 2, visible.Top, size.Width, size.Height), workArea);
     public static Rect WindowRect(Rect visible) => new(visible.Left - Tokens.ShadowMargin, visible.Top - Tokens.ShadowMargin, visible.Width + Tokens.ShadowMargin * 2, visible.Height + Tokens.ShadowMargin * 2);
+    public static Size WindowSize(Size visible) => new(visible.Width + Tokens.ShadowMargin * 2, visible.Height + Tokens.ShadowMargin * 2);
+    public static Rect VisibleRect(Rect window) => new(window.Left + Tokens.ShadowMargin, window.Top + Tokens.ShadowMargin, Math.Max(Tokens.Zero, window.Width - Tokens.ShadowMargin * 2), Math.Max(Tokens.Zero, window.Height - Tokens.ShadowMargin * 2));
 }

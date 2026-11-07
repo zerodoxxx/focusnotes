@@ -55,7 +55,7 @@ public sealed class TrayInteractiveTests
     [Trait("Needs", "InteractiveDesktop")]
     public void TrayIconRegistersAndCanShowItsMenu()
     {
-        var assets = FindRepositoryAssets();
+        var assets = TrayIconAssets.FindDefault();
         using var tray = new TrayIcon(static _ => { }, assets)
         {
             Menu = new TrayMenuModel([new TrayMenuItem("capture", "Capture Area")])
@@ -73,26 +73,6 @@ public sealed class TrayInteractiveTests
         }
 
         Assert.True(tray.IsRegistered);
-    }
-
-    private static TrayIconAssets FindRepositoryAssets()
-    {
-        for (var directory = new DirectoryInfo(Environment.CurrentDirectory); directory is not null; directory = directory.Parent)
-        {
-            foreach (var candidatePath in new[]
-                     {
-                         Path.Combine(directory.FullName, "windows", "src", "CaptureApp.Platform", "Assets"),
-                         Path.Combine(directory.FullName, "src", "CaptureApp.Platform", "Assets")
-                     })
-            {
-                if (File.Exists(Path.Combine(candidatePath, "tray-light.ico")))
-                {
-                    return TrayIconAssets.FromDirectory(candidatePath);
-                }
-            }
-        }
-
-        return TrayIconAssets.FindDefault();
     }
 }
 

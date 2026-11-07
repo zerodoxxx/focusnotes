@@ -3,9 +3,6 @@ namespace CaptureApp.Core;
 /// Writes a file through a flushed hidden temporary and a move, retrying while a scanner holds it.
 public static class DurableFile
 {
-    // Test seam: replaces the final move, scoped to the calling flow.
-    internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
-
     public static void Write(string path, byte[] contents)
     {
         var fullPath = Path.GetFullPath(path);
@@ -21,7 +18,7 @@ public static class DurableFile
                 stream.Flush(true);
             }
 
-            RetryWhileLocked(() => (MoveHook.Value ?? ((source, target) => File.Move(source, target, true)))(temporary, fullPath), fullPath);
+            RetryWhileLocked(() => NoteFile.Move(temporary, fullPath, true), fullPath);
         }
         finally
         {
@@ -35,7 +32,7 @@ public static class DurableFile
     // Access denied on a read-only `target` is permanent, so it fails at once instead of stalling the caller.
     public static void RetryWhileLocked(Action change, string? target = null)
     {
-        var until = Environment.TickCount64 + 10000;
+        var until = Environment.TickCount64 + FileRetry.LockedRetryBudgetMs;
         while (true)
         {
             try
@@ -46,7 +43,7 @@ public static class DurableFile
             catch (Exception error) when (Environment.TickCount64 < until && IsTransient(error, OperatingSystem.IsWindows())
                                           && !(error is UnauthorizedAccessException && target is not null && IsReadOnly(target)))
             {
-                Thread.Sleep(2);
+                Thread.Sleep(FileRetry.LockedRetryPollMs);
             }
         }
     }
@@ -54,7 +51,7 @@ public static class DurableFile
     // Sharing and lock violations (EAGAIN off Windows). On Windows, replacing or deleting a file that another
     // process holds open can report access denied instead, so that is retried too.
     internal static bool IsTransient(Exception error, bool windows) =>
-        error is IOException && (error.HResult & 0xFFFF) is 11 or 32 or 33 || windows && error is UnauthorizedAccessException;
+        FileErrors.IsSharingViolation(error) || windows && error is UnauthorizedAccessException;
 
     private static bool IsReadOnly(string path)
     {

@@ -65,16 +65,6 @@ internal sealed class SQLiteDatabase : IDisposable
         statement.Run(values);
     }
 
-    internal long LastInsertedId
-    {
-        get
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT last_insert_rowid()";
-            return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
-        }
-    }
-
     internal T Transaction<T>(Func<T> body)
     {
         Execute("BEGIN IMMEDIATE");

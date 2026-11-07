@@ -11,6 +11,10 @@ public struct SessionRenameStage: Codable, Sendable {
     public let original: ManagedFileIdentity
     public let installed: ManagedFileIdentity
     public let temporaryName: String
+
+    public func temporaryPath(in session: Session) -> String {
+        (session.notePath as NSString).deletingLastPathComponent + "/" + temporaryName
+    }
 }
 
 public struct SessionRenameOutcome: Sendable {
@@ -115,7 +119,7 @@ public actor SessionStore {
     public func start(name: String, in folder: NoteFolder) throws -> Session {
         let cleaned = NoteTitle.cleanTitle(name)
         guard !cleaned.isEmpty else { throw NotePathNameError.emptyPath }
-        guard !name.contains("/"), !name.contains("\\"), !name.contains("\0"),
+        guard !NoteTitle.containsSeparatorOrNull(name),
               !cleaned.hasPrefix("."), !cleaned.hasPrefix("~") else {
             throw NotePathNameError.invalidComponent
         }
@@ -174,7 +178,7 @@ public actor SessionStore {
         }
 
         let existing = matches.first
-        let notePath = existing?.notePath ?? "\(directory)/\(stem).md"
+        let notePath = existing?.notePath ?? "\(directory)/\(Vault.noteFileName(stem))"
         return try start(title: existing?.note.title ?? title, notePath: notePath, existing: existing)
     }
 
@@ -193,7 +197,21 @@ public actor SessionStore {
     public func rename(_ candidate: SessionCandidate, to rawName: String,
                        beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
                        afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
-        let destination = try renameDestination(candidate, to: rawName)
+        try rename(candidate, to: try renameDestination(candidate, to: rawName), beforeInstall: beforeInstall, afterSwap: afterSwap)
+    }
+
+    /// Installs a destination from renameDestination, so callers that persist it first install the same session.
+    public func rename(_ candidate: SessionCandidate, to destination: Session,
+                       beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
+                       afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
+        try requireSession(at: candidate.notePath)
+        let directory = (candidate.notePath as NSString).deletingLastPathComponent
+        guard (destination.notePath as NSString).deletingLastPathComponent == directory else { throw SessionStoreError.invalidRename }
+        // A persisted intent comes back from disk, so apply renameDestination's rules again.
+        let fileName = (destination.notePath as NSString).lastPathComponent
+        let stem = (fileName as NSString).deletingPathExtension
+        guard Vault.noteFileName(stem) == fileName else { throw SessionStoreError.invalidRename }
+        try validateRenameTarget(title: destination.name, stem: stem, directory: directory)
         do {
             try NoteFile.renameSession(in: vault.rootAnchor, relativePath: candidate.notePath,
                                        newName: (destination.notePath as NSString).lastPathComponent,
@@ -208,21 +226,26 @@ public actor SessionStore {
 
     public func renameDestination(_ candidate: SessionCandidate, to rawName: String) throws -> Session {
         try vault.prepare()
-        guard !rawName.contains("/"), !rawName.contains("\\"), !rawName.contains("\0") else {
+        guard !NoteTitle.containsSeparatorOrNull(rawName) else {
             throw SessionStoreError.invalidRename
         }
         let title = NoteTitle.cleanTitle(rawName)
-        guard !title.isEmpty, title != ".", title != ".." else { throw SessionStoreError.invalidRename }
         let stem = NoteTitle.fileStem(for: title)
-        guard !stem.hasPrefix("~$") else { throw SessionStoreError.invalidRename }
-        try requireSession(at: candidate.notePath)
         let directory = (candidate.notePath as NSString).deletingLastPathComponent
+        try validateRenameTarget(title: title, stem: stem, directory: directory)
+        try requireSession(at: candidate.notePath)
+        var renamed = Session(name: title, notePath: directory + "/" + Vault.noteFileName(stem), startedAt: now())
+        renamed.resumed = true
+        return renamed
+    }
+
+    /// Name rules shared by both rename paths; the caller checks the `.md` file name.
+    private func validateRenameTarget(title: String, stem: String, directory: String) throws {
+        guard !NoteTitle.containsSeparatorOrNull(title), !title.isEmpty, !NoteTitle.isDotComponent(title),
+              !NoteTitle.isOwnerFileName(stem) else { throw SessionStoreError.invalidRename }
         do {
             _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
         } catch { throw SessionStoreError.invalidRename }
-        var renamed = Session(name: title, notePath: directory + "/" + stem + ".md", startedAt: now())
-        renamed.resumed = true
-        return renamed
     }
 
     /// Completes persisted identity migration after a committed file rename.
@@ -240,8 +263,7 @@ public actor SessionStore {
     }
 
     public func cleanupRenameTemporary(_ stage: SessionRenameStage, in session: Session) throws {
-        let parent = (session.notePath as NSString).deletingLastPathComponent
-        try NoteFile.removeSessionTemporary(in: vault.rootAnchor, relativePath: parent + "/" + stage.temporaryName,
+        try NoteFile.removeSessionTemporary(in: vault.rootAnchor, relativePath: stage.temporaryPath(in: session),
                                             identities: [stage.original, stage.installed])
     }
 
@@ -306,15 +328,10 @@ public actor SessionStore {
     private func readTitle(at notePath: String) throws -> String? {
         let read: Data?
         // A note that keeps changing while it is read falls back to its listed title.
-        do { read = try NoteFile.readManagedPrefix(4096, in: vault.rootAnchor, relativePath: notePath) }
+        do { read = try NoteFile.readManagedPrefix(NoteTitle.titlePrefixBytes, in: vault.rootAnchor, relativePath: notePath) }
         catch let error as POSIXError where error.code == .EAGAIN { return nil }
         guard let prefix = read else { return nil }
-        let firstLineData = prefix.prefix { $0 != 0x0A }
-        var firstLine = String(decoding: firstLineData, as: UTF8.self)
-        if firstLine.hasPrefix("\u{FEFF}") { firstLine.removeFirst() }
-        guard firstLine.hasPrefix("# ") else { return nil }
-        let title = NoteTitle.cleanTitle(String(firstLine.dropFirst(2)))
-        return title.isEmpty ? nil : title
+        return NoteTitle.headingTitle(NoteTitle.firstLine(of: prefix))
     }
 
     private static func isDatedSession(_ existingStem: String, matching stem: String) -> Bool {

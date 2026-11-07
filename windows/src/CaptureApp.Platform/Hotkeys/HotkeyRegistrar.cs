@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using CaptureApp.Platform.Interop;
 
 namespace CaptureApp.Platform.Hotkeys;
 
@@ -20,12 +21,14 @@ public sealed class HotkeyRegistrar : IDisposable
     private const uint WmNcDestroy = 0x0082;
     private const int HwndMessage = -3;
     private const int TemporaryId = 0x7FFF;
+    // Native ids: built-ins are action + 1, folder shortcuts 1024 up to the temporary probe id.
+    private const int FirstCustomId = 1024;
     private const int ErrorInvalidParameter = 87;
 
     private readonly ConcurrentQueue<Action> _work = new();
     private readonly ManualResetEventSlim _ready = new();
     private readonly Thread _thread;
-    private readonly HotkeyNativeMethods.WindowProcedure _windowProcedure;
+    private readonly WindowNativeMethods.WindowProcedure _windowProcedure;
     private readonly Dictionary<int, Action> _callbacks = [];
     private readonly Dictionary<HotkeyAction, int> _registeredIds = [];
     private readonly Dictionary<Guid, int> _customIds = [];
@@ -33,6 +36,12 @@ public sealed class HotkeyRegistrar : IDisposable
     private string? _className;
     private Exception? _startupFailure;
     private bool _disposed;
+
+    private static int BuiltInId(HotkeyAction action) => (int)action + 1;
+
+    private int NextCustomId() => Enumerable.Range(FirstCustomId, TemporaryId - FirstCustomId).FirstOrDefault(candidate => !_callbacks.ContainsKey(candidate));
+
+    private bool RegisterNative(int id, KeyChord chord) => HotkeyNativeMethods.RegisterHotKey(_windowHandle, id, (uint)chord.Modifiers | (uint)HotkeyModifiers.NoRepeat, (uint)chord.VirtualKey);
 
     public HotkeyRegistrar()
     {
@@ -81,11 +90,9 @@ public sealed class HotkeyRegistrar : IDisposable
                 _customIds.Remove(id);
                 _callbacks.Remove(previous);
             }
-            // Built-ins use low enum IDs; the temporary availability probe uses 0x7FFF.
-            var nativeId = Enumerable.Range(1024, TemporaryId - 1024).FirstOrDefault(candidate => !_callbacks.ContainsKey(candidate));
+            var nativeId = NextCustomId();
             if (nativeId == 0) { return new HotkeyRegistrationResult(null, chord, false, ErrorInvalidParameter, "Too many registered shortcuts."); }
-            if (!HotkeyNativeMethods.RegisterHotKey(_windowHandle, nativeId,
-                    (uint)chord.Modifiers | (uint)HotkeyModifiers.NoRepeat, (uint)chord.VirtualKey))
+            if (!RegisterNative(nativeId, chord))
                 return new HotkeyRegistrationResult(null, chord, false, Marshal.GetLastPInvokeError());
             _customIds[id] = nativeId;
             _callbacks[nativeId] = callback;
@@ -116,7 +123,7 @@ public sealed class HotkeyRegistrar : IDisposable
 
         return InvokeOnThread(() =>
         {
-            if (!HotkeyNativeMethods.RegisterHotKey(_windowHandle, TemporaryId, (uint)chord.Modifiers | (uint)HotkeyModifiers.NoRepeat, (uint)chord.VirtualKey))
+            if (!RegisterNative(TemporaryId, chord))
             {
                 return new HotkeyRegistrationResult(null, chord, false, Marshal.GetLastPInvokeError());
             }
@@ -144,16 +151,21 @@ public sealed class HotkeyRegistrar : IDisposable
     {
         InvokeOnThread(() =>
         {
-            foreach (var id in _registeredIds.Values.Concat(_customIds.Values))
-            {
-                HotkeyNativeMethods.UnregisterHotKey(_windowHandle, id);
-                _callbacks.Remove(id);
-            }
-
-            _registeredIds.Clear();
-            _customIds.Clear();
+            UnregisterAllCore();
             return true;
         });
+    }
+
+    private void UnregisterAllCore()
+    {
+        foreach (var id in _registeredIds.Values.Concat(_customIds.Values))
+        {
+            HotkeyNativeMethods.UnregisterHotKey(_windowHandle, id);
+            _callbacks.Remove(id);
+        }
+
+        _registeredIds.Clear();
+        _customIds.Clear();
     }
 
     private HotkeyRegistrationResult RegisterCore(HotkeyAction action, KeyChord chord, Action callback)
@@ -165,8 +177,8 @@ public sealed class HotkeyRegistrar : IDisposable
             _callbacks.Remove(previousId);
         }
 
-        var id = (int)action + 1;
-        if (!HotkeyNativeMethods.RegisterHotKey(_windowHandle, id, (uint)chord.Modifiers | (uint)HotkeyModifiers.NoRepeat, (uint)chord.VirtualKey))
+        var id = BuiltInId(action);
+        if (!RegisterNative(id, chord))
         {
             return new(action, chord, false, Marshal.GetLastPInvokeError());
         }
@@ -197,7 +209,7 @@ public sealed class HotkeyRegistrar : IDisposable
             }
         });
 
-        if (!HotkeyNativeMethods.PostMessage(_windowHandle, WmAppDispatch, 0, 0))
+        if (!WindowNativeMethods.PostMessage(_windowHandle, WmAppDispatch, 0, 0))
         {
             throw new Win32Exception(Marshal.GetLastPInvokeError(), "Could not dispatch work to the hotkey thread.");
         }
@@ -213,14 +225,14 @@ public sealed class HotkeyRegistrar : IDisposable
             var classNamePointer = Marshal.StringToHGlobalUni(_className);
             try
             {
-                var windowClass = new HotkeyNativeMethods.WindowClassEx
+                var windowClass = new WindowNativeMethods.WindowClassEx
                 {
-                    Size = (uint)Marshal.SizeOf<HotkeyNativeMethods.WindowClassEx>(),
+                    Size = (uint)Marshal.SizeOf<WindowNativeMethods.WindowClassEx>(),
                     WindowProcedure = Marshal.GetFunctionPointerForDelegate(_windowProcedure),
-                    Instance = HotkeyNativeMethods.GetModuleHandle(null),
+                    Instance = WindowNativeMethods.GetModuleHandle(null),
                     ClassName = classNamePointer
                 };
-                if (HotkeyNativeMethods.RegisterClassEx(ref windowClass) == 0)
+                if (WindowNativeMethods.RegisterClassEx(ref windowClass) == 0)
                 {
                     throw new Win32Exception(Marshal.GetLastPInvokeError(), "RegisterClassEx failed.");
                 }
@@ -230,9 +242,9 @@ public sealed class HotkeyRegistrar : IDisposable
                 Marshal.FreeHGlobal(classNamePointer);
             }
 
-            _windowHandle = HotkeyNativeMethods.CreateWindowEx(
+            _windowHandle = WindowNativeMethods.CreateWindowEx(
                 0, _className, null, 0, 0, 0, 0, 0, new IntPtr(HwndMessage), IntPtr.Zero,
-                HotkeyNativeMethods.GetModuleHandle(null), IntPtr.Zero);
+                WindowNativeMethods.GetModuleHandle(null), IntPtr.Zero);
             if (_windowHandle == IntPtr.Zero)
             {
                 throw new Win32Exception(Marshal.GetLastPInvokeError(), "CreateWindowEx failed.");
@@ -248,7 +260,7 @@ public sealed class HotkeyRegistrar : IDisposable
         _ready.Set();
         while (true)
         {
-            var result = HotkeyNativeMethods.GetMessage(out var message, IntPtr.Zero, 0, 0);
+            var result = WindowNativeMethods.GetMessage(out var message, IntPtr.Zero, 0, 0);
             if (result == 0)
             {
                 break;
@@ -259,13 +271,13 @@ public sealed class HotkeyRegistrar : IDisposable
                 break;
             }
 
-            HotkeyNativeMethods.TranslateMessage(ref message);
-            HotkeyNativeMethods.DispatchMessage(ref message);
+            WindowNativeMethods.TranslateMessage(ref message);
+            WindowNativeMethods.DispatchMessage(ref message);
         }
 
         if (_className is not null)
         {
-            HotkeyNativeMethods.UnregisterClass(_className, HotkeyNativeMethods.GetModuleHandle(null));
+            WindowNativeMethods.UnregisterClass(_className, WindowNativeMethods.GetModuleHandle(null));
         }
     }
 
@@ -279,14 +291,7 @@ public sealed class HotkeyRegistrar : IDisposable
             }
             catch (Exception exception)
             {
-                try
-                {
-                    CallbackFailed?.Invoke(exception);
-                }
-                catch
-                {
-                    // User event handlers must not unwind through the unmanaged window procedure.
-                }
+                SafeWndProc.Invoke(CallbackFailed, exception);
             }
 
             return IntPtr.Zero;
@@ -304,7 +309,7 @@ public sealed class HotkeyRegistrar : IDisposable
 
         if (message == WmDestroy)
         {
-            HotkeyNativeMethods.PostQuitMessage(0);
+            WindowNativeMethods.PostQuitMessage(0);
             return IntPtr.Zero;
         }
 
@@ -313,7 +318,7 @@ public sealed class HotkeyRegistrar : IDisposable
             _windowHandle = IntPtr.Zero;
         }
 
-        return HotkeyNativeMethods.DefWindowProc(window, message, wParam, lParam);
+        return WindowNativeMethods.DefWindowProc(window, message, wParam, lParam);
     }
 
     public void Dispose()
@@ -325,15 +330,9 @@ public sealed class HotkeyRegistrar : IDisposable
 
         InvokeOnThread(() =>
         {
-            foreach (var id in _registeredIds.Values.Concat(_customIds.Values))
-            {
-                HotkeyNativeMethods.UnregisterHotKey(_windowHandle, id);
-            }
-
-            _registeredIds.Clear();
-            _customIds.Clear();
+            UnregisterAllCore();
             _callbacks.Clear();
-            HotkeyNativeMethods.DestroyWindow(_windowHandle);
+            WindowNativeMethods.DestroyWindow(_windowHandle);
             return true;
         });
         _disposed = true;
@@ -344,39 +343,6 @@ public sealed class HotkeyRegistrar : IDisposable
 
 internal static partial class HotkeyNativeMethods
 {
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    internal delegate IntPtr WindowProcedure(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct WindowClassEx
-    {
-        public uint Size;
-        public uint Style;
-        public IntPtr WindowProcedure;
-        public int ClassExtra;
-        public int WindowExtra;
-        public IntPtr Instance;
-        public IntPtr Icon;
-        public IntPtr Cursor;
-        public IntPtr Background;
-        public IntPtr MenuName;
-        public IntPtr ClassName;
-        public IntPtr SmallIcon;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Message
-    {
-        public IntPtr Window;
-        public uint Id;
-        public nuint WParam;
-        public nint LParam;
-        public uint Time;
-        public int PointX;
-        public int PointY;
-        public uint Private;
-    }
-
     [LibraryImport("user32.dll", EntryPoint = "RegisterHotKey", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint virtualKey);
@@ -384,42 +350,4 @@ internal static partial class HotkeyNativeMethods
     [LibraryImport("user32.dll", EntryPoint = "UnregisterHotKey", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool UnregisterHotKey(IntPtr window, int id);
-
-    [LibraryImport("user32.dll", EntryPoint = "RegisterClassExW", SetLastError = true)]
-    internal static partial ushort RegisterClassEx(ref WindowClassEx windowClass);
-
-    [LibraryImport("user32.dll", EntryPoint = "CreateWindowExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    internal static partial IntPtr CreateWindowEx(uint extendedStyle, string className, string? windowName, uint style,
-        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
-
-    [LibraryImport("user32.dll", EntryPoint = "DefWindowProcW")]
-    internal static partial IntPtr DefWindowProc(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
-    internal static partial int GetMessage(out Message message, IntPtr window, uint minimum, uint maximum);
-
-    [LibraryImport("user32.dll", EntryPoint = "TranslateMessage")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool TranslateMessage(ref Message message);
-
-    [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
-    internal static partial IntPtr DispatchMessage(ref Message message);
-
-    [LibraryImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool PostMessage(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [LibraryImport("user32.dll", EntryPoint = "PostQuitMessage")]
-    internal static partial void PostQuitMessage(int exitCode);
-
-    [LibraryImport("user32.dll", EntryPoint = "DestroyWindow", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DestroyWindow(IntPtr window);
-
-    [LibraryImport("user32.dll", EntryPoint = "UnregisterClassW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UnregisterClass(string className, IntPtr instance);
-
-    [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial IntPtr GetModuleHandle(string? moduleName);
 }

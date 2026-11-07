@@ -25,6 +25,8 @@ public sealed class NotePathNameException(NotePathNameError kind) : ArgumentExce
 
 public sealed record VaultNamingRules
 {
+    public const string WindowsForbiddenCharacters = "<>:\"|?*";
+
     public bool WindowsRules { get; init; } = OperatingSystem.IsWindows();
 
     public void ValidateComponent(string component)
@@ -35,25 +37,30 @@ public sealed record VaultNamingRules
         }
 
         var device = component.Split('.')[0].TrimEnd(' ');
-        if (Regex.IsMatch(device, @"^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) || component.Any(c => char.IsControl(c) || "<>:\"|?*".Contains(c)) || component.EndsWith(' ') || component.EndsWith('.'))
+        if (Regex.IsMatch(device, @"^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) || component.Any(c => char.IsControl(c) || WindowsForbiddenCharacters.Contains(c)) || component.EndsWith(' ') || component.EndsWith('.'))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
     }
 
+    public string NormalizeSeparators(string raw) => WindowsRules ? raw.Replace('\\', '/') : raw;
+
     // Windows can't store <>"|?* in a file name, so its stems replace them with '-' the way both editions replace ':'.
-    public string FileStem(string title) => NoteTitle.FileStem(WindowsRules ? Regex.Replace(title, "[<>\"|?*]", "-") : title);
+    public string FileStem(string title) => NoteTitle.FileStem(WindowsRules ? Regex.Replace(title, "[" + Regex.Escape(WindowsForbiddenCharacters) + "]", "-") : title);
 }
 
 public sealed record NotePathName
 {
     public const int MaximumPathDepth = 32;
     public const int MaximumRelativePathBytes = 900;
+    // The stem plus headroom for the folder separator and the extension.
+    public const int LeafReserveBytes = NoteTitle.MaximumStemBytes + 20;
     public NotePathScope Scope { get; }
     public IReadOnlyList<string> Components { get; }
     public string RelativePath => string.Join('/', Components);
     public string LeafName => Components[^1];
     public string DisplayTitle => NoteTitle.BoundedTitle(LeafName);
+    public bool IsQualified => Scope == NotePathScope.Home || Components.Count > 1;
 
     private NotePathName(NotePathScope scope, string[] components)
     {
@@ -74,7 +81,7 @@ public sealed record NotePathName
             throw new NotePathNameException(NotePathNameError.TooDeep);
         }
 
-        if (values.Any(c => c.Length == 0 || c != NoteTitle.FileStem(c)) || values[^1].StartsWith("~$", StringComparison.Ordinal))
+        if (values.Any(c => c.Length == 0 || c != NoteTitle.FileStem(c)) || NoteTitle.IsOwnerFileName(values[^1]))
         {
             throw new NotePathNameException(NotePathNameError.InvalidComponent);
         }
@@ -91,14 +98,24 @@ public sealed record NotePathName
 
         return new(scope, values);
     }
+
+    public static NotePathName FlatName(string stem, VaultNamingRules rules) => Validated(NotePathScope.Vault, [rules.FileStem(stem)], rules);
 }
 
 public static class NoteTitle
 {
+    public const int MaximumStemGraphemes = 120;
+    public const int MaximumStemBytes = 220;
+    public const int MaximumGraphemeRunes = 32;
+    public const string OwnerFilePrefix = "~$";
+
+    public static bool IsOwnerFileName(string name) => name.StartsWith(OwnerFilePrefix, StringComparison.Ordinal);
+
     public static bool ContainsControlCharacters(string text) => text.EnumerateRunes().Any(r =>
         Rune.GetUnicodeCategory(r) is UnicodeCategory.Control or UnicodeCategory.Format);
 
     public static string CleanTitle(string title) => Regex.Replace(title.Trim(), @"\s+", " ");
+    public static string LastSegmentTitle(string normalizedPath) => CleanTitle(normalizedPath.Split('/')[^1]);
     public static string MatchKey(string title)
     {
         var widthFolded = string.Concat(CleanTitle(title).EnumerateRunes().Select(r => r.Value is >= 0xFF00 and <= 0xFFEF ? r.ToString().Normalize(NormalizationForm.FormKC) : r.ToString()));
@@ -109,7 +126,7 @@ public static class NoteTitle
     public static NotePathName PathName(string rawName, VaultNamingRules? rules = null)
     {
         rules ??= new();
-        var original = rules.WindowsRules ? rawName.Replace('\\', '/') : rawName;
+        var original = rules.NormalizeSeparators(rawName);
         var cleaned = CleanTitle(original);
         if (original.Contains('\0'))
         {
@@ -157,7 +174,7 @@ public static class NoteTitle
         }
 
         var parts = rawName.Split('/').Select(CleanTitle).ToArray();
-        if (parts.Any(p => p is "." or "..") || FileStem(parts.LastOrDefault(p => p.Length > 0) ?? "").StartsWith("~$", StringComparison.Ordinal))
+        if (parts.Any(p => p is "." or "..") || IsOwnerFileName(FileStem(parts.LastOrDefault(p => p.Length > 0) ?? "")))
         {
             return false;
         }
@@ -175,9 +192,9 @@ public static class NoteTitle
         }
 
         var result = new StringBuilder();
-        foreach (var grapheme in Graphemes(replaced).Take(120))
+        foreach (var grapheme in Graphemes(replaced).Take(MaximumStemGraphemes))
         {
-            if (grapheme.Normalize(NormalizationForm.FormD).EnumerateRunes().Count() > 32 || Encoding.UTF8.GetByteCount(result.ToString()) + Encoding.UTF8.GetByteCount(grapheme) > 220)
+            if (grapheme.Normalize(NormalizationForm.FormD).EnumerateRunes().Count() > MaximumGraphemeRunes || Encoding.UTF8.GetByteCount(result.ToString()) + Encoding.UTF8.GetByteCount(grapheme) > MaximumStemBytes)
             {
                 break;
             }

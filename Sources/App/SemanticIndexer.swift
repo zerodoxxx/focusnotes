@@ -12,7 +12,15 @@ struct SemanticHits: Sendable {
 /// Coordinates disposable vectors. Models and runtime stay in EmbedHelper.
 actor SemanticIndexer {
     private static let defaultRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60), .seconds(300), .seconds(900)]
-    private static let embeddingModelFiles = ModelManifest.current.modelFiles.map(\.path).filter { $0.hasPrefix("onnx/") }
+    private static let embeddingModelFiles = ModelManifest.current.embeddingModelFiles
+    private static let ocrKeySuffix = "#ocr"
+    private static let embedBatchSize = 16
+    // Standard RRF k: keeps one list's top rank from dominating the fused score.
+    private static let reciprocalRankOffset = 60
+
+    private nonisolated static func needsFlush(_ batch: [(key: String, body: String, title: String, fingerprint: String)], before title: String) -> Bool {
+        batch.first?.title != title || batch.count == embedBatchSize
+    }
 
     nonisolated let modelsDirectory: URL
     private let index: SearchIndex
@@ -194,8 +202,8 @@ actor SemanticIndexer {
         let existing = Set(try store.keys())
         let fingerprints = try store.fingerprints()
         var expected = Set(blocks.map(\.key))
-        for block in blocks where block.kind == .image && !block.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            expected.insert(block.key + "#ocr")
+        for block in blocks where block.kind == .image && !CaptureFormat.isBlank(block.ocrText) {
+            expected.insert(Self.ocrKey(for: block.key))
         }
         try store.remove(keys: Array(existing.subtracting(expected)))
         // Each request has one title, so batch within a note (at most 16).
@@ -205,16 +213,16 @@ actor SemanticIndexer {
             guard await isEnabled() else { return }
             if block.kind == .image {
                 guard Self.imagesAllowed else { continue }
-                if !block.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   fingerprints[block.key + "#ocr"] != EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle) {
-                    if batch.first?.title != block.noteTitle || batch.count == 16 {
+                if !CaptureFormat.isBlank(block.ocrText),
+                   fingerprints[Self.ocrKey(for: block.key)] != EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle) {
+                    if Self.needsFlush(batch, before: block.noteTitle) {
                         try await embedBatch(batch, client: client, store: store); batch.removeAll()
                     }
-                    batch.append((block.key + "#ocr", block.ocrText, block.noteTitle,
+                    batch.append((Self.ocrKey(for: block.key), block.ocrText, block.noteTitle,
                                   EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle)))
                 }
             } else if fingerprints[block.key] != EmbeddingFingerprint.document(block.body, title: block.noteTitle) {
-                if batch.first?.title != block.noteTitle || batch.count == 16 {
+                if Self.needsFlush(batch, before: block.noteTitle) {
                     try await embedBatch(batch, client: client, store: store); batch.removeAll()
                 }
                 batch.append((block.key, block.body, block.noteTitle,
@@ -293,7 +301,7 @@ actor SemanticIndexer {
             try Task.checkCancellation()
             var scores: [String: Float] = [:]
             for (key, score) in nearest {
-                let block = key.hasSuffix("#ocr") ? String(key.dropLast(4)) : key
+                let block = Self.blockKey(fromOCRKey: key)
                 scores[block] = max(scores[block] ?? -.infinity, score)
             }
             let ranked = scores.keys.sorted { scores[$0] == scores[$1] ? $0 < $1 : scores[$0]! > scores[$1]! }
@@ -314,6 +322,14 @@ actor SemanticIndexer {
         }
     }
 
+    nonisolated static func ocrKey(for blockKey: String) -> String {
+        blockKey + ocrKeySuffix
+    }
+
+    nonisolated static func blockKey(fromOCRKey key: String) -> String {
+        key.hasSuffix(ocrKeySuffix) ? String(key.dropLast(ocrKeySuffix.count)) : key
+    }
+
     nonisolated static func fuse(keyword: [SearchHit], semantic: SemanticHits, limit: Int = 40) -> [SearchHit] {
         var scores: [String: Double] = [:]
         var hits: [String: SearchHit] = [:]
@@ -322,7 +338,7 @@ actor SemanticIndexer {
             var seen: Set<String> = []
             for (rank, hit) in list.enumerated() where seen.insert(hit.embeddingKey).inserted {
                 let key = hit.embeddingKey
-                scores[key, default: 0] += 1 / Double(60 + rank + 1)
+                scores[key, default: 0] += 1 / Double(Self.reciprocalRankOffset + rank + 1)
                 if hits[key] == nil { hits[key] = hit; order[key] = order.count }
             }
         }

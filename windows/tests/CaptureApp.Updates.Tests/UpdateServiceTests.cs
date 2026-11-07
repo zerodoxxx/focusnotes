@@ -79,7 +79,6 @@ public sealed class UpdateServiceTests
         Assert.Equal(UpdateStatus.Disabled, service.Snapshot.Status);
         Assert.False(await service.CheckAsync(manual: true, CancellationToken.None));
         Assert.Equal(UpdateStatus.Disabled, service.Snapshot.Status);
-        Assert.Equal(TrustedKeys.Empty.IsEmpty, TrustedKeys.Parse("").IsEmpty);
     }
 
     [Fact]
@@ -131,14 +130,12 @@ public sealed class UpdateServiceTests
         Assert.Equal(["exit 1.1.0"], client.Applied);
         Assert.Equal("1.1.0", store.State.PendingApplyVersion);
 
-        // Relaunch still on 1.0.0: first failure, retried once at the next quit.
         var (second, client2, store2, _) = Create(existing: store);
         await second.StartAsync(CancellationToken.None);
         Assert.Equal(UpdateStatus.ReadyToRestart, second.Snapshot.Status);
         second.ApplyOnExit();
         Assert.Equal(["exit 1.1.0"], client2.Applied);
 
-        // Still failing: package discarded, Failed state, automatic attempts paused.
         var (third, client3, _, time3) = Create(existing: store2);
         await third.StartAsync(CancellationToken.None);
         Assert.Equal(["1.1.0"], client3.Discarded);
@@ -239,7 +236,7 @@ public sealed class UpdateServiceTests
     {
         var locator = new StableIndexLocator("owner/repo", new FakeFetcher(new Uri("https://github.com/owner/repo/releases/tag/v1.2.3")));
         var location = await locator.LocateAsync("win-x64", CancellationToken.None);
-        Assert.Equal("https://github.com/owner/repo/releases/download/v1.2.3/releases.win-x64.json", location.For("releases.win-x64.json").ToString());
+        Assert.Equal("https://github.com/owner/repo/releases/download/v1.2.3/releases.win-x64.json", location.For(FeedNames.IndexFile("win-x64")).ToString());
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new StableIndexLocator("owner/repo", new FakeFetcher(new Uri("https://github.com/owner/repo"))).LocateAsync("win-x64", CancellationToken.None));
     }

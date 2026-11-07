@@ -20,7 +20,7 @@ public sealed class EmbeddingException(EmbeddingErrorKind kind, string message) 
 
 public static class VectorMath
 {
-    /// Scales by the peak first so tiny or huge vectors keep precision, then to unit length.
+    /// Scales by the peak first so tiny or huge vectors keep precision.
     public static float[] Normalized(ReadOnlySpan<float> vector)
     {
         if (vector.IsEmpty)
@@ -86,7 +86,7 @@ public static class Float16Vectors
 
     public static float[] Decode(ReadOnlySpan<byte> data, int dimensions)
     {
-        if (dimensions <= 0 || dimensions > 768 || data.Length != dimensions * 2)
+        if (dimensions <= 0 || dimensions > EmbedRequest.MaxDimensions || data.Length != dimensions * 2)
         {
             throw EmbeddingException.Invalid("Invalid Float16 vector length");
         }

@@ -7,6 +7,7 @@ namespace CaptureApp.AppCore;
 
 public static class StatePaths
 {
+    private const string LeftUnchanged = " Its contents were left unchanged.";
     private static readonly object NotesFolderGate = new();
     private sealed record NotesFolderMapping(string ConfiguredRoot, string? CanonicalRoot);
 
@@ -46,13 +47,13 @@ public static class StatePaths
             }
             catch (JsonException error)
             {
-                throw new InvalidDataException("The notes-folder state mapping could not be read. Its contents were left unchanged.", error);
+                throw new InvalidDataException("The notes-folder state mapping could not be read." + LeftUnchanged, error);
             }
 
             if (legacy is null || string.IsNullOrWhiteSpace(legacy.ConfiguredRoot) || !Path.IsPathFullyQualified(legacy.ConfiguredRoot)
                 || legacy.CanonicalRoot is { } savedCanonical && (string.IsNullOrWhiteSpace(savedCanonical) || !Path.IsPathFullyQualified(savedCanonical)))
             {
-                throw new InvalidDataException("The notes-folder state mapping is invalid. Its contents were left unchanged.");
+                throw new InvalidDataException("The notes-folder state mapping is invalid." + LeftUnchanged);
             }
 
             if (configured == legacy.ConfiguredRoot && (legacy.CanonicalRoot is null || canonical is null))

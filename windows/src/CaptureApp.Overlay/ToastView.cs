@@ -13,7 +13,7 @@ public sealed class ToastView : OverlaySurface
         var (symbol, color) = toast.Style switch
         {
             ToastStyle.Warning => ("exclamationmark.triangle.fill", "Warning"),
-            ToastStyle.Session => ("record.circle", "Session"),
+            ToastStyle.Session => (Icons.Session, "Session"),
             ToastStyle.Copied => ("doc.on.doc.fill", "SelectedFill"),
             _ => ("checkmark.circle.fill", "BrandAccent")
         };

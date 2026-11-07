@@ -34,10 +34,10 @@ public sealed class EmbedClient : IEmbedService, IAsyncDisposable
     private readonly LatestQueryQueue latestQueries = new();
 
     /// helperExecutable is the EmbedHelper exe, or its .dll (launched through the dotnet host).
-    public EmbedClient(string helperExecutable, string modelsDirectory, int dimensions = 256, double idleSeconds = 60, double requestTimeout = 120)
+    public EmbedClient(string helperExecutable, string modelsDirectory, int dimensions = EmbedRequest.DefaultDimensions, double idleSeconds = 60, double requestTimeout = 120)
     {
-        if (!EmbedRequest.SupportedDimensions.Contains(dimensions) || !double.IsFinite(idleSeconds) || idleSeconds <= 0 || idleSeconds > 86_400
-            || !double.IsFinite(requestTimeout) || requestTimeout <= 0 || requestTimeout > 86_400)
+        if (!EmbedRequest.SupportedDimensions.Contains(dimensions) || !double.IsFinite(idleSeconds) || idleSeconds <= 0 || idleSeconds > EmbedProtocol.MaxTimeoutSeconds
+            || !double.IsFinite(requestTimeout) || requestTimeout <= 0 || requestTimeout > EmbedProtocol.MaxTimeoutSeconds)
         {
             throw EmbeddingException.Invalid("Invalid client configuration");
         }
@@ -88,7 +88,6 @@ public sealed class EmbedClient : IEmbedService, IAsyncDisposable
 
     public Task CloseAsync() => transport.CloseAsync();
 
-    public int PendingRequestCountForTesting => transport.PendingRequestCount;
 
     public async ValueTask DisposeAsync() => await CloseAsync().ConfigureAwait(false);
 
@@ -128,7 +127,6 @@ internal sealed class HelperTransport(string executable, string directory, doubl
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly object lifecycle = new();
     private readonly CancellationTokenSource aborted = new();
-    private int requests;
     private bool permanentlyClosed;
     private Process? process;
     private Stream? input;
@@ -138,8 +136,6 @@ internal sealed class HelperTransport(string executable, string directory, doubl
     private readonly List<long> failures = [];
     private long retryAfter;
 
-    public int PendingRequestCount => Volatile.Read(ref requests);
-
     public async Task<EmbedResponse> SendAsync(EmbedRequest request, CancellationToken cancellationToken)
     {
         lock (lifecycle)
@@ -148,26 +144,11 @@ internal sealed class HelperTransport(string executable, string directory, doubl
             {
                 throw EmbeddingException.Transport("Embed client is closed");
             }
-
-            requests++;
         }
 
         // The work continues if the caller cancels once the request is on the wire, so the
         // response is drained and request/response framing stays intact.
-        var work = Task.Run(async () =>
-        {
-            try
-            {
-                return await ExecuteAsync(request, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                lock (lifecycle)
-                {
-                    requests--;
-                }
-            }
-        }, CancellationToken.None);
+        var work = Task.Run(() => ExecuteAsync(request, cancellationToken), CancellationToken.None);
         try
         {
             return await work.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -408,6 +389,7 @@ internal sealed class HelperTransport(string executable, string directory, doubl
         }
         catch (IOException)
         {
+            // The helper may already have closed its pipe.
         }
 
         Process? stopping;
@@ -429,6 +411,7 @@ internal sealed class HelperTransport(string executable, string directory, doubl
             }
             catch (InvalidOperationException)
             {
+                // The process exited between HasExited and Kill.
             }
             finally
             {
