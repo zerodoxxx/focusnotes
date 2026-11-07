@@ -148,7 +148,7 @@ private final class ActionRowView: NoteCardRowView {
     let icon: NSImageView
     let title: NSTextField
     let keys: KeycapBoxesView
-    var isSelected = false { didSet { needsLayout = true; icon.contentTintColor = isSelected ? OverlayTheme.textColor : OverlayTheme.secondaryColor; setAccessibilityValue(isSelected ? "Selected" : "") } }
+    var isSelected = false { didSet { needsLayout = true; icon.contentTintColor = isSelected ? OverlayTheme.textColor : OverlayTheme.secondaryColor; setAccessibilitySelectedValue(isSelected) } }
     var onClick: (() -> Void)?
 
     init(item: NoteActionItem) {

@@ -204,7 +204,7 @@ final class ChoiceRowView: FlippedView {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel([title.string, secondary.string].filter { !$0.isEmpty }.joined(separator: ", "))
-        setAccessibilityValue(selected ? "Selected" : "")
+        setAccessibilitySelectedValue(selected)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func accessibilityPerformPress() -> Bool { onClick?(); return onClick != nil }
@@ -258,4 +258,9 @@ func attributed(_ text: String, font: NSFont, color: NSColor, matches: [NSRange]
         value.addAttributes([.font: matchFont ?? font, .foregroundColor: matchColor ?? color], range: range)
     }
     return value
+}
+
+extension NSView {
+    /// VoiceOver value for the highlighted row of a list.
+    func setAccessibilitySelectedValue(_ selected: Bool) { setAccessibilityValue(selected ? "Selected" : "") }
 }

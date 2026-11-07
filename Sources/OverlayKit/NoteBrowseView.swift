@@ -7,7 +7,7 @@ private final class BrowseRowView: NoteCardRowView {
     let title: NSTextField
     let detail: NSTextField
     let pin: NSImageView?
-    var isSelected = false { didSet { needsLayout = true; setAccessibilityValue(isSelected ? "Selected" : "") } }
+    var isSelected = false { didSet { needsLayout = true; setAccessibilitySelectedValue(isSelected) } }
     var onClick: (() -> Void)?
 
     init(item: BrowseItem) {

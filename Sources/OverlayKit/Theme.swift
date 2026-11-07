@@ -21,7 +21,6 @@ public enum OverlayTheme {
         let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: dark ? 0.12 : 0.10)
     })
-    public static let borderColor = NSColor.separatorColor
     public static let brandAccent = NSColor(name: NSColor.Name("OverlayKit.brandAccent"), dynamicProvider: { appearance in
         let dark = OverlayTheme.isDark(appearance)
         return dark ? NSColor(srgbRed: 1.0, green: 0.420, blue: 0.373, alpha: 1)
