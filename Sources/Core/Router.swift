@@ -62,17 +62,11 @@ public enum Router {
                     && NoteTitle.matchKey($0.title) == key
             }
             if !rootNotes.isEmpty {
-                let candidates = rootNotes.map { Destination(url: $0.url, title: $0.title, kind: .note) }
-                    .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
-                guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
-                return candidates[0]
+                return try uniqueDestination(among: rootNotes, kind: .note)
             }
             let sessions = notes.filter { $0.kind == .session && NoteTitle.matchKey($0.title) == key }
             if !sessions.isEmpty {
-                let candidates = sessions.map { Destination(url: $0.url, title: $0.title, kind: .session) }
-                    .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
-                guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
-                return candidates[0]
+                return try uniqueDestination(among: sessions, kind: .session)
             }
             if Destination.isInboxTitle(cleaned) {
                 return .inbox(in: vault)
@@ -90,5 +84,12 @@ public enum Router {
         }
 
         return .inbox(in: vault)
+    }
+
+    private static func uniqueDestination(among notes: [NoteRef], kind: NoteKind) throws -> Destination {
+        let candidates = notes.map { Destination(url: $0.url, title: $0.title, kind: kind) }
+            .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
+        guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
+        return candidates[0]
     }
 }
