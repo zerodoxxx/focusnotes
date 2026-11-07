@@ -19,7 +19,7 @@ func checkFolderShortcutActions() async throws {
           saved.destination.url.path.hasSuffix("/Science/Research/Experiment.md"),
           await pipeline.selfCheck.sessions.current() == active,
           try Data(contentsOf: activeURL) == before,
-          try pipeline.drafts.load().isEmpty else {
+          try pipeline.drafts.loadSnapshot().text.isEmpty else {
         throw SelfTestFailure("Folder quick note failed to override routing without changing the session")
     }
     let first = try await controller.startFolderSession(name: "Experiment review", in: folder)

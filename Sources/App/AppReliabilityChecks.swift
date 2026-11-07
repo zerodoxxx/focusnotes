@@ -1017,7 +1017,7 @@ private func checkDraftTerminationVeto() async throws {
     try FileManager.default.removeItem(at: pipeline.drafts.url)
     try oldDraft.write(to: pipeline.drafts.url)
     guard await controller.beginTermination().value, !panel.isVisible, !pipeline.monitor.isRunning,
-          try pipeline.drafts.load() == latestText else {
+          try pipeline.drafts.loadSnapshot().text == latestText else {
         throw SelfTestFailure("Quit could not retry after a draft failure or lost the newest editor text")
     }
 }

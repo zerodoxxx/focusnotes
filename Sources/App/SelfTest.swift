@@ -284,10 +284,10 @@ extension AppController {
         let draftText = "typednoteneedle A personal **note**  \n- [ ] Follow up\n"
         try live.drafts.store(draftText)
         let restoredDrafts = NoteDraftStore(stateDirectory: base.appendingPathComponent("State"))
-        guard try restoredDrafts.load() == draftText else { throw SelfTestFailure("Draft was not persisted/restored") }
+        guard try restoredDrafts.loadSnapshot().text == draftText else { throw SelfTestFailure("Draft was not persisted/restored") }
         await controller.captures.stage(CapturePipeline.selection(text: "Fourth paragraph.", context: browser))
-        guard let typed = try await controller.addNote(try restoredDrafts.load()) else { throw SelfTestFailure("Typed note was not saved through controller") }
-        guard try live.drafts.load().isEmpty, !FileManager.default.fileExists(atPath: live.drafts.url.path),
+        guard let typed = try await controller.addNote(try restoredDrafts.loadSnapshot().text) else { throw SelfTestFailure("Typed note was not saved through controller") }
+        guard try live.drafts.loadSnapshot().text.isEmpty, !FileManager.default.fileExists(atPath: live.drafts.url.path),
               let hit = try await live.index.search("typednoteneedle").first,
               hit.captureID == typed.captureID, hit.title == "Feedback", hit.blockKind == .note,
               let typedDate = hit.createdAt else { throw SelfTestFailure("Note search or draft cleanup failed") }
@@ -303,13 +303,13 @@ extension AppController {
               preceding.lowerBound < noteBody.lowerBound,
               try await live.index.captureCount(notePath: session.notePath) == 5 else { throw SelfTestFailure("Typed note pending-first/source grouping failed") }
         try live.drafts.store("Discard this empty draft")
-        guard try await controller.addNote(" \n\t") == nil, try live.drafts.load().isEmpty else { throw SelfTestFailure("Whitespace-only input did not clear draft") }
+        guard try await controller.addNote(" \n\t") == nil, try live.drafts.loadSnapshot().text.isEmpty else { throw SelfTestFailure("Whitespace-only input did not clear draft") }
         _ = try await controller.endSession(session)
         let rootDraft = "# independentnoteneedle\n\nA personal **thought**  \n- [ ] Follow up\n"
         let inboxBefore = try Data(contentsOf: live.vault.inboxURL)
         guard let created = try await controller.addNote(rootDraft), created.destination.kind == .note,
               created.destination.url == live.vault.root.appendingPathComponent("independentnoteneedle.md"),
-              try live.drafts.load().isEmpty,
+              try live.drafts.loadSnapshot().text.isEmpty,
               let createdHit = try await live.index.search("independentnoteneedle").first,
               createdHit.captureID == created.captureID, createdHit.title == "independentnoteneedle",
               createdHit.body == "\nA personal **thought**  \n- [ ] Follow up",
@@ -319,7 +319,7 @@ extension AppController {
         let rootJob = CaptureJob(prepared: PreparedCapture(capture: rootCapture, destination: created.destination, createsNote: true), png: nil, ocr: nil, noteDraft: rootDraft)
         try live.drafts.store(rootDraft)
         try await live.selfCheck.journal.store(rootJob)
-        guard await live.replayUnsaved() == 1, try live.drafts.load().isEmpty,
+        guard await live.replayUnsaved() == 1, try live.drafts.loadSnapshot().text.isEmpty,
               try Data(contentsOf: created.destination.url) == rootBytes,
               !FileManager.default.fileExists(atPath: live.vault.root.appendingPathComponent("independentnoteneedle 2.md").path) else { throw SelfTestFailure("New-note replay changed its path/bytes or retained the original draft") }
         guard let duplicateTitle = try await controller.addNote(rootDraft),
@@ -434,7 +434,7 @@ extension AppController {
         try state.toggleOutsideSession(sessionDestination: destination, drafts: live.drafts)
         guard state.outsideSession, state.destination == nil,
               try state.togglePinOnSave(in: live.drafts),
-              let saved = try await controller.addNote(try live.drafts.load(), destination: state.destination,
+              let saved = try await controller.addNote(try live.drafts.loadSnapshot().text, destination: state.destination,
                                                      pinOnSave: state.pinOnSave, outsideSession: state.outsideSession),
               live.vault.relativePath(of: saved.destination.url) == "science/Biology.md",
               live.pins.isPinned("science/Biology.md"),
@@ -609,7 +609,7 @@ extension AppController {
         }
         try reopenedStore.store(pinnedDraft, pinOnSave: true)
         try reopenedState.resetPinOnSave(in: reopenedStore)
-        guard !(try reopenedStore.loadSnapshot().pinOnSave), try reopenedStore.load() == pinnedDraft else {
+        guard !(try reopenedStore.loadSnapshot().pinOnSave), try reopenedStore.loadSnapshot().text == pinnedDraft else {
             throw SelfTestFailure("New Note/destination reset failed to clear pin intent while preserving text")
         }
         try reopenedStore.store(pinnedDraft, pinOnSave: true)
@@ -622,7 +622,7 @@ extension AppController {
         let legacyURL = legacyState.appendingPathComponent("draft-note.md")
         try Data(pinnedDraft.utf8).write(to: legacyURL, options: .atomic)
         let migrating = NoteDraftStore(stateDirectory: legacyState)
-        guard try migrating.load() == pinnedDraft, !(try migrating.loadSnapshot().pinOnSave) else {
+        guard try migrating.loadSnapshot().text == pinnedDraft, !(try migrating.loadSnapshot().pinOnSave) else {
             throw SelfTestFailure("Legacy Markdown draft did not load")
         }
         try migrating.store(pinnedDraft, pinOnSave: true)
@@ -674,7 +674,7 @@ extension AppController {
         guard !(try reopenedState.togglePinOnSave(in: retryPipeline.drafts)),
               let retried = try await retryController.addNote(reopened.text, pinOnSave: reopenedState.pinOnSave),
               retried.captureID == job.prepared.capture.id, retried.destination == job.prepared.destination,
-              !retryPipeline.pins.isPinned("PinRetry.md"), try retryPipeline.drafts.load().isEmpty,
+              !retryPipeline.pins.isPinned("PinRetry.md"), try retryPipeline.drafts.loadSnapshot().text.isEmpty,
               try await retryPipeline.selfCheck.journal.recordURLs().isEmpty,
               try await retryPipeline.index.search("PinRetry").count == 1,
               !fm.fileExists(atPath: root.appendingPathComponent("PinRetry 2.md").path) else {
@@ -704,7 +704,7 @@ extension AppController {
         let savedBytes = try Data(contentsOf: saved.destination.url)
         try fm.removeItem(at: pinPipeline.pins.url)
         // A cleared-draft save and recovery replay must have nothing left to retry.
-        guard try await pinController.addNote(try pinPipeline.drafts.load()) == nil,
+        guard try await pinController.addNote(try pinPipeline.drafts.loadSnapshot().text) == nil,
               await pinPipeline.replayUnsaved() == 0,
               try Data(contentsOf: saved.destination.url) == savedBytes,
               toasts.count == 1, toasts.last?.title == "Note saved, but not pinned",

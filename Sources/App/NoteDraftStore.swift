@@ -45,7 +45,6 @@ final class NoteDraftStore: @unchecked Sendable {
         self.maxCoalescingInterval = maxCoalescingInterval
         self.beforeScheduledWriteForTesting = beforeScheduledWriteForTesting
     }
-    func load() throws -> String { try loadSnapshot().text }
     func loadSnapshot() throws -> NoteDraftSnapshot {
         try mutationLock.withLock {
             let (generation, pending) = supersedeScheduledWrite()

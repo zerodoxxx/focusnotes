@@ -47,12 +47,12 @@ func checkNotesFolder() async throws {
     let otherJobs = try await otherPipeline.selfCheck.journal.recordURLs()
     let otherHits = try await otherPipeline.index.titleSuggestions(prefix: "", limit: 20)
     guard otherState != originalState, otherSession == nil, otherJobs.isEmpty, otherHits.isEmpty,
-          try otherPipeline.drafts.load().isEmpty, otherPipeline.pins.paths().isEmpty,
+          try otherPipeline.drafts.loadSnapshot().text.isEmpty, otherPipeline.pins.paths().isEmpty,
           try NotesFolder.stateDirectory(for: other, base: base) == otherState else {
         throw SelfTestFailure("Changing notes folders leaked state from the original folder")
     }
     guard await pipeline.selfCheck.sessions.current() == session,
-          try pipeline.drafts.load() == "Original draft",
+          try pipeline.drafts.loadSnapshot().text == "Original draft",
           pipeline.pins.isPinned(session.notePath),
           try await pipeline.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Changing notes folders altered the running pipeline")
@@ -64,7 +64,7 @@ func checkNotesFolder() async throws {
     let restoredSession = await restored.selfCheck.sessions.current()
     guard restoredState == base, restoredSession?.name == session.name, restoredSession?.notePath == session.notePath,
           abs(restoredSession?.startedAt.timeIntervalSince(session.startedAt) ?? .infinity) < 1,
-          try restored.drafts.load() == "Original draft", restored.pins.isPinned(session.notePath),
+          try restored.drafts.loadSnapshot().text == "Original draft", restored.pins.isPinned(session.notePath),
           try await restored.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Returning to a notes folder did not preserve its state")
     }

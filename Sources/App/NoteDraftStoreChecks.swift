@@ -43,9 +43,8 @@ func checkNoteDraftStoreScheduling() async throws {
     guard !FileManager.default.fileExists(atPath: coalesced.url.path) else {
         throw SelfTestFailure("Draft keystrokes must not synchronously write on the caller thread")
     }
-    let coalescingDeadline = ContinuousClock.now.advanced(by: .seconds(2))
-    while !FileManager.default.fileExists(atPath: coalesced.url.path), ContinuousClock.now < coalescingDeadline {
-        try await Task.sleep(for: .milliseconds(10))
+    try await waitUntil("the coalesced draft write", timeout: .seconds(2)) {
+        FileManager.default.fileExists(atPath: coalesced.url.path)
     }
     let coalescedSnapshot = try diskDraft(at: coalesced.url)
     guard coalescedSnapshot.text == "latest editor text", !coalescedSnapshot.pinOnSave,
@@ -74,9 +73,8 @@ func checkNoteDraftStoreScheduling() async throws {
     guard persistedBeforeProducerFinished else {
         throw SelfTestFailure("Continuous editor changes exceeded the maximum draft persistence interval")
     }
-    let boundedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
-    while (try? diskDraft(at: bounded.url).text) != "continuous edit 23", ContinuousClock.now < boundedDeadline {
-        try await Task.sleep(for: .milliseconds(10))
+    try await waitUntil("the bounded draft final edit", timeout: .seconds(2)) {
+        (try? diskDraft(at: bounded.url).text) == "continuous edit 23"
     }
     guard try diskDraft(at: bounded.url).text == "continuous edit 23" else {
         throw SelfTestFailure("The bounded draft writer did not persist the final edit")
@@ -157,10 +155,10 @@ func checkNoteDraftStoreScheduling() async throws {
         waitForSignal(failureObserved, timeout: .seconds(2))
     }.value
     guard asyncFailureReported else { throw SelfTestFailure("A failed background draft write was not reported") }
-    var finalFlushFailed = false
-    do { try failed.flushScheduledStore("latest text after failure", pinOnSave: true) }
-    catch { finalFlushFailed = true }
-    guard finalFlushFailed else { throw SelfTestFailure("The test storage fault did not fail the synchronous flush") }
+    try await expectRejection(CocoaError.self, "The test storage fault did not fail the synchronous flush",
+                              matching: { $0.code == .fileWriteUnknown }) {
+        try failed.flushScheduledStore("latest text after failure", pinOnSave: true)
+    }
     try FileManager.default.removeItem(at: failed.url)
     try failed.flushScheduledStore("latest text after failure", pinOnSave: true)
     let recovered = try failed.loadSnapshot()
