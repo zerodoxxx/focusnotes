@@ -404,7 +404,7 @@ public sealed class VaultWatcher : IDisposable
                     throw new ExternalNoteRegistryException(ExternalNoteRegistryError.UnreadableRegistry);
                 }
 
-                vault.InvalidateExternalRegistryCache();
+                registry.InvalidateCache();
                 ExternalNoteRegistry.Snapshot? snapshot;
                 try { snapshot = vault.ExternalRegistrySnapshot(); }
                 catch (ExternalNoteRegistryException)
@@ -450,7 +450,7 @@ public sealed class VaultWatcher : IDisposable
             registryFingerprint = before;
             if (registryFailure == failure) { return; }
             registryFailure = failure;
-            vault.InvalidateExternalRegistryCache();
+            registry.InvalidateCache();
             external.Clear(); fingerprints.Clear(); pendingExternal.Clear();
             issues.Add("registry-snapshot");
             Publish([], [], true, failure.Item2, version: failure.Item3);
