@@ -215,7 +215,6 @@ internal sealed partial class AppController : IDisposable
         }
     }
 
-    // Quit and the shutdown drain.
     public void RequestQuit(bool restartForUpdate = false) => _ = QuitAsync(restartForUpdate);
 
     private async Task QuitAsync(bool restartForUpdate)

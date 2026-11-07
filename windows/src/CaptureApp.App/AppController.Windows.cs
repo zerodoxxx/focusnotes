@@ -64,7 +64,6 @@ internal sealed partial class AppController
         window.Activate();
     }
 
-    /// Setup or Settings changed something the tray shows.
     internal void OnSetupChanged() => RefreshMenu();
 
     /// Step 0 was answered: hotkeys come alive and the update schedule follows the choice.
@@ -238,7 +237,6 @@ internal sealed partial class AppController
         ? "Restart the app to use this folder. Existing notes stay in their current folder."
         : "This folder is already in use. Existing notes stay in place.";
 
-    /// Shortcuts left registered: every action in the shortcut table minus the failed and turned-off ones.
     internal static int RegisteredShortcutCount(int failed, int disabled) => HotkeyDefaults.All.Count - failed - disabled;
 
     internal IReadOnlyList<CapabilityStatus> CapabilityTable() => Capabilities.Evaluate(new CapabilityInputs(

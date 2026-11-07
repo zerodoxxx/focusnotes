@@ -191,7 +191,6 @@ internal sealed partial class AppController
         return true;
     }
 
-    // Sessions.
     private void ToggleSession()
     {
         if (!RequireConsent()) { return; }
@@ -284,7 +283,6 @@ internal sealed partial class AppController
             }));
     }
 
-    // Subheading.
     private void OpenSubheading()
     {
         if (!RequireConsent()) { return; }

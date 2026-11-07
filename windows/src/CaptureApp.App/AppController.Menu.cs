@@ -78,7 +78,6 @@ internal sealed partial class AppController
         }
     }
 
-    // Tray.
     private void InstallTray()
     {
         tray = new TrayIcon(id => dispatcher.BeginInvoke(() => OnMenu(id)), TrayIconAssets.FindDefault());
