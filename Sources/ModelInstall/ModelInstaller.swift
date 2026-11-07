@@ -297,6 +297,8 @@ public actor ModelInstaller {
         defer {
             do {
                 try fm.removeItem(at: extractDirectory)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                // Failure paths below already removed it.
             } catch {
                 logger.notice("Could not remove \(extractDirectory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
