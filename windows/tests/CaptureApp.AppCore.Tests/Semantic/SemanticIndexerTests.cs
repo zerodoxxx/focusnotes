@@ -8,6 +8,8 @@ namespace CaptureApp.AppCore.Tests.Semantic;
 
 public sealed class SemanticIndexerTests : IDisposable
 {
+    private const string VectorsFile = "vectors.sqlite";
+
     private readonly TempDirectory temp = new();
     private readonly FakeSource source = new();
     private readonly FakeEmbedder embedder = new();
@@ -17,7 +19,7 @@ public sealed class SemanticIndexerTests : IDisposable
 
     private SemanticIndexer Create(bool enabled = true, IReadOnlyList<TimeSpan>? retryDelays = null)
     {
-        var path = Path.Combine(temp.Path, "vectors.sqlite");
+        var path = Path.Combine(temp.Path, VectorsFile);
         return new SemanticIndexer(source, () => embedder, () => Store(path), enabled, () => gate, time, retryDelays);
     }
 
@@ -28,7 +30,7 @@ public sealed class SemanticIndexerTests : IDisposable
         return store;
     }
 
-    private VectorStore Inspect() => new(Path.Combine(temp.Path, "vectors.sqlite"));
+    private VectorStore Inspect() => new(Path.Combine(temp.Path, VectorsFile));
 
     public void Dispose()
     {
@@ -160,7 +162,7 @@ public sealed class SemanticIndexerTests : IDisposable
         {
             attempts++;
             return embedder;
-        }, () => Store(Path.Combine(temp.Path, "vectors.sqlite")), true, () => gate, time);
+        }, () => Store(Path.Combine(temp.Path, VectorsFile)), true, () => gate, time);
 
         indexer.Schedule();
         time.Advance(Debounce);
@@ -220,7 +222,7 @@ public sealed class SemanticIndexerTests : IDisposable
     [Fact]
     public async Task NoClientIsCreatedOnceDisableHasReturned()
     {
-        var store = Store(Path.Combine(temp.Path, "vectors.sqlite"));
+        var store = Store(Path.Combine(temp.Path, VectorsFile));
         var disabledReturned = false;
         var violations = 0;
         for (var i = 0; i < 2000; i++)

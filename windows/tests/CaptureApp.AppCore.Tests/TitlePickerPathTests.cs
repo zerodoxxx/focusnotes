@@ -1,4 +1,5 @@
 using CaptureApp.AppCore.Shell;
+using CaptureApp.AppCore.Tests.Semantic;
 using CaptureApp.Core;
 using CaptureApp.Core.Index;
 using Xunit;
@@ -75,7 +76,7 @@ public sealed class TitlePickerPathTests
     public async Task EachOfTwoRootNotesWithTheSameHeadingCanBePicked()
     {
         using var temp = new TempDirectory();
-        using var pipeline = CapturePipeline.Open(Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var vault = pipeline.Vault;
         File.WriteAllText(Path.Combine(vault.Root, "Biology.md"), "# Biology\n");
@@ -103,7 +104,7 @@ public sealed class TitlePickerPathTests
     public async Task PickedNoteRemovedBeforeTheCommitKeepsTheCapture()
     {
         using var temp = new TempDirectory();
-        using var pipeline = CapturePipeline.Open(Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var gone = Path.Combine(pipeline.Vault.Root, "Gone.md");
@@ -113,8 +114,7 @@ public sealed class TitlePickerPathTests
         var capture = PendingCaptures.Selection("kept pick needle", new());
         await coordinator.StageAsync(capture);
         await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitPending(destination: destination, announce: true)!);
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (coordinator.PendingWithRetryWarning is null && DateTime.UtcNow < deadline) { await Task.Delay(10, TestContext.Current.CancellationToken); }
+        await Wait.Until(() => coordinator.PendingWithRetryWarning is not null, "the retry warning");
         Assert.Equal(capture.Id, coordinator.PendingWithRetryWarning?.Id);
         Assert.False(File.Exists(gone));
         Assert.DoesNotContain("kept pick needle", File.ReadAllText(pipeline.Vault.InboxUrl), StringComparison.Ordinal);
