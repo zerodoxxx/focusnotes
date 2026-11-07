@@ -58,6 +58,8 @@ public enum MarkdownStyler {
         /// Single-line editor patterns.
         static let emptyTaskBox = compile(#"^([ \t]*)([-*+]) \[\]$"#, options: [])
         static let taskBox = compile(#"^([ \t]*)([-*+] )\[[ xX]\] "#, options: [])
+        /// Length of the "[x] " box that taskBox matches after the bullet.
+        static let taskBoxLength = 4
         static let listLine = compile(#"^([ \t]*)([-*+] (?:\[[ xX]\] )?|([0-9]+)\. )(.*)$"#, options: [])
 
         static func isBulletCharacter(_ c: unichar) -> Bool { c == 45 || c == 42 || c == 43 }

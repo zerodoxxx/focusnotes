@@ -178,7 +178,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
 
     func synchronize(_ view: NSTextView) {
         startingComposition = false
-        updateSelection(view.selectedRanges.map(\.rangeValue), markedRange: view.hasMarkedText() ? view.markedRange() : NSRange(location: NSNotFound, length: 0))
+        updateSelection(view.selectedRanges.map(\.rangeValue), markedRange: view.activeMarkedRange)
     }
 
     /// Attribute restyles restore raw paragraph styles; reapply just the task and
@@ -520,4 +520,9 @@ private final class MarkdownGlyphDelegate: NSObject, @MainActor NSLayoutManagerD
                        proposedLineFragment proposedRect: NSRect, glyphPosition: NSPoint, characterIndex charIndex: Int) -> NSRect {
         owner?.isDecorationAnchor(at: charIndex) == true ? owner!.decorationBounds(at: charIndex) : .zero
     }
+}
+
+extension NSTextView {
+    /// The marked (IME composition) range, or NSNotFound when nothing is marked.
+    var activeMarkedRange: NSRange { hasMarkedText() ? markedRange() : NSRange(location: NSNotFound, length: 0) }
 }

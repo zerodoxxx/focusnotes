@@ -109,7 +109,7 @@ final class NoteTextView: NSTextView {
     }
     private var markdownLayout: MarkdownLayoutManager? { layoutManager as? MarkdownLayoutManager }
     private func prepareSelection(_ ranges: [NSRange]) {
-        if markdownLayout?.updateSelection(ranges, markedRange: hasMarkedText() ? markedRange() : NSRange(location: NSNotFound, length: 0)) == true {
+        if markdownLayout?.updateSelection(ranges, markedRange: activeMarkedRange) == true {
             onPreviewChange?()
         }
     }
@@ -246,7 +246,7 @@ final class NoteTextView: NSTextView {
         let markerStart = line.location + NSMaxRange(match.range(at: 1))
         let markerEnd = line.location + match.range.location + match.range.length
         guard caret == markerEnd, markdownLayout?.isBlockMarkerActive(at: markerStart) != true else { return nil }
-        let deletion = NSRange(location: markerStart + match.range(at: 2).length, length: 4)
+        let deletion = NSRange(location: markerStart + match.range(at: 2).length, length: MarkdownStyler.Syntax.taskBoxLength)
         guard NSMaxRange(deletion) == caret else { return nil }
         return deletion
     }
@@ -353,7 +353,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     private let titlePin = symbol("pin.fill", color: OverlayTheme.textColor)
     private let chrome = NoteChromeBar()
     private let footer = PassiveView()
-    private let saveHint = KeycapView(key: PanelShortcuts.save.glyph, caption: "Create note")
+    private static let createCaption = "Create note"
+    private let saveHint = KeycapView(key: PanelShortcuts.save.glyph, caption: NoteEditorView.createCaption)
     private let hints = [KeycapView(key: PanelShortcuts.toggleActions.glyph, caption: "Actions"), KeycapView(key: "esc", caption: "Close")]
     private let restoredDraft: Bool
     private let draftLabel = label("Draft kept", font: OverlayTheme.metaFont, color: OverlayTheme.tertiaryColor)
@@ -522,7 +523,7 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             }
         }
         appendsToExisting = destination == nil && appends
-        let caption = appends ? "Add to note" : "Create note"
+        let caption = appends ? "Add to note" : NoteEditorView.createCaption
         if saveHint.caption.stringValue != caption {
             saveHint.caption.stringValue = caption
             footer.needsLayout = true
@@ -1054,8 +1055,7 @@ public final class NoteEditorPanel {
         view.onBrowseChoice = { [weak panel, weak view] item, choice in
             if choice == .write { handlers.onBrowse(item, choice); view?.hideBrowse(); return }
             guard let panel else { return }
-            panel.dismiss()
-            if !panel.isVisible { handlers.onBrowse(item, choice) }
+            panel.dismissThen { handlers.onBrowse(item, choice) }
         }
         panel.shouldDismiss = { [weak view] in
             guard let view else { return true }
@@ -1068,8 +1068,7 @@ public final class NoteEditorPanel {
         view.textView.onSave = { [weak panel, weak view] in
             guard let panel, let view else { return }
             let text = view.textView.string
-            panel.dismiss()
-            if !panel.isVisible { handlers.onSubmit(text) }
+            panel.dismissThen { handlers.onSubmit(text) }
         }
         view.onAction = { [weak panel, weak view] id in
             guard let panel, let view else { return }
@@ -1077,13 +1076,11 @@ public final class NoteEditorPanel {
             switch id {
             case .newNote:
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { handlers.onNew("") }
-                else { panel.dismiss(); if !panel.isVisible { handlers.onNew(text) } }
+                else { panel.dismissThen { handlers.onNew(text) } }
             case .openAsNote:
-                panel.dismiss()
-                if !panel.isVisible { handlers.onOpenAsNote(text) }
+                panel.dismissThen { handlers.onOpenAsNote(text) }
             case .saveAsNewNote: // the editor view only forwards this while saving would append
-                panel.dismiss()
-                if !panel.isVisible { handlers.onSaveAsNew(text) }
+                panel.dismissThen { handlers.onSaveAsNew(text) }
             case .pin:
                 view.setDestination(view.destination, isPinned: handlers.onTogglePin())
             case .writeOutsideSession:
@@ -1109,4 +1106,12 @@ public final class NoteEditorPanel {
     /// Refresh an open Browse card after its asynchronous note snapshot arrives. Keep its
     /// filter text and selected item when that item is still present in the new snapshot.
     public func refreshBrowseItems() { content?.refreshBrowseItems() }
+}
+
+extension OverlayPanel {
+    /// Runs `action` only once the panel has actually closed, since shouldDismiss can veto the close.
+    func dismissThen(_ action: () -> Void) {
+        dismiss()
+        if !isVisible { action() }
+    }
 }
