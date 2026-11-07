@@ -86,8 +86,14 @@ public sealed class SemanticIndexer
 
         if (idle is not null)
         {
-            _ = idle.ShutdownAsync();
+            _ = ShutdownIdleAsync(idle);
         }
+    }
+
+    private async Task ShutdownIdleAsync(IEmbedService idle)
+    {
+        try { await idle.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception error) when (error is not OutOfMemoryException) { log?.Error($"Helper shutdown failed: {error.Message}"); }
     }
 
     /// Wire to PowerMonitor.ImageEmbeddingAllowedChanged: a false-to-true change resumes image embedding.

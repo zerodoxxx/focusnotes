@@ -7,6 +7,8 @@ namespace CaptureApp.AppCore;
 /// Owns the per-user lock and show-handoff pipe for the lifetime of the primary process.
 public sealed class SingleInstance : IAsyncDisposable
 {
+    private const string ShowCommand = "show";
+
     private readonly FileStream lockFile;
     private readonly CancellationTokenSource stopping = new();
     private readonly Action? onShow;
@@ -26,7 +28,7 @@ public sealed class SingleInstance : IAsyncDisposable
         pipeServer = Task.Run(ListenAsync);
     }
 
-    /// Returns a handle for the primary process, or null after sending "show" to the existing process.
+    /// Returns a handle for the primary process, or null after sending the show command to the existing process.
     public static Task<SingleInstance?> StartAsync(string stateDirectory, Action? onShow = null,
         CancellationToken cancellationToken = default)
         => StartAsync(stateDirectory, CurrentPipeName(), onShow, cancellationToken);
@@ -49,6 +51,7 @@ public sealed class SingleInstance : IAsyncDisposable
             try
             {
                 await SendShowAsync(pipeName, cancellationToken).ConfigureAwait(false);
+                new AppLog(fullPath, "single-instance").Notice($"Instance lock held ({lockError.Message}); sent show to the running instance.");
                 return null;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -91,7 +94,7 @@ public sealed class SingleInstance : IAsyncDisposable
                 await server.WaitForConnectionAsync(stopping.Token).ConfigureAwait(false);
                 using var reader = new StreamReader(server, Encoding.UTF8, false, 1024, true);
                 var command = await reader.ReadLineAsync(stopping.Token).ConfigureAwait(false);
-                if (string.Equals(command, "show", StringComparison.Ordinal))
+                if (string.Equals(command, ShowCommand, StringComparison.Ordinal))
                 {
                     try { onShow?.Invoke(); }
                     catch (Exception error) { logger.Error($"Show handoff handler failed: {error}"); }
@@ -118,7 +121,7 @@ public sealed class SingleInstance : IAsyncDisposable
     {
         await using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await client.ConnectAsync(3000, cancellationToken).ConfigureAwait(false);
-        var command = Encoding.UTF8.GetBytes("show\n");
+        var command = Encoding.UTF8.GetBytes(ShowCommand + "\n");
         await client.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         await client.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
