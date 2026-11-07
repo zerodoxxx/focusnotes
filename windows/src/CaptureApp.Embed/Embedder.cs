@@ -16,7 +16,7 @@ public readonly record struct EmbeddingKind(bool IsQuery, string? Title)
 /// are created on the first actual request. Calls are serialized by a lock, including lazy initialization.
 public sealed class Embedder : IDisposable
 {
-    public const string ModelID = "onnx-community/embeddinggemma-2-ONNX@daa72c51243991dfcaf9f9137d2c573d8f7790c0:text-q8,vision-q4";
+    public const string ModelID = $"onnx-community/embeddinggemma-2-ONNX@{GemmaModelConfig.Revision}:text-q8,vision-q4";
 
     private readonly object gate = new();
     private readonly string directory;
@@ -57,8 +57,8 @@ public sealed class Embedder : IDisposable
             var vectors = new List<float[]>(texts.Count);
             foreach (var input in texts)
             {
-                var ids = tokenizer!.Encode(kind.Input(input), 2048);
-                if (ids.Contains(258880) || ids.Contains(258881) || ids.Contains(258884))
+                var ids = tokenizer!.Encode(kind.Input(input), GemmaModelConfig.MaxTokens);
+                if (ids.Any(id => GemmaModelConfig.ImagePlaceholderTokenIds.Contains(id)))
                 {
                     throw EmbeddingException.Invalid("Text contains a media placeholder; use the image path for images");
                 }
@@ -79,20 +79,20 @@ public sealed class Embedder : IDisposable
             var prepared = processor.Prepare(imagePng);
             vision ??= CreateSession(Path.Combine(directory, "onnx", "vision_encoder_q4.onnx"));
             var patches = processor.Budget * processor.Pooling * processor.Pooling;
-            using var pixels = Tensor(prepared.Pixels, [1, patches, 768]);
+            using var pixels = Tensor(prepared.Pixels, [1, patches, GemmaModelConfig.VisionPatchWidth]);
             using var positions = Tensor(prepared.Positions, [1, patches, 2]);
             using var features = Run(vision, [("pixel_values", pixels), ("pixel_position_ids", positions)], "image_features");
-            if (features.GetTensorTypeAndShape().ElementCount != prepared.Tokens * 512L)
+            if (features.GetTensorTypeAndShape().ElementCount != prepared.Tokens * GemmaModelConfig.MediaFeatureWidth)
             {
                 throw EmbeddingException.Runtime("Vision feature count does not match image token count");
             }
 
             var ids = new long[prepared.Tokens + 4];
-            ids[0] = 2;
-            ids[1] = 255999;
-            Array.Fill(ids, 258880L, 2, prepared.Tokens);
-            ids[^2] = 258882;
-            ids[^1] = 1;
+            ids[0] = GemmaModelConfig.BosTokenId;
+            ids[1] = GemmaModelConfig.ImageStartTokenId;
+            Array.Fill(ids, GemmaModelConfig.ImageSoftTokenId, 2, prepared.Tokens);
+            ids[^2] = GemmaModelConfig.ImageEndTokenId;
+            ids[^1] = GemmaModelConfig.EosTokenId;
             return Shared(ids, features);
         }
     }
@@ -172,13 +172,13 @@ public sealed class Embedder : IDisposable
         Array.Fill(mask, 1L);
         using var tokenTensor = Tensor(ids, [1, ids.Length]);
         using var maskTensor = Tensor(mask, [1, ids.Length]);
-        using var empty = Tensor(Array.Empty<float>(), [0, 512]);
-        using var video = Tensor(Array.Empty<float>(), [0, 512]);
-        using var audio = Tensor(Array.Empty<float>(), [0, 512]);
+        using var empty = Tensor(Array.Empty<float>(), [0, GemmaModelConfig.MediaFeatureWidth]);
+        using var video = Tensor(Array.Empty<float>(), [0, GemmaModelConfig.MediaFeatureWidth]);
+        using var audio = Tensor(Array.Empty<float>(), [0, GemmaModelConfig.MediaFeatureWidth]);
         using var output = Run(text!, [("input_ids", tokenTensor), ("attention_mask", maskTensor), ("image_features", imageFeatures ?? empty),
             ("video_features", video), ("audio_features", audio)], "sentence_embedding");
         var vector = output.GetTensorDataAsSpan<float>();
-        if (vector.Length != 768)
+        if (vector.Length != GemmaModelConfig.EmbeddingWidth)
         {
             throw EmbeddingException.Runtime("Expected 768-d shared embedding");
         }

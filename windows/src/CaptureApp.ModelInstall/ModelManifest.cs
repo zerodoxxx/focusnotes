@@ -1,3 +1,5 @@
+using CaptureApp.Embed;
+
 namespace CaptureApp.ModelInstall;
 
 /// One file downloaded from the pinned Hugging Face revision.
@@ -12,7 +14,7 @@ public sealed record BundledLicense(string ResourceName, string Sha256, string I
 public sealed class ModelManifest
 {
     private const string Repo = "onnx-community/embeddinggemma-2-ONNX";
-    private const string Revision = "daa72c51243991dfcaf9f9137d2c573d8f7790c0";
+    private const string Revision = GemmaModelConfig.Revision;
     private const string BaseUrl = "https://huggingface.co/" + Repo + "/resolve/" + Revision;
 
     public string HuggingFaceRepo { get; init; } = Repo;
@@ -20,6 +22,10 @@ public sealed class ModelManifest
     public string HuggingFaceRevision { get; init; } = Revision;
 
     public IReadOnlyList<ModelArtifact> ModelFiles { get; init; } = [];
+
+    /// Model graphs under onnx/; the tokenizer and config files are not loaded as graphs.
+    public IReadOnlyList<ModelArtifact> EmbeddingModelFiles =>
+        ModelFiles.Where(file => file.Path.StartsWith("onnx/", StringComparison.Ordinal)).ToList();
 
     public IReadOnlyList<BundledLicense> Licenses { get; init; } = [];
 
