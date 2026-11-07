@@ -27,12 +27,12 @@ public struct FrontmostContext: Equatable, Sendable {
         var url: String?
         if AXIsProcessTrusted() {
             let application = AXUIElementCreateApplication(app.processIdentifier)
-            AXUIElementSetMessagingTimeout(application, 0.2)
+            AXUIElementSetMessagingTimeout(application, AccessibilityTimeout.messaging)
             var window: CFTypeRef?
             if AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &window) == .success,
                let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
                 let element = unsafeDowncast(window, to: AXUIElement.self)
-                AXUIElementSetMessagingTimeout(element, 0.2)
+                AXUIElementSetMessagingTimeout(element, AccessibilityTimeout.messaging)
                 var value: CFTypeRef?
                 if AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value) == .success {
                     title = value as? String

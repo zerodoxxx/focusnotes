@@ -24,9 +24,7 @@ actor LatestQueryQueue {
                 else {
                     // If the active request is still behind indexing I/O, its
                     // cancellation ticket drops it before it reaches the wire.
-                    active?.continuation?.resume(throwing: CancellationError())
-                    active?.continuation = nil
-                    active?.cancellation.cancel()
+                    abandonActive()
                     pending?.continuation?.resume(throwing: CancellationError())
                     pending?.cancellation.cancel()
                     pending = job
@@ -59,13 +57,17 @@ actor LatestQueryQueue {
 
     private func cancel(_ id: UUID) {
         if active?.id == id {
-            active?.continuation?.resume(throwing: CancellationError())
-            active?.continuation = nil
-            active?.cancellation.cancel()
+            abandonActive()
         } else if pending?.id == id {
             pending?.continuation?.resume(throwing: CancellationError())
             pending = nil
         }
+    }
+
+    private func abandonActive() {
+        active?.continuation?.resume(throwing: CancellationError())
+        active?.continuation = nil
+        active?.cancellation.cancel()
     }
 }
 
