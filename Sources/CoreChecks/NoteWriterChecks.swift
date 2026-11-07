@@ -305,7 +305,9 @@ private func checkInPlaceEditBeforeAppend(vault: Vault, calendar: Calendar, capt
     next.id = UUID(); next.content = .text("After racing edit")
     try await writer.appendIfMissing(next, to: destination)
     let contents = try checkRead(url)
+    let statistics = await writer.appendCacheStatistics
     try require(editor.error == nil, "in-place prewrite fixture failed")
+    try require(statistics.fullScans == 2, "a detected in-place edit must retry and rescan before writing")
     try require(contents.contains("### Chrome\n" + checkCaptureMarker(capture.id)) &&
                 contents.contains("### Safari\n" + checkCaptureMarker(next.id)),
                 "a detected edit must recompute the source heading and preserve editor bytes")
@@ -449,7 +451,9 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
     let saved = try Data(contentsOf: url)
     try await writer.appendIfMissing(capture, to: destination)
     let replayed = try Data(contentsOf: url)
+    var statistics = await writer.appendCacheStatistics
     try require(replayed == saved, "warm appends/replay must leave the note's bytes unchanged")
+    try require(statistics.fullScans == 1, "warm appends/replay should use one initial scan")
 
     // ctime must still invalidate source state.
     var beforeEdit = stat()
@@ -471,13 +475,16 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
     next.id = UUID(); next.content = .text("After same-size edit")
     try await writer.appendIfMissing(next, to: destination)
     let afterEdit = try checkRead(url)
-    try require(afterEdit.contains("### Safari\n" + checkCaptureMarker(next.id)), "same-size edits must invalidate cached source context")
+    statistics = await writer.appendCacheStatistics
+    try require(statistics.fullScans == 2 && afterEdit.contains("### Safari\n" + checkCaptureMarker(next.id)),
+                "same-size edits must invalidate cached source context")
 
     // An atomic editor save can preserve every byte while replacing the inode.
     try Data(afterEdit.utf8).write(to: url, options: .atomic)
     try await writer.appendIfMissing(next, to: destination)
     let afterReplacement = try checkRead(url)
-    try require(afterReplacement == afterEdit, "replacement must keep replay idempotent")
+    statistics = await writer.appendCacheStatistics
+    try require(statistics.fullScans == 3 && afterReplacement == afterEdit, "replacement must rescan and keep replay idempotent")
 
     // The metadata cache is bounded even when captures visit many destinations.
     for index in 0..<12 {
@@ -485,9 +492,12 @@ private func checkAppendCache(vault: Vault, calendar: Calendar, capture: Capture
         let note = vault.root.appendingPathComponent("Cache limit \(index).md")
         try await writer.appendIfMissing(next, to: Destination(url: note, title: "Cache limit", kind: .note))
     }
-    let statistics = await writer.appendCacheStatistics
+    statistics = await writer.appendCacheStatistics
     try require(statistics.cachedFiles <= NoteWriter.appendCacheFileLimit, "append cache must evict old destinations")
+    let scansBefore = statistics.fullScans
     try await writer.appendIfMissing(capture, to: destination)
+    statistics = await writer.appendCacheStatistics
+    try require(statistics.fullScans == scansBefore + 1, "an evicted destination must safely rescan for a replay")
     let evictedReplay = try checkRead(url)
     try require(checkCount(checkCaptureMarker(capture.id), in: evictedReplay) == 1,
                 "an evicted destination must replay without duplicating the capture")

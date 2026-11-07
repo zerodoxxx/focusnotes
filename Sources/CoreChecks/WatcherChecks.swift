@@ -14,6 +14,10 @@ func checkVaultWatcher() throws {
                 "watcher defaults should retain the 128 total and 64 parent descriptor caps")
     watcher.start()
     try require(watcher.isRunning, "VaultWatcher should report a successfully started stream")
+    let initialGeneration = watcher.streamGenerationForChecks
+    watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "refreshing unchanged roots should preserve the active FSEvents stream")
 
     try checkWrite("# Foo\n", to: root.appendingPathComponent("Foo.md"))
     let fooChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains("Foo.md") }
@@ -361,6 +365,7 @@ private func checkBoundedExternalWatcher() throws {
     defer { watcher.stop() }
     watcher.start()
     try require(watcher.isRunning, "bounded external watcher should start with a temp HOME registry")
+    let initialGeneration = watcher.streamGenerationForChecks
 
     var offset = recorder.changes().count
     try checkWrite("# Added\n\nloaded at startup\n", to: added)
@@ -442,6 +447,8 @@ private func checkBoundedExternalWatcher() throws {
     ).write(to: registryURL, options: .atomic)
     let membershipRefresh = recorder.waitForChange(after: offset, timeout: 3.0) { $0.needsFullSync }
     try require(membershipRefresh != nil, "an external registry membership change should request a full sync")
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "external membership changes must keep the vault FSEvents stream stable")
 
     offset = recorder.changes().count
     try checkWrite("# Late\n\nupdated\n", to: late)

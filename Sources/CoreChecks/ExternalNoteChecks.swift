@@ -31,6 +31,7 @@ func checkExternalNoteRegistry() async throws {
     let watcher = VaultWatcher(vault: vault, latency: 0.1) { recorder.append($0) }
     watcher.start()
     try require(watcher.isRunning, "external-note watcher should start before registration")
+    let initialGeneration = watcher.streamGenerationForChecks
     let capture = externalNoteCapture("/Desktop/Research/Registered", body: "externalregistryneedle", now: now)
     let prepared = try await service.prepareNote(capture, calendar: calendar)
     let expectedURL = home.appendingPathComponent("Desktop/Research/Registered.md")
@@ -50,8 +51,13 @@ func checkExternalNoteRegistry() async throws {
 
     // The app refreshes external vnode membership after a successful save.
     watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "adding an external note must not replace the vault FSEvents stream")
     let rootRefresh = recorder.waitForChange(timeout: 3.0) { $0.needsFullSync }
     try require(rootRefresh != nil, "adding external vnode sources should request a bounded full sync")
+    watcher.refreshExternalRoots()
+    try require(watcher.streamGenerationForChecks == initialGeneration,
+                "refreshing unchanged external membership should preserve the vault stream")
     try checkWrite("# Registered\n\nexternalregistryneedle updated", to: registered.url)
     let externalChange = recorder.waitForChange(timeout: 3.0) { $0.notesChanged.contains(registered.id) }
     watcher.stop()
