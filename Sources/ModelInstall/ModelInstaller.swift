@@ -138,11 +138,7 @@ public actor ModelInstaller {
         }
 
         let runtime = manifest.runtime
-        let runtimeFiles = [
-            (manifest.dylibName, runtime.dylibSHA256),
-            (manifest.runtimeLicenseName, runtime.licenseSHA256),
-            (manifest.runtimeNoticesName, runtime.noticesSHA256),
-        ]
+        let runtimeFiles = runtimeMembers.map { ($0.installedName, $0.digest) }
         var runtimeInstalled = true
         for (name, digest) in runtimeFiles {
             if try !hashMatches(staging.appendingPathComponent(name), digest) {
@@ -150,17 +146,17 @@ public actor ModelInstaller {
                 break
             }
         }
-        let archive = staging.appendingPathComponent("runtime.tgz")
+        let archive = staging.appendingPathComponent(StagingLayout.runtimeArchiveName)
         if runtimeInstalled {
-            stalePartNames.append("runtime.tgz")
+            stalePartNames.append(StagingLayout.runtimeArchiveName)
             try? fm.removeItem(at: archive)
             try? fm.removeItem(at: staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true))
             completed += runtime.size
         } else if try hashMatches(archive, runtime.sha256) {
-            stalePartNames.append("runtime.tgz")
+            stalePartNames.append(StagingLayout.runtimeArchiveName)
             completed += runtime.size
         } else {
-            downloads.append(Download(name: "runtime.tgz", url: runtime.url, sha256: runtime.sha256, size: runtime.size))
+            downloads.append(Download(name: StagingLayout.runtimeArchiveName, url: runtime.url, sha256: runtime.sha256, size: runtime.size))
         }
 
         // Read-only: nothing is deleted until the space check has passed.
@@ -281,11 +277,20 @@ public actor ModelInstaller {
         }
     }
 
+    /// Shared by the staged-file check and the tar extraction so both name the same three files.
+    private var runtimeMembers: [(member: String, digest: String, installedName: String)] {
+        let runtime = manifest.runtime
+        return [
+            (runtime.dylibMember, runtime.dylibSHA256, manifest.dylibName),
+            (runtime.licenseMember, runtime.licenseSHA256, manifest.runtimeLicenseName),
+            (runtime.noticesMember, runtime.noticesSHA256, manifest.runtimeNoticesName),
+        ]
+    }
+
     /// Extracts the three runtime members with the system tar and verifies each against its pinned hash.
     private func extractRuntime(archive: URL, staging: URL) throws {
         try checkCancellation()
         let fm = FileManager.default
-        let runtime = manifest.runtime
         let extractDirectory = staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true)
         try? fm.removeItem(at: extractDirectory)
         try fm.createDirectory(at: extractDirectory, withIntermediateDirectories: true)
@@ -297,11 +302,7 @@ public actor ModelInstaller {
             }
         }
 
-        let members: [(member: String, digest: String, installedName: String)] = [
-            (runtime.dylibMember, runtime.dylibSHA256, manifest.dylibName),
-            (runtime.licenseMember, runtime.licenseSHA256, manifest.runtimeLicenseName),
-            (runtime.noticesMember, runtime.noticesSHA256, manifest.runtimeNoticesName),
-        ]
+        let members = runtimeMembers
 
         let process = Process()
         let stderr = Pipe()
@@ -481,6 +482,7 @@ public actor ModelInstaller {
 private enum StagingLayout {
     static let downloadDirectoryName = "models.download"
     static let extractDirectoryName = ".runtime-extract"
+    static let runtimeArchiveName = "runtime.tgz"
     static let backupPrefix = "models.old-"
     static let partExtension = "part"
 
