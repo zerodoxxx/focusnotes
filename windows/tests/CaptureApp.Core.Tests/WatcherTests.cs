@@ -373,7 +373,7 @@ public sealed class WatcherTests
         recorder.Drain();
         CheckVault.WriteAbsolute(Path.Combine(e.State, "session.json"), "unrelated");
         File.WriteAllText(note, "invalid registry must detach external watches");
-        watcher.RefreshExternalRoots(); // The same damaged fingerprint emits no duplicate warning.
+        watcher.RefreshExternalRoots();
         Assert.True(recorder.Quiet(0.3));
         offset = recorder.Count;
         CheckVault.AtomicReplace(e.Registry, "{bad json");
@@ -541,7 +541,7 @@ public sealed class WatcherTests
         Assert.True(new HashSet<string>(batch.AssetsChanged, StringComparer.OrdinalIgnoreCase).SetEquals(
             ["assets/deleted.png", "ASSETS/New.png", "assets/old-directory", "assets/new-directory"]));
         Assert.True(batch.NeedsFullSync); // Deleted directory, as in Swift.
-        Assert.False(watcher.HasPollingTimerForChecks); // One overflow does not degrade a live watch.
+        Assert.False(watcher.HasPollingTimerForChecks);
         recorder.Drain();
         offset = recorder.Count;
         watcher.SimulateErrorForChecks();

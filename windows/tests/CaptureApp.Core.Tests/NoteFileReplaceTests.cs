@@ -266,7 +266,6 @@ public sealed class NoteFileReplaceTests
         var content = File.ReadAllText(kept);
         Assert.False(File.Exists(e.Registry));
         registry.Register("Desktop/B.md");
-        // The fresh registry is installed; the old copy is retired under a plain name, content intact.
         Assert.True(File.Exists(e.Registry));
         Assert.NotEqual(content, File.ReadAllText(e.Registry));
         Assert.Equal(content, File.ReadAllText(Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(e.Registry)!, TempNames.RecoveredPrefix + "*"))));
@@ -312,7 +311,6 @@ public sealed class NoteFileReplaceTests
             Assert.Contains("Note.md", error.Message, StringComparison.Ordinal);
         }
         finally { NoteFile.MoveHook.Value = null; }
-        // No fresh note was created and the hidden history is untouched.
         Assert.False(File.Exists(path));
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(recovered));
         e.Writer.Append(capture, path, "Note");
@@ -360,7 +358,6 @@ public sealed class NoteFileReplaceTests
             Assert.EndsWith(CaptureFormat.Block(capture, "", CheckVault.Zone), text, StringComparison.Ordinal);
         }
         finally { NoteFile.MoveHook.Value = null; }
-        // The recovered copies stay where they were.
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("restore.md")));
         Assert.Equal("# Note\n\nkept\n", File.ReadAllText(Kept("append.md")));
     }

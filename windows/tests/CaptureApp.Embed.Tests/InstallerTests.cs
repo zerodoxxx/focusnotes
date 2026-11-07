@@ -124,7 +124,6 @@ public sealed class InstallerTests
                 }
 
                 var slice = body.AsSpan((int)start).ToArray();
-                // Truncation: advertise the full length, send half, then drop the connection.
                 await Send(stream, status, headers, fault == Fault.TruncateHalf ? slice[..(slice.Length / 2)] : slice, slice.Length);
             }
             catch (Exception)

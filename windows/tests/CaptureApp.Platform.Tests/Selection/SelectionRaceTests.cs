@@ -140,7 +140,6 @@ public sealed class SelectionRaceTests
         }
         finally
         {
-            // Always release our synthetic modifier, including assertion/cancellation failures.
             try { if (release is not null) await release; }
             finally { await target.CommandAsync("release-modifiers"); }
         }

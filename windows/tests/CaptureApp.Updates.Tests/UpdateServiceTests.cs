@@ -130,14 +130,12 @@ public sealed class UpdateServiceTests
         Assert.Equal(["exit 1.1.0"], client.Applied);
         Assert.Equal("1.1.0", store.State.PendingApplyVersion);
 
-        // Relaunch still on 1.0.0: first failure, retried once at the next quit.
         var (second, client2, store2, _) = Create(existing: store);
         await second.StartAsync(CancellationToken.None);
         Assert.Equal(UpdateStatus.ReadyToRestart, second.Snapshot.Status);
         second.ApplyOnExit();
         Assert.Equal(["exit 1.1.0"], client2.Applied);
 
-        // Still failing: package discarded, Failed state, automatic attempts paused.
         var (third, client3, _, time3) = Create(existing: store2);
         await third.StartAsync(CancellationToken.None);
         Assert.Equal(["1.1.0"], client3.Discarded);
