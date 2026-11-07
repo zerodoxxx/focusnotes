@@ -242,7 +242,7 @@ public sealed class RapidOcrEngine : IOcrEngine, IDisposable
             confidence);
     }
 
-    /// <summary>Per-side inset that inverts the detector's DB unclip (distance = area * ratio / perimeter).</summary>
+    /// <summary>Per-side inset that inverts the detector's DB unclip.</summary>
     private static double UnclipInset(double width, double height)
     {
         var ratio = RapidOcrOptions.Default.UnClipRatio;

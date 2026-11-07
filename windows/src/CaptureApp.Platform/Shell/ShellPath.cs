@@ -2,7 +2,7 @@ namespace CaptureApp.Platform.Shell;
 
 internal static class ShellPath
 {
-    /// <summary>Resolves a path and wraps it in quotes; Windows file names cannot contain a quote.</summary>
+    /// <summary>Windows file names cannot contain a quote.</summary>
     internal static string Quote(string path, string paramName)
     {
         var fullPath = Path.GetFullPath(path);

@@ -9,7 +9,7 @@ internal sealed record SnapshotResult(ClipboardSnapshot? Snapshot, SnapshotFailu
     public void Dispose() => Snapshot?.Dispose();
 }
 
-/// <summary>Owns detached copies. No clipboard-owned handle escapes the open-clipboard scope.</summary>
+/// <summary>No clipboard-owned handle escapes the open-clipboard scope.</summary>
 internal sealed class ClipboardSnapshot(uint sequence, IReadOnlyList<ClipboardValue> values) : IDisposable
 {
     private int references = 1;

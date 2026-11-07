@@ -12,7 +12,7 @@ internal static class SafeWndProc
         }
         catch
         {
-            // Swallowed: must not unwind through the window procedure.
+            // Must not unwind through the window procedure.
         }
     }
 
@@ -25,7 +25,7 @@ internal static class SafeWndProc
         }
         catch
         {
-            // Swallowed: must not unwind through the window procedure.
+            // Must not unwind through the window procedure.
         }
     }
 }

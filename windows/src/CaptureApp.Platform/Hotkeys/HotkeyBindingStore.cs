@@ -80,7 +80,6 @@ public sealed class HotkeyBindingStore
         var pending = new List<HotkeyAction>();
         var adjustments = new List<HotkeyBindingAdjustment>();
         // Every explicit valid binding wins, even when it uses a newly introduced default.
-        // Reserve the remaining defaults before choosing fallback letters for conflicts.
         foreach (var action in HotkeyDefaults.All.Keys.Order())
         {
             if (bindings.ContainsKey(action)) { continue; }

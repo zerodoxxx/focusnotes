@@ -156,7 +156,7 @@ public sealed class TrayIcon : IDisposable
         ModifyIcon();
     }
 
-    /// <summary>Shows the current menu; false means Windows did not allow this window to take foreground ownership.</summary>
+    /// <summary>False means Windows did not allow this window to take foreground ownership.</summary>
     public bool TryShowMenu()
         => TryShowMenu(position: null);
 
