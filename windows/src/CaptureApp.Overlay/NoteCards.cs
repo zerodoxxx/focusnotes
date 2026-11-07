@@ -54,7 +54,7 @@ internal sealed record ActionItem(NoteActionId Id, string Title, string Symbol, 
     internal static IReadOnlyList<ActionItem> Standard(bool isPinned, bool hasText, bool appendsToExisting = false, bool canWriteOutsideSession = false) =>
     [
         new(NoteActionId.NewNote, "New Note", "plus", NoteShortcuts.Keys(NoteActionId.NewNote), true, 0),
-        ..(canWriteOutsideSession ? new ActionItem[] { new(NoteActionId.WriteOutsideSession, "Write outside session", "doc.text", NoteShortcuts.Keys(NoteActionId.WriteOutsideSession), true, 0) } : []),
+        ..(canWriteOutsideSession ? new ActionItem[] { new(NoteActionId.WriteOutsideSession, "Write outside session", Icons.Note, NoteShortcuts.Keys(NoteActionId.WriteOutsideSession), true, 0) } : []),
         new(NoteActionId.SaveAsNewNote, "Save as New Note", "doc.badge.plus", NoteShortcuts.Keys(NoteActionId.SaveAsNewNote), appendsToExisting, 0),
         new(NoteActionId.Pin, isPinned ? "Remove from Pinned" : "Add to Pinned", isPinned ? "pin.slash" : "pin", NoteShortcuts.Keys(NoteActionId.Pin), true, 0),
         new(NoteActionId.OpenAsNote, "Open as Note", "arrow.up.left.and.arrow.down.right", NoteShortcuts.Keys(NoteActionId.OpenAsNote), true, 1),

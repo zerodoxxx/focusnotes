@@ -154,7 +154,7 @@ internal sealed partial class AppController
                 .Select(s =>
                 {
                     var session = s.Kind == NoteKind.Session;
-                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone, suggestionPath?.Invoke(s)), session ? "record.circle" : "doc.text", suggestionValue?.Invoke(s));
+                    return new Suggestion(s.Title, Strings.SuggestionDetail(session, s.Modified, s.Path, zone, suggestionPath?.Invoke(s)), session ? Icons.Session : Icons.Note, suggestionValue?.Invoke(s));
                 }).ToArray();
         }, text => { InputClosed(); onSubmit?.Invoke(text); }, () => { InputClosed(); onCancel?.Invoke(); },
             Title: title, Secondary: secondary, OnAccept: onAccept));
@@ -228,7 +228,7 @@ internal sealed partial class AppController
     {
         if (Coordinator.IsTerminating) { return; }
         var zone = pipeline.TimeZone;
-        var choices = candidates.Select(c => new Suggestion(c.Name, Strings.CandidateSecondary(c.ModifiedAt, c.NotePath, zone), "record.circle", c.NotePath)).ToArray();
+        var choices = candidates.Select(c => new Suggestion(c.Name, Strings.CandidateSecondary(c.ModifiedAt, c.NotePath, zone), Icons.Session, c.NotePath)).ToArray();
         var panel = new InputPanelController();
         input = panel;
         panel.Present(new InputRequest(Strings.SelectSessionPlaceholder, prefix =>

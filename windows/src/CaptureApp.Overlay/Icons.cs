@@ -2,7 +2,9 @@ namespace CaptureApp.Overlay;
 
 public static class Icons
 {
-    public const string Default = "doc.text";
+    public const string Note = "doc.text";
+    public const string Session = "record.circle";
+    public const string Default = Note;
 
     // SF Symbol                              Segoe Fluent / MDL2 glyph
     // magnifyingglass                        E721 Search
@@ -28,7 +30,7 @@ public static class Icons
     {
         ["magnifyingglass"] = "\uE721", ["text.alignleft"] = "\uE8E4", [Default] = "\uE8A5",
         ["checkmark.circle.fill"] = "\uE73E", ["exclamationmark.triangle.fill"] = "\uE7BA",
-        ["record.circle"] = "\uE7C8", ["doc.on.doc.fill"] = "\uE8C8", ["xmark"] = "\uE711",
+        [Session] = "\uE7C8", ["doc.on.doc.fill"] = "\uE8C8", ["xmark"] = "\uE711",
         ["arrow.up.left.and.arrow.down.right"] = "\uE740", ["rectangle.on.rectangle.angled"] = "\uE8FD",
         ["square.on.square"] = "\uE8FD", ["plus"] = "\uE710", ["ellipsis"] = "\uE712",
         ["pin.fill"] = "\uE718", ["pin"] = "\uE718", ["doc.on.doc"] = "\uE8C8", ["pin.slash"] = "\uE77A", ["trash"] = "\uE74D", ["doc.badge.plus"] = "\uE8A5",
