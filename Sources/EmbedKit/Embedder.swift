@@ -16,6 +16,8 @@ public enum EmbeddingKind: Sendable {
 private enum GemmaModel {
     static let imagePrefix: [Int64] = [2, 255999]
     static let imageToken: Int64 = 258880
+    /// Media placeholder IDs that text input must not contain.
+    static let placeholderTokens: Set<Int64> = [imageToken, 258881, 258884]
     static let imageSuffix: [Int64] = [258882, 1]
     static let featureWidth = 512
 }
@@ -34,7 +36,7 @@ public final class Embedder: @unchecked Sendable {
     private var vision: ONNXSession?
     private var processor: ImagePreprocessor?
 
-    public init(modelsDirectory: URL, dimensions: Int = 256) throws {
+    public init(modelsDirectory: URL, dimensions: Int = EmbedProtocol.defaultDimensions) throws {
         guard EmbedProtocol.supportedDimensions.contains(dimensions) else {
             throw EmbeddingError.invalid("Dimensions must be 128, 256, 512 or 768")
         }
@@ -51,7 +53,7 @@ public final class Embedder: @unchecked Sendable {
             // document lengths and bounds peak memory independently of batch size.
             return try texts.map { input in
                 let ids = try tokenizer!.encode(kind.input(input), maxLength: 2048)
-                guard !ids.contains(258880), !ids.contains(258881), !ids.contains(258884) else {
+                guard !ids.contains(where: GemmaModel.placeholderTokens.contains) else {
                     throw EmbeddingError.invalid("Text contains a media placeholder; use embed(imagePNG:) for images")
                 }
                 return try shared(ids: ids, imageFeatures: nil)
@@ -65,10 +67,10 @@ public final class Embedder: @unchecked Sendable {
             if processor == nil { processor = try ImagePreprocessor(directory: directory) }
             let prepared = try processor!.prepare(imagePNG)
             if vision == nil {
-                vision = try ONNXSession(runtime: runtime!, model: directory.appendingPathComponent("onnx/vision_encoder_q4.onnx"))
+                vision = try ONNXSession(runtime: runtime!, model: directory.appendingPathComponent(ModelManifest.visionModelPath))
             }
-            let patches = processor!.budget * processor!.pooling * processor!.pooling
-            let pixels = try runtime!.tensor(prepared.pixels, shape: [1, Int64(patches), 768], type: ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+            let patches = processor!.patchCount
+            let pixels = try runtime!.tensor(prepared.pixels, shape: [1, Int64(patches), Int64(processor!.patchVectorWidth)], type: ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
             let positions = try runtime!.tensor(prepared.positions, shape: [1, Int64(patches), 2], type: ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64)
             let features = try vision!.run([("pixel_values", pixels), ("pixel_position_ids", positions)], output: "image_features")
             let ids: [Int64] = GemmaModel.imagePrefix + [Int64](repeating: GemmaModel.imageToken, count: prepared.tokens) + GemmaModel.imageSuffix
@@ -81,7 +83,7 @@ public final class Embedder: @unchecked Sendable {
 
     private func loadText() throws {
         if runtime == nil { runtime = try ONNXRuntime(directory: directory) }
-        if text == nil { text = try ONNXSession(runtime: runtime!, model: directory.appendingPathComponent("onnx/model_quantized.onnx")) }
+        if text == nil { text = try ONNXSession(runtime: runtime!, model: directory.appendingPathComponent(ModelManifest.textModelPath)) }
         if tokenizer == nil { tokenizer = try Tokenizer(tokenizerJSON: directory.appendingPathComponent("tokenizer.json")) }
     }
 

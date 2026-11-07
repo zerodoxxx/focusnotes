@@ -78,16 +78,18 @@ public struct ModelManifest: Sendable {
     public var totalDownloadBytes: Int64 { modelFiles.reduce(0) { $0 + $1.size } + runtime.size }
 
     private static let hfBase = "https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/daa72c51243991dfcaf9f9137d2c573d8f7790c0"
+    static let textModelPath = "onnx/model_quantized.onnx"
+    static let visionModelPath = "onnx/vision_encoder_q4.onnx"
 
     public static let current = ModelManifest(
         huggingFaceRepo: "onnx-community/embeddinggemma-2-ONNX",
         huggingFaceRevision: "daa72c51243991dfcaf9f9137d2c573d8f7790c0",
         modelFiles: [
-            ModelArtifact(path: "onnx/model_quantized.onnx", url: "\(hfBase)/onnx/model_quantized.onnx",
+            ModelArtifact(path: textModelPath, url: "\(hfBase)/onnx/model_quantized.onnx",
                           sha256: "d06edd601f851c633a2519304cbeb8dc6170d7ceb61b436625c17fb9b6e74953", size: 495165),
             ModelArtifact(path: "onnx/model_quantized.onnx_data", url: "\(hfBase)/onnx/model_quantized.onnx_data",
                           sha256: "278a7ff1248c3618e4bd11a607fc54f7bdc7778854230f3956d3f86bd9db4f3b", size: 313724928),
-            ModelArtifact(path: "onnx/vision_encoder_q4.onnx", url: "\(hfBase)/onnx/vision_encoder_q4.onnx",
+            ModelArtifact(path: visionModelPath, url: "\(hfBase)/onnx/vision_encoder_q4.onnx",
                           sha256: "7ea284226d4938f0ad921ab091f1d80a9ca699aa802984ef5cd5eec4f4761d96", size: 159400),
             ModelArtifact(path: "onnx/vision_encoder_q4.onnx_data", url: "\(hfBase)/onnx/vision_encoder_q4.onnx_data",
                           sha256: "0a9d6c927334f152a33dd90874f65d6ea5228999abe6a450d3f7813677fa704c", size: 108957696),
