@@ -107,6 +107,7 @@ func checkSessionRename() async throws {
     let directoryNames = try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path)
     try require(!directoryNames.contains(where: { $0.hasPrefix(".session-") }), "renames must remove temporary snapshots")
     try await checkSessionRenameEdgeCases(base: base, vault: vault, store: store, state: state)
+    try await checkSessionDestinationValidation(vault: vault, store: store)
     print("Session rename checks passed.")
 }
 
@@ -194,4 +195,22 @@ private func checkSessionRenameEdgeCases(base: URL, vault: Vault, store: Session
     try require(unrelated == "# Unrelated\neditor bytes\n" && pending.count == 1, "rollback must preserve editor bytes and the original backup")
     let backup = try checkRead(pending[0])
     try require(backup == original, "the retained backup must preserve every original byte")
+}
+
+// Persisted destinations must pass the same name rules as renameDestination.
+private func checkSessionDestinationValidation(vault: Vault, store: SessionStore) async throws {
+    let path = "Sessions/edge-destination/Old.md"
+    let source = vault.root.appendingPathComponent(path)
+    try checkWrite("# Old\nkeep\n", to: source)
+    let candidate = SessionCandidate(name: "Old", notePath: path, modifiedAt: .distantPast)
+    for (name, notePath) in [("x", "Sessions/edge-destination/x.txt"), ("~$x", "Sessions/edge-destination/~$x.md")] {
+        do {
+            _ = try await store.rename(candidate, to: Session(name: name, notePath: notePath, startedAt: .distantPast))
+            throw CheckFailure.failed("an invalid destination \(notePath) was installed")
+        } catch SessionStoreError.invalidRename {}
+        try require(!FileManager.default.fileExists(atPath: vault.root.appendingPathComponent(notePath).path),
+                    "a rejected destination must not be created")
+    }
+    let bytes = try checkRead(source)
+    try require(bytes == "# Old\nkeep\n", "a rejected destination must leave the original note untouched")
 }

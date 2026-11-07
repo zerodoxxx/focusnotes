@@ -205,8 +205,13 @@ public actor SessionStore {
                        beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
                        afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
         try requireSession(at: candidate.notePath)
-        guard (destination.notePath as NSString).deletingLastPathComponent
-                == (candidate.notePath as NSString).deletingLastPathComponent else { throw SessionStoreError.invalidRename }
+        let directory = (candidate.notePath as NSString).deletingLastPathComponent
+        guard (destination.notePath as NSString).deletingLastPathComponent == directory else { throw SessionStoreError.invalidRename }
+        // A persisted intent comes back from disk, so apply renameDestination's rules again.
+        let fileName = (destination.notePath as NSString).lastPathComponent
+        let stem = (fileName as NSString).deletingPathExtension
+        guard Vault.noteFileName(stem) == fileName else { throw SessionStoreError.invalidRename }
+        try validateRenameTarget(title: destination.name, stem: stem, directory: directory)
         do {
             try NoteFile.renameSession(in: vault.rootAnchor, relativePath: candidate.notePath,
                                        newName: (destination.notePath as NSString).lastPathComponent,
@@ -225,17 +230,22 @@ public actor SessionStore {
             throw SessionStoreError.invalidRename
         }
         let title = NoteTitle.cleanTitle(rawName)
-        guard !title.isEmpty, !NoteTitle.isDotComponent(title) else { throw SessionStoreError.invalidRename }
         let stem = NoteTitle.fileStem(for: title)
-        guard !NoteTitle.isOwnerFileName(stem) else { throw SessionStoreError.invalidRename }
-        try requireSession(at: candidate.notePath)
         let directory = (candidate.notePath as NSString).deletingLastPathComponent
-        do {
-            _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
-        } catch { throw SessionStoreError.invalidRename }
+        try validateRenameTarget(title: title, stem: stem, directory: directory)
+        try requireSession(at: candidate.notePath)
         var renamed = Session(name: title, notePath: directory + "/" + Vault.noteFileName(stem), startedAt: now())
         renamed.resumed = true
         return renamed
+    }
+
+    /// Name rules shared by both rename paths; the caller checks the `.md` file name.
+    private func validateRenameTarget(title: String, stem: String, directory: String) throws {
+        guard !NoteTitle.containsSeparatorOrNull(title), !title.isEmpty, !NoteTitle.isDotComponent(title),
+              !NoteTitle.isOwnerFileName(stem) else { throw SessionStoreError.invalidRename }
+        do {
+            _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
+        } catch { throw SessionStoreError.invalidRename }
     }
 
     /// Completes persisted identity migration after a committed file rename.
