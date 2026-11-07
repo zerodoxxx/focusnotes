@@ -97,7 +97,7 @@ final class CaptureCommitQueue {
         var previousNotice: String?
         if needsRetryChoice, let held = pending {
             let staged = stagedJob.flatMap { $0.id == held.id ? $0 : nil }
-            let destination = try? await staged?.preparation.value.prepared.destination
+            let destination = await stagedDestination(staged?.preparation)
             if needsRetryChoice, pending?.id == held.id, let commit = commitPending(force: true) {
                 // Finish A, including its failure handling, before B is staged.
                 let succeeded = (try? await commit.value) != nil
@@ -153,7 +153,7 @@ final class CaptureCommitQueue {
             if let recovered = try? await recovery?.value { target = .resolved(recovered.prepared.destination) }
             else if let pick { target = .pick(pick) }
             else if let noteTitle { target = .title(noteTitle) }
-            else if let staged = try? await staged?.preparation.value { target = .resolved(staged.prepared.destination) }
+            else if let destination = await stagedDestination(staged?.preparation) { target = .resolved(destination) }
             else { target = .automatic }
             return try await pipeline.prepare(capture, intent: CaptureIntent(target, outsideSession: outsideSession))
         }
@@ -179,7 +179,7 @@ final class CaptureCommitQueue {
                         self?.needsRetryChoice = true
                         self?.host?.captureHeldForChoice(capture, error: error)
                     } else {
-                        let fallback = try? await staged.preparation.value.prepared.destination
+                        let fallback = await stagedDestination(staged.preparation)
                         self?.preparedJobs[capture.id] = staged.preparation
                         self?.host?.previousCaptureWillRetry(destination: fallback)
                     }
@@ -376,4 +376,9 @@ final class CaptureCommitQueue {
     private func releaseCommitTail(_ generation: Int) {
         if commitGeneration == generation { commitTail = nil }
     }
+}
+
+/// Destination a staged capture resolved to, if its preparation succeeded.
+private func stagedDestination(_ preparation: Task<CaptureJob, Error>?) async -> Destination? {
+    try? await preparation?.value.prepared.destination
 }

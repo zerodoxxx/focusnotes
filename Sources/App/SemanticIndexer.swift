@@ -14,8 +14,13 @@ actor SemanticIndexer {
     private static let defaultRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60), .seconds(300), .seconds(900)]
     private static let embeddingModelFiles = ModelManifest.current.embeddingModelFiles
     private static let ocrKeySuffix = "#ocr"
+    private static let embedBatchSize = 16
     // Standard RRF k: keeps one list's top rank from dominating the fused score.
     private static let reciprocalRankOffset = 60
+
+    private nonisolated static func needsFlush(_ batch: [(key: String, body: String, title: String, fingerprint: String)], before title: String) -> Bool {
+        batch.first?.title != title || batch.count == embedBatchSize
+    }
 
     nonisolated let modelsDirectory: URL
     private let index: SearchIndex
@@ -210,14 +215,14 @@ actor SemanticIndexer {
                 guard Self.imagesAllowed else { continue }
                 if !CaptureFormat.isBlank(block.ocrText),
                    fingerprints[Self.ocrKey(for: block.key)] != EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle) {
-                    if batch.first?.title != block.noteTitle || batch.count == 16 {
+                    if Self.needsFlush(batch, before: block.noteTitle) {
                         try await embedBatch(batch, client: client, store: store); batch.removeAll()
                     }
                     batch.append((Self.ocrKey(for: block.key), block.ocrText, block.noteTitle,
                                   EmbeddingFingerprint.document(block.ocrText, title: block.noteTitle)))
                 }
             } else if fingerprints[block.key] != EmbeddingFingerprint.document(block.body, title: block.noteTitle) {
-                if batch.first?.title != block.noteTitle || batch.count == 16 {
+                if Self.needsFlush(batch, before: block.noteTitle) {
                     try await embedBatch(batch, client: client, store: store); batch.removeAll()
                 }
                 batch.append((block.key, block.body, block.noteTitle,

@@ -24,11 +24,6 @@ final class VaultMonitor: @unchecked Sendable {
         }
     }
 
-    /// Compatibility for small watcher checks that only need the two work flags.
-    convenience init(vault: Vault, operation: @escaping @Sendable (Bool, Bool) async -> Void) {
-        self.init(vault: vault) { request in await operation(request.notes, request.assets) }
-    }
-
     var isRunning: Bool { lock.withLock { !stopped && watcher.isRunning } }
 
     func start() {
