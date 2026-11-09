@@ -300,6 +300,33 @@ public sealed class IndexTests
     }
 
     [Fact]
+    public void RecheckSetMatchesAssetPathsCaseInsensitively()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var path = "assets/sub/x.png";
+        var url = e.Vault.UrlForRelativePath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(url)!);
+        var original = new byte[] { 1, 2, 3, 4 };
+        var replacement = new byte[] { 4, 3, 2, 1 };
+        var modified = new DateTime(2026, 10, 13, 10, 0, 0, DateTimeKind.Utc);
+        File.WriteAllBytes(url, original);
+        File.SetLastWriteTimeUtc(url, modified);
+        e.Writer.Append(new(Guid.NewGuid(), CheckVault.Now, CaptureContent.Image(path), new()), e.Vault.InboxUrl, Vault.InboxTitle);
+        using var index = new SearchIndex(e.Vault, Path.Combine(e.Base, "index.sqlite"), CheckVault.Zone);
+        _ = index.Sync();
+        Assert.True(index.SetImageText(path, "originalocr", SearchIndex.ImageFingerprint(original)));
+        File.WriteAllBytes(url, replacement);
+        File.SetLastWriteTimeUtc(url, modified);
+        var recheck = new HashSet<string>(["ASSETS/Sub/X.png"]);
+        Assert.Equal([path], index.AssetsMissingText(recheck));
+        Assert.True(index.SetImageText(path, "replacementocr", SearchIndex.ImageFingerprint(replacement)));
+        Assert.Single(index.Search("replacementocr"));
+        Assert.Empty(index.Search("originalocr"));
+        Assert.Empty(index.AssetsMissingText(recheck));
+    }
+
+    [Fact]
     public void SyncRemovesUnreadableNotesWhenRunningAsAnUnprivilegedUnixUser()
     {
         if (OperatingSystem.IsWindows() || GetUid() == 0)

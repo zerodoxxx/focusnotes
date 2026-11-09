@@ -168,6 +168,8 @@ public actor SearchIndex {
             LEFT JOIN image_text i ON i.asset_path = b.asset_path
             WHERE b.kind = 'image' AND b.asset_path IS NOT NULL ORDER BY b.asset_path
             """)
+        // Watcher spellings can differ in case from the spelling used in note links.
+        let recheckKeys = recheckingAssetPaths.map { Set($0.map { $0.lowercased() }) }
         var missing: [String] = []
         while try rows.step() {
             guard let path = rows.text(0) else { continue }
@@ -175,7 +177,7 @@ public actor SearchIndex {
                 missing.append(path)
                 continue
             }
-            let shouldRecheckDigest = recheckingAssetPaths.map { $0.contains(path) } ?? true
+            let shouldRecheckDigest = recheckKeys.map { $0.contains(path.lowercased()) } ?? true
             let current = try? vault.fileSnapshot(relativePath: path, includingContents: shouldRecheckDigest)
             let currentFingerprint = current.map(Self.fingerprint)
             if currentFingerprint == nil || currentFingerprint != Fingerprint(mtime: rows.double(1), size: rows.int(2)) {

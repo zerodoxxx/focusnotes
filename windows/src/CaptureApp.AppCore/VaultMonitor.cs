@@ -19,7 +19,7 @@ public sealed class VaultMonitor : IDisposable
     private bool assetsDirty;
     private bool fullAssetValidation;
     private bool stopped;
-    private readonly HashSet<string> changedAssetPaths = new(StringComparer.Ordinal);
+    private readonly HashSet<string> changedAssetPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public event Action<VaultChange>? ChangeReceived;
     public event Action<VaultRefreshRequest>? RefreshRequested;
@@ -136,7 +136,7 @@ public sealed class VaultMonitor : IDisposable
                 var notes = notesDirty;
                 var assets = assetsDirty;
                 var full = fullAssetValidation;
-                var paths = assets && !full ? changedAssetPaths.ToFrozenSet(StringComparer.Ordinal) : null;
+                var paths = assets && !full ? changedAssetPaths.ToFrozenSet(StringComparer.OrdinalIgnoreCase) : null;
                 notesDirty = false;
                 assetsDirty = false;
                 fullAssetValidation = false;
@@ -173,7 +173,7 @@ public sealed class VaultMonitor : IDisposable
             && components.All(component => component.Length != 0 && component is not ("." or ".."));
     }
 
-    // Index keys and lookups are case-sensitive, so watcher casing must not leak into the recheck set.
+    // Recheck membership ignores case over the whole path, so only the assets root spelling is normalized.
     internal static string CanonicalAssetPath(string path)
     {
         if (!Vault.IsAssetPath(path)) { return path; }

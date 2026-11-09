@@ -222,6 +222,7 @@ func checkSearchIndex() async throws {
     }
     try await checkIndexRankingAndSharedAssets()
     try await checkOCRFingerprintRace()
+    try await checkOCRFingerprintRaceWithMixedCaseRecheck()
     try await checkIndexRejectsLinkedManagedReads()
     try await checkIndexSkipsUnreadableNote()
     try await checkIndexSyncSurvivesChangingNote()
@@ -547,6 +548,45 @@ private func checkOCRFingerprintRace() async throws {
     let currentMissing = try await checkIndexOperation("OCR race current full scan \(path)") { try await index.assetsMissingText() }
     try require(replacementStored && currentHits.count == 1 && currentChangedPathScan.isEmpty && currentMissing.isEmpty,
                 "next OCR pass should store only image B's text")
+}
+
+private func checkOCRFingerprintRaceWithMixedCaseRecheck() async throws {
+    let base = try checkMakeDirectory("ocr-race-mixed-case")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    try vault.prepare()
+    let calendar = checkCalendar()
+    let path = "assets/sub/x.png"
+    let url = vault.root.appendingPathComponent(path)
+    let original = Data([1, 2, 3, 4])
+    let replacement = Data([4, 3, 2, 1])
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try original.write(to: url)
+    let modified = checkDate(2026, 10, 13, 10, 0)
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let capture = Capture(id: UUID(), createdAt: checkDate(2026, 10, 13, 10, 0), content: .image(assetPath: path), source: CaptureSource())
+    try await writer.append(capture, to: vault.inboxURL, title: Vault.inboxTitle)
+    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("index.sqlite"), calendar: calendar)
+    _ = try await checkIndexOperation("mixed-case OCR sync") { try await index.sync() }
+    let originalStored = try await checkIndexOperation("mixed-case OCR initial store \(path)") {
+        try await index.setImageText(assetPath: path, text: "originalocr", fingerprint: SearchIndex.imageFingerprint(original))
+    }
+    try replacement.write(to: url, options: .atomic)
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    let changedPathScan = try await checkIndexOperation("mixed-case OCR changed-path scan \(path)") {
+        try await index.assetsMissingText(recheckingAssetPaths: ["ASSETS/Sub/X.png"])
+    }
+    try require(originalStored && changedPathScan == [path],
+                "Mixed-case recheck spelling must re-digest a same-metadata replacement (initial store: \(originalStored), changed paths: \(changedPathScan))")
+    let replacementStored = try await checkIndexOperation("mixed-case OCR replacement store \(path)") {
+        try await index.setImageText(assetPath: path, text: "replacementocr", fingerprint: SearchIndex.imageFingerprint(replacement))
+    }
+    let currentChangedPathScan = try await checkIndexOperation("mixed-case OCR current changed-path scan \(path)") {
+        try await index.assetsMissingText(recheckingAssetPaths: ["ASSETS/Sub/X.png"])
+    }
+    try require(replacementStored && currentChangedPathScan.isEmpty,
+                "Mixed-case recheck must accept the replacement once its OCR is stored (stored: \(replacementStored), changed paths: \(currentChangedPathScan))")
 }
 
 private func checkIndexRejectsLinkedManagedReads() async throws {

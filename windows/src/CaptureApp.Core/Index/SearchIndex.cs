@@ -214,6 +214,8 @@ public sealed class SearchIndex : IDisposable
 
     public IReadOnlyList<string> AssetsMissingText(IReadOnlySet<string>? recheckingAssetPaths = null)
     {
+        // Callers spell asset paths from the watcher, so membership ignores case regardless of their comparer.
+        var recheckSet = recheckingAssetPaths is null ? null : new HashSet<string>(recheckingAssetPaths, StringComparer.OrdinalIgnoreCase);
         using var rows = database.Prepare("""
             SELECT DISTINCT b.asset_path, i.mtime, i.size, i.fingerprint FROM blocks b
             LEFT JOIN image_text i ON i.asset_path = b.asset_path
@@ -233,7 +235,7 @@ public sealed class SearchIndex : IDisposable
                 continue;
             }
 
-            var shouldRecheckDigest = recheckingAssetPaths?.Contains(path) ?? true;
+            var shouldRecheckDigest = recheckSet?.Contains(path) ?? true;
             VaultFileSnapshot? current;
             try
             {
