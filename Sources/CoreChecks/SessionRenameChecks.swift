@@ -108,6 +108,7 @@ func checkSessionRename() async throws {
     try require(!directoryNames.contains(where: { $0.hasPrefix(".session-") }), "renames must remove temporary snapshots")
     try await checkSessionRenameEdgeCases(base: base, vault: vault, store: store, state: state)
     try await checkSessionDestinationValidation(vault: vault, store: store)
+    try await checkMissingSessionRenamePrecedence(store: store)
     print("Session rename checks passed.")
 }
 
@@ -213,4 +214,32 @@ private func checkSessionDestinationValidation(vault: Vault, store: SessionStore
     }
     let bytes = try checkRead(source)
     try require(bytes == "# Old\nkeep\n", "a rejected destination must leave the original note untouched")
+}
+
+// Name rules are judged before the session lookup; path-length rules only after it.
+private func checkMissingSessionRenamePrecedence(store: SessionStore) async throws {
+    let path = "Sessions/missing-precedence/Gone.md"
+    let candidate = SessionCandidate(name: "Gone", notePath: path, modifiedAt: .distantPast)
+    for invalid in ["", "  ", "~$draft", "archive/Move"] {
+        do {
+            _ = try await store.rename(candidate, to: invalid)
+            throw CheckFailure.failed("a missing session was renamed to \(invalid.debugDescription)")
+        } catch SessionStoreError.invalidRename {}
+    }
+    do {
+        _ = try await store.rename(candidate, to: "Fine name")
+        throw CheckFailure.failed("a missing session was renamed to a valid name")
+    } catch SessionStoreError.candidateNoLongerExists(let missing) {
+        try require(missing == path, "a missing session must be rejected at its exact path")
+    }
+    // Each directory segment is within the stem limits, but the joined path exceeds NotePathName's byte cap.
+    let segment = String(repeating: "a", count: 100)
+    let longPath = "Sessions/" + Array(repeating: segment, count: 9).joined(separator: "/") + "/Gone.md"
+    let longCandidate = SessionCandidate(name: "Gone", notePath: longPath, modifiedAt: .distantPast)
+    do {
+        _ = try await store.rename(longCandidate, to: "Fine name")
+        throw CheckFailure.failed("a missing session at an over-long path was renamed")
+    } catch SessionStoreError.candidateNoLongerExists(let missing) {
+        try require(missing == longPath, "a missing session must be rejected before its path length is judged")
+    }
 }

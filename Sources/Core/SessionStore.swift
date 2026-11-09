@@ -197,7 +197,8 @@ public actor SessionStore {
     public func rename(_ candidate: SessionCandidate, to rawName: String,
                        beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
                        afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
-        try rename(candidate, to: try renameDestination(candidate, to: rawName), beforeInstall: beforeInstall, afterSwap: afterSwap)
+        let destination = try renameDestination(candidate, to: rawName)
+        return try install(candidate, destination, beforeInstall: beforeInstall, afterSwap: afterSwap)
     }
 
     /// Installs a destination from renameDestination, so callers that persist it first install the same session.
@@ -205,6 +206,13 @@ public actor SessionStore {
                        beforeInstall: @Sendable (SessionRenameStage) throws -> Void = { _ in },
                        afterSwap: (@Sendable () throws -> Void)? = nil) throws -> Session {
         try requireSession(at: candidate.notePath)
+        return try install(candidate, destination, beforeInstall: beforeInstall, afterSwap: afterSwap)
+    }
+
+    // Callers resolve the session first; repeating the lookup here would scan the sessions folder twice.
+    private func install(_ candidate: SessionCandidate, _ destination: Session,
+                         beforeInstall: @Sendable (SessionRenameStage) throws -> Void,
+                         afterSwap: (@Sendable () throws -> Void)?) throws -> Session {
         let directory = (candidate.notePath as NSString).deletingLastPathComponent
         guard (destination.notePath as NSString).deletingLastPathComponent == directory else { throw SessionStoreError.invalidRename }
         // A persisted intent comes back from disk, so apply renameDestination's rules again.
@@ -232,8 +240,9 @@ public actor SessionStore {
         let title = NoteTitle.cleanTitle(rawName)
         let stem = NoteTitle.fileStem(for: title)
         let directory = (candidate.notePath as NSString).deletingLastPathComponent
-        try validateRenameTarget(title: title, stem: stem, directory: directory)
+        try validateRenameName(title: title, stem: stem)
         try requireSession(at: candidate.notePath)
+        try validateRenamePath(stem: stem, directory: directory)
         var renamed = Session(name: title, notePath: directory + "/" + Vault.noteFileName(stem), startedAt: now())
         renamed.resumed = true
         return renamed
@@ -241,8 +250,16 @@ public actor SessionStore {
 
     /// Name rules shared by both rename paths; the caller checks the `.md` file name.
     private func validateRenameTarget(title: String, stem: String, directory: String) throws {
+        try validateRenameName(title: title, stem: stem)
+        try validateRenamePath(stem: stem, directory: directory)
+    }
+
+    private func validateRenameName(title: String, stem: String) throws {
         guard !NoteTitle.containsSeparatorOrNull(title), !title.isEmpty, !NoteTitle.isDotComponent(title),
               !NoteTitle.isOwnerFileName(stem) else { throw SessionStoreError.invalidRename }
+    }
+
+    private func validateRenamePath(stem: String, directory: String) throws {
         do {
             _ = try NotePathName.validated(scope: .vault, components: directory.split(separator: "/").map(String.init) + [stem])
         } catch { throw SessionStoreError.invalidRename }
