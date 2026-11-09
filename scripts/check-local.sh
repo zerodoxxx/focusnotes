@@ -7,9 +7,14 @@ host="$(uname -s)"
 changed=''
 scratch=''
 cleanup() {
-  if [[ -n "$changed" ]]; then rm -f -- "$changed"; fi
+  # Read the exit status before any command here overwrites $?.
+  local s=$?
+  # A second interrupt must not abort cleanup and leave scratch output behind.
+  trap '' INT TERM
+  if [[ -n "$changed" ]]; then rm -f -- "$changed" || echo "warning: could not remove $changed" >&2; fi
   # SwiftPM output is disposable; the worktree must not keep a .build directory.
-  if [[ -n "$scratch" ]]; then rm -rf -- "$scratch"; fi
+  if [[ -n "$scratch" ]]; then rm -rf -- "$scratch" || echo "warning: could not remove $scratch" >&2; fi
+  return $s
 }
 trap cleanup EXIT
 trap 'exit 130' INT

@@ -34,6 +34,7 @@ for command in swift dotnet; do
   cat > "$fake_bin/$command" <<'SH'
 #!/usr/bin/env bash
 printf '%s %s\n' "${0##*/}" "$*" >> "$HOOK_TEST_LOG"
+printf 'GIT_DIR=%s\n' "${GIT_DIR-unset}" >> "$HOOK_TEST_LOG"
 if [[ "${HOOK_TEST_FAIL_BUILD:-}" == "1" && "$1" == "build" ]]; then exit 7; fi
 if [[ -n "${HOOK_TEST_FAIL_SWIFT_ARG:-}" && "$*" == *"$HOOK_TEST_FAIL_SWIFT_ARG"* ]]; then exit 7; fi
 if [[ "${HOOK_TEST_DIRTY_BUILD:-}" == "1" && "$1" == "build" ]]; then
@@ -85,7 +86,7 @@ expect_line() {
 }
 scratch_path() {
   # mktemp names are random; the single build line defines this run's scratch path.
-  sed -n 's|^swift build --scratch-path \([^ ]*/focusnotes-build\.[^ ]*\)$|\1|p' "$HOOK_TEST_LOG"
+  sed -n 's|^swift build --scratch-path \(.*\)$|\1|p' "$HOOK_TEST_LOG"
 }
 expect_swift_line() {
   # SCRATCH in the expected command stands for this run's scratch path.
@@ -136,6 +137,43 @@ expect_swift_line 'swift run --scratch-path SCRATCH --skip-build OverlayGallery 
 expect_swift_line 'swift run --scratch-path SCRATCH --skip-build CoreChecks --performance-only'
 expect_one_scratch
 expect_scratch_removed
+
+# TMPDIR may contain spaces; the scratch path must survive the log round trip.
+spaced_tmp="$temp_root/with space"
+mkdir -p "$spaced_tmp"
+: > "$HOOK_TEST_LOG"
+(export TMPDIR="$spaced_tmp"; push_update "$tip" "$base")
+expect_swift_line 'swift build --scratch-path SCRATCH'
+[[ "$(scratch_path)" == "$spaced_tmp"/focusnotes-build.* ]]
+expect_one_scratch
+expect_scratch_removed
+
+# Hook-exported repository variables must not reach SwiftPM. The fixture's own
+# repository is used so that Git commands before the scrub still succeed.
+: > "$HOOK_TEST_LOG"
+(export GIT_DIR="$fixture/.git"; push_update "$tip" "$base")
+expect_swift_line 'swift build --scratch-path SCRATCH'
+expect_line 'GIT_DIR=unset'
+
+# A scratch cleanup that fails after a passing build warns but keeps the run passing.
+cleanup_tmp="$temp_root/cleanup"
+rm_fail_bin="$temp_root/rm-fail-bin"
+real_rm="$(command -v rm)"
+mkdir -p "$cleanup_tmp" "$rm_fail_bin"
+cat > "$rm_fail_bin/rm" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *focusnotes-build.* ]]; then echo 'rm: simulated scratch failure' >&2; exit 1; fi
+exec "$HOOK_TEST_REAL_RM" "$@"
+SH
+chmod +x "$rm_fail_bin/rm"
+: > "$HOOK_TEST_LOG"
+if ! (export TMPDIR="$cleanup_tmp" PATH="$rm_fail_bin:$PATH" HOOK_TEST_REAL_RM="$real_rm"; push_update "$tip" "$base"); then
+  cat "$temp_root/output" >&2
+  echo 'A failed scratch cleanup failed a passing run.' >&2
+  exit 1
+fi
+grep -Fq 'warning: could not remove' "$temp_root/output"
+[[ -d "$(scratch_path)" ]]
 
 # Keyboard-focus checks are manual: pre-push and --all never run them, and
 # --live-focus runs them after every other Swift check.
