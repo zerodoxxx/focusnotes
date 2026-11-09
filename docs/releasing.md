@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-11-09 (previous commit: `25e1066`)
+Last Updated: 2026-11-09 (previous commit: `2cd0d36`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -107,6 +107,8 @@ merge commit. Ordinary code merges do not start a release. The workflow:
 
 - runs `scripts/release.sh` in tag mode: all checks, the build, signing, the
   bundle checks and the DMG verification described in `release.sh` below;
+- then runs `swift run OverlayGallery --check-live-focus`, which takes real keyboard
+  focus, before it pushes the tag or creates the draft release;
 - attests the DMG, pushes tag `v<version>`, and creates a **draft** release with the DMG,
   `SHA256SUMS.txt`, `appcast.xml` and generated notes. When the Windows release gate is enabled, it also includes
   the x64 and arm64 installers, portable packages, and signed update indexes.
@@ -149,6 +151,8 @@ The release script:
   - `SHA256SUMS.txt`
   - `appcast.xml` (the Sparkle feed, EdDSA-signed);
 - verifies the mounted DMG (signed app, `Applications` link).
+
+The live-focus checks are not part of `release.sh`, which runs only the focus-free `OverlayGallery --check`; run them by hand with `bash scripts/check-local.sh --live-focus`, or run `swift run OverlayGallery --check-live-focus` as the last thing you do, since it takes real keyboard focus.
 
 If any step fails, fix the cause and run again. Do not hand-edit `dist/`.
 
@@ -322,7 +326,8 @@ uses `ubuntu-latest` to prepare a version branch and PR, then builds on
 - `.github/workflows/release.yml` runs only when manually started with a
   version input to prepare a version commit and PR. After that PR is merged,
   the workflow imports the signing identity from secrets, builds the merge
-  commit with `scripts/release.sh` in tag mode, attests the DMG, and creates the
+  commit with `scripts/release.sh` in tag mode,
+  runs `OverlayGallery --check-live-focus`, attests the DMG, and creates the
   draft release. A failed run removes only its own tag when no release exists
   for it; existing releases and tags are left untouched.
 

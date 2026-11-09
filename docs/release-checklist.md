@@ -1,6 +1,6 @@
 # Release review checklist
 
-Last Updated: 2026-10-29 (previous commit: `f041974`)
+Last Updated: 2026-11-09 (previous commit: `2cd0d36`)
 
 Audit date: 2026-10-15. This records current review evidence and the checks that
 still need a final result. Do not describe the repository as fully verified
@@ -45,6 +45,7 @@ Latest post-hardening results (last verified before the 0.1.0 release work; re-r
 | `swift run CoreChecks` | Passed all groups, including vault safety, OCR, ranking, shared-asset, performance, and watcher checks. For 2,000 notes × 10 captures: cold sync 1.603 s, warm sync 182.2 ms, search median 11.93 ms. |
 | `swift run CaptureChecks` | Passed all groups without Accessibility or Screen Recording permissions. |
 | `swift run OverlayGallery --check` | Passed all groups. |
+| `swift run OverlayGallery --check-live-focus` | Not run yet for this release; release validation runs it last because it takes real keyboard focus. |
 | `swift run EmbedChecks --models <installed-models-directory>` | Passed 81 checks, 0 failures, 0 skips, using already-installed models; no downloads were run. |
 | `swift run App --self-test <fresh-temp-directory>` | Passed, exit 0. With fresh temporary vault/state, verified 7 captures, OCR search, external watcher edits, shutdown/recovery, drafts, and pins. The semantic portion intentionally skipped because the isolated state had no models; `EmbedChecks` separately passed all 81 model-backed checks. No real vault or macOS permissions were touched. |
 | `scripts/check-name.sh` (since removed) | Passed after fixture naming changes. |

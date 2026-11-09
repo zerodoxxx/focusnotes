@@ -1,5 +1,7 @@
 # Menu bar demo
 
+Last Updated: 2026-11-09 (previous commit: `2cd0d36`)
+
 Run `scripts/run-app.sh` from the project root. The app stays in the menu bar with
 no Dock icon. Click its menu-bar icon → **Permissions → Accessibility** and grant the
 app access in System Settings. Press **⌥⇧S** once to request Screen Recording,
