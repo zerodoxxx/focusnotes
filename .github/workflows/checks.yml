@@ -128,8 +128,7 @@ jobs:
           swift run --skip-build CoreChecks --skip-performance
           bash scripts/test-app-path-safety.sh
 
-      # Known flaky: `swift run OverlayGallery --check` (run inside release.sh --adhoc) can fail
-      # intermittently. If this step fails there, re-run the job; do not special-case it here.
+      # Gallery behaviour checks here are focus-free; the focus-requiring ones run in the last step.
       - name: Checks and ad-hoc DMG
         if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && needs.select.outputs.full == 'true' }}
         env:
@@ -144,6 +143,11 @@ jobs:
           name: focusnotes-adhoc-dmg
           path: dist/
           retention-days: 3
+
+      # Known flaky: takes real keyboard focus, so it runs last. If it fails, re-run the job; do not special-case it here.
+      - name: Focus-requiring gallery checks
+        if: ${{ needs.select.result == 'success' && needs.select.outputs.macos == 'true' && needs.select.outputs.full == 'true' }}
+        run: swift run OverlayGallery --check-live-focus
 
       - name: Fail required build check if the workflow was cancelled
         if: always() && cancelled()
