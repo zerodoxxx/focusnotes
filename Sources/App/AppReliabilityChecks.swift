@@ -16,6 +16,7 @@ func checkAppReliability() async throws {
     try await checkNotesFolder()
     try await checkChangesDuringInitialScan()
     try checkMixedCaseAssetChangesSkipFullValidation()
+    try checkMixedCaseAssetChangesRecheckCanonicalPaths()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
     try await checkSessionRenameSingleDestination()
@@ -1025,6 +1026,14 @@ private func checkMixedCaseAssetChangesSkipFullValidation() throws {
     guard VaultMonitor.needsFullAssetValidation(for: VaultChange(notesChanged: [], assetsChanged: assets.union(["notes/a.md"]),
                                                                  needsFullSync: false)) else {
         throw SelfTestFailure("A non-asset path was treated as a known asset change")
+    }
+}
+
+/// The asset index keys are canonical lowercase, so recheck requests must not carry the on-disk spelling.
+private func checkMixedCaseAssetChangesRecheckCanonicalPaths() throws {
+    let change = VaultChange(notesChanged: [], assetsChanged: ["Assets/x.png", "ASSETS/sub/Y.jpg", "assets/z.png"], needsFullSync: false)
+    guard VaultMonitor.recheckAssetPaths(for: change) == ["assets/x.png", "assets/sub/Y.jpg", "assets/z.png"] else {
+        throw SelfTestFailure("Mixed-case asset changes were not rechecked under their canonical lowercase paths")
     }
 }
 

@@ -67,6 +67,14 @@ final class VaultMonitor: @unchecked Sendable {
         let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Vault.isAssetPath)
         return change.needsFullSync || (!change.assetsChanged.isEmpty && !pathsAreKnownAssets)
     }
+
+    /// Canonicalizes the asset directory spelling so rechecks match the lowercase index keys.
+    static func recheckAssetPaths(for change: VaultChange) -> Set<String> {
+        Set(change.assetsChanged.map { path -> String in
+            guard Vault.isAssetPath(path), let separator = path.firstIndex(of: "/") else { return path }
+            return Vault.assetsDirectoryName + String(path[separator...])
+        })
+    }
 }
 
 private actor VaultRefresh {
@@ -104,7 +112,7 @@ private actor VaultRefresh {
         enqueue(notes: notes,
                 assets: change.needsFullSync || notes || !change.assetsChanged.isEmpty,
                 fullAssetValidation: VaultMonitor.needsFullAssetValidation(for: change),
-                changedAssetPaths: change.assetsChanged)
+                changedAssetPaths: VaultMonitor.recheckAssetPaths(for: change))
     }
 
     func run(notes: Bool, assets: Bool, fullAssetValidation: Bool = false) async {
