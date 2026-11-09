@@ -195,7 +195,7 @@ also checks bullet glyphs/indices, hidden syntax and caret-line invalidation,
 checkbox toggle/undo, and MarkdownStyler ranges and measures full
 20k-character restyles; larger notes restyle edited paragraphs. Add `--live editor`
 for an interactive preview, or `--check` for keyboard, focus, IME, and draft-error
-behavior assertions. Atomic editor draft text and pin intent live together in `draft-note.json` alongside the
+behavior assertions without taking focus; `--check-live-focus` covers real-focus behavior. Atomic editor draft text and pin intent live together in `draft-note.json` alongside the
 capture journal's `unsaved/` directory. Existing `draft-note.md` files migrate on the next draft write;
 saving/discarding removes the whole draft record. There are no recurring draft timers.
 

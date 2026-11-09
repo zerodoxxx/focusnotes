@@ -1,6 +1,6 @@
 # Contributing
 
-Last Updated: 2026-10-29 (previous commit: `f041974`)
+Last Updated: 2026-11-09 (previous commit: `25e1066`)
 
 Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
@@ -26,7 +26,8 @@ Run the checks that cover your change from the repository root:
 ```sh
 swift build
 swift run CoreChecks
-swift run OverlayGallery --check
+swift run OverlayGallery --check               # focus-free; safe while you work
+swift run OverlayGallery --check-live-focus    # takes real keyboard focus; run last
 bash scripts/test-app-path-safety.sh
 ```
 
@@ -43,10 +44,10 @@ bash scripts/install-hooks.sh
 The installer uses the versioned `.githooks` directory and preserves existing custom hooks/settings, explaining how to integrate manually if needed.
 
 - **Pre-commit:** checks staged changes for whitespace errors. It does not build or run tests.
-- **Pre-push:** checks the complete range of branch commits being pushed. Documentation-only changes, tag/deletion pushes, and changes limited to the other platform skip native checks. Relevant source changes run the hook and CI-selector regression checks, then the host's build, functional tests, and local performance checks once. The tested tip must be the checked-out commit, with no tracked local changes or untracked build inputs; unrelated scratch files are allowed.
-- **Manual checks:** `bash scripts/check-local.sh` runs the host's complete local checks, including speed gates; `bash scripts/check-performance.sh` runs only the speed gates. Hooks do not download semantic models. Install them explicitly when testing semantic-search changes; missing optional model or desktop capabilities are reported as skips.
+- **Pre-push:** checks the complete range of branch commits being pushed. Documentation-only changes, tag/deletion pushes, and changes limited to the other platform skip native checks. Relevant source changes run the hook and CI-selector regression checks, then the host's build, functional tests, and local performance checks once. On macOS, pre-push runs only focus-free checks in a temporary build directory that is removed on exit, failure or Ctrl-C. The tested tip must be the checked-out commit, with no tracked local changes or untracked build inputs; unrelated scratch files are allowed.
+- **Manual checks:** `bash scripts/check-local.sh` runs the host's complete local checks, including speed gates; `bash scripts/check-performance.sh` runs only the speed gates. `bash scripts/check-local.sh --live-focus` runs the same checks and then the focus-requiring gallery checks last (macOS only). Those take real keyboard focus, so don't touch the keyboard or mouse while they run. Hooks do not download semantic models. Install them explicitly when testing semantic-search changes; missing optional model or desktop capabilities are reported as skips.
 
-On macOS, local checks build Swift targets and run core, capture, overlay, model-install and embedding checks, plus path-safety checks. The functional `CoreChecks --skip-performance` invocation leaves the benchmark to the separate performance step. On Windows, they restore locked dependencies, build Release with warnings as errors, and run functional tests serially. The separate performance step reuses that build for the .NET index and bundled OCR workloads. Set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` on an interactive desktop to include clipboard hold-time checks.
+On macOS, local checks build Swift targets and run core, capture, overlay, model-install and embedding checks, plus path-safety checks. The build uses a temporary SwiftPM `--scratch-path` that is deleted on exit, on failure and on Ctrl-C, so the worktree's `.build` is never created. Every run is a fresh build, but SwiftPM's shared dependency cache is still used. The functional `CoreChecks --skip-performance` invocation leaves the benchmark to the separate performance step. On Windows, they restore locked dependencies, build Release with warnings as errors, and run functional tests serially. The separate performance step reuses that build for the .NET index and bundled OCR workloads. Set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` on an interactive desktop to include clipboard hold-time checks.
 
 Windows filesystem safety tests require permission to create symbolic links. A missing privilege fails by default. For a local account without that privilege, explicitly set `CAPTUREAPP_ALLOW_MISSING_SYMLINK_PRIVILEGE=1` before running checks or pushing. Only fixtures that encounter Windows error 1314 (`ERROR_PRIVILEGE_NOT_HELD`) are then reported as skipped; other errors still fail. The opt-in is ignored when `CI` or `GITHUB_ACTIONS` is set, so native CI continues to exercise these safety fixtures. Keep the local hooks enabled and record any skipped coverage in the PR.
 
