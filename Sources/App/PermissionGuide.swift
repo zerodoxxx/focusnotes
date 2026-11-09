@@ -134,6 +134,7 @@ final class PermissionGuide {
             settingsSeen = true
             absentSince = now
         } else if now.timeIntervalSince(absentSince) >= (settingsSeen ? 3 : 5) {
+            // Settings was closed (3 s after it had appeared) or never showed up (5 s after open).
             dismiss()
         }
     }
@@ -213,6 +214,7 @@ final class PermissionGuide {
             let visible = screen(containing: settings)?.visibleFrame ?? .zero
             var origin = NSPoint(x: settings.midX - size.width / 2, y: settings.minY - 12 - size.height)
             if origin.y < visible.minY || origin.y + size.height > visible.maxY {
+                // No room below the window: sit inside it, bottom-aligned with a 16 pt inset.
                 origin.y = settings.minY + 16
             }
             return clamped(origin, size: size, to: visible)
