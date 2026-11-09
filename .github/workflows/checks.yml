@@ -223,7 +223,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: windows/.semantic-models
-          key: semantic-models-${{ runner.os }}-${{ hashFiles('windows/src/CaptureApp.ModelInstall/ModelManifest.cs') }}
+          key: semantic-models-${{ runner.os }}-${{ hashFiles('windows/src/CaptureApp.ModelInstall/ModelManifest.cs', 'windows/src/CaptureApp.Embed/GemmaModelConfig.cs') }}
 
       - name: Fetch and verify semantic models
         if: needs.select.outputs.full == 'true'

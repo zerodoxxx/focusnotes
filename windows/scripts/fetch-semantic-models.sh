@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WINDOWS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$WINDOWS_DIR/src/CaptureApp.ModelInstall/ModelManifest.cs"
+CONFIG="$WINDOWS_DIR/src/CaptureApp.Embed/GemmaModelConfig.cs"
 if [[ $# -gt 1 ]]; then
   echo "Usage: $0 [models-directory]" >&2
   exit 2
@@ -42,14 +43,14 @@ ensure_file() {
 while IFS=$'\t' read -r path url sha bytes; do
   [[ -n "$path" ]] || continue
   ensure_file "$DEST/$path" "$url" "$sha" "$bytes"
-done < <(python3 - "$MANIFEST" <<'PY'
+done < <(python3 - "$MANIFEST" "$CONFIG" <<'PY'
 import re
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
 repo = re.search(r'const string Repo = "([^"]+)"', source).group(1)
 # Revision lives in GemmaModelConfig.cs; ModelManifest.cs references it.
-config_path = sys.argv[1].replace("CaptureApp.ModelInstall/ModelManifest.cs", "CaptureApp.Embed/GemmaModelConfig.cs")
+config_path = sys.argv[2]
 config = open(config_path, encoding="utf-8").read()
 revision = re.search(r'const string Revision = "([^"]+)"', config).group(1)
 base = f"https://huggingface.co/{repo}/resolve/{revision}"
