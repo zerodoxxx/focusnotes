@@ -725,8 +725,8 @@ public final class VaultWatcher: @unchecked Sendable {
                                       context: "checking registry watch availability", notify: true)
                 return false
             } catch {
-                let typedError = registryError(from: error, context: "checking registry watch availability")
-                reportRegistryFailure(typedError, fingerprint: nil,
+                Self.logger.error("Unexpected error checking registry watch availability: \(String(describing: error), privacy: .private)")
+                reportRegistryFailure(.unreadableRegistry, fingerprint: nil,
                                       context: "checking registry watch availability", notify: true)
                 return false
             }
@@ -847,14 +847,14 @@ public final class VaultWatcher: @unchecked Sendable {
         do {
             return try vault.externalRegistryFingerprint()
         } catch {
-            Self.logger.error("Could not read the external note registry fingerprint while \(context, privacy: .public): \(String(describing: error), privacy: .private)")
+            Self.logger.error("Could not read the external note registry fingerprint while \(context, privacy: .public): \(String(describing: error), privacy: .public)")
             return nil
         }
     }
 
     private func registryError(from error: Error, context: String) -> ExternalNoteRegistryError {
         if let typedError = error as? ExternalNoteRegistryError { return typedError }
-        Self.logger.error("Unexpected error \(context, privacy: .public): \(String(describing: error), privacy: .private)")
+        Self.logger.error("Unexpected error \(context, privacy: .public): \(String(describing: error), privacy: .public)")
         return .unreadableRegistry
     }
 
