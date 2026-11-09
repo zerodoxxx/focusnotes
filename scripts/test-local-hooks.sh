@@ -35,6 +35,7 @@ for command in swift dotnet; do
 #!/usr/bin/env bash
 printf '%s %s\n' "${0##*/}" "$*" >> "$HOOK_TEST_LOG"
 if [[ "${HOOK_TEST_FAIL_BUILD:-}" == "1" && "$1" == "build" ]]; then exit 7; fi
+if [[ -n "${HOOK_TEST_FAIL_SWIFT_ARG:-}" && "$*" == *"$HOOK_TEST_FAIL_SWIFT_ARG"* ]]; then exit 7; fi
 if [[ "${HOOK_TEST_DIRTY_BUILD:-}" == "1" && "$1" == "build" ]]; then
   printf 'changed while checking\n' >> "$HOOK_TEST_PROJECT/Sources/Core/Example.swift"
 fi
@@ -82,6 +83,31 @@ expect_empty_log() {
 expect_line() {
   if ! grep -Fqx -- "$1" "$HOOK_TEST_LOG"; then cat "$HOOK_TEST_LOG" >&2; echo "Missing command: $1" >&2; exit 1; fi
 }
+scratch_path() {
+  # mktemp names are random; the single build line defines this run's scratch path.
+  sed -n 's|^swift build --scratch-path \([^ ]*/focusnotes-build\.[^ ]*\)$|\1|p' "$HOOK_TEST_LOG"
+}
+expect_swift_line() {
+  # SCRATCH in the expected command stands for this run's scratch path.
+  local scratch
+  scratch="$(scratch_path)"
+  if [[ -z "$scratch" ]]; then cat "$HOOK_TEST_LOG" >&2; echo 'Missing scratch build.' >&2; exit 1; fi
+  expect_line "${1//SCRATCH/$scratch}"
+}
+expect_one_scratch() {
+  # Every SwiftPM command in a run must reuse the one build's scratch directory.
+  local scratch
+  scratch="$(scratch_path)"
+  if [[ "$(grep -c '^swift build ' "$HOOK_TEST_LOG")" != 1 ]] || grep '^swift ' "$HOOK_TEST_LOG" | grep -qvF -- "--scratch-path $scratch"; then
+    cat "$HOOK_TEST_LOG" >&2; echo 'Expected one scratch build, and every SwiftPM command must use it.' >&2; exit 1
+  fi
+}
+expect_scratch_removed() {
+  local scratch
+  scratch="$(scratch_path)"
+  if [[ -z "$scratch" || -e "$scratch" ]]; then echo "Scratch directory was not removed: $scratch" >&2; exit 1; fi
+  if [[ -e "$fixture/.build" ]]; then echo 'Created .build in the worktree.' >&2; exit 1; fi
+}
 
 # Documentation-only commits, including a new branch, require no compiler.
 commit_file README.md docs
@@ -99,16 +125,37 @@ commit_file README.md 'docs after source'
 tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$tip" "$base"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 expect_line 'shell-check test-local-hooks-isolation.sh'
 expect_line 'python3 scripts/test-ci-selection.py'
-expect_line 'swift run --skip-build CoreChecks --skip-performance'
-expect_line 'swift run --skip-build CaptureChecks'
-expect_line 'swift run --skip-build ModelInstallChecks'
-expect_line 'swift run --skip-build EmbedChecks'
-expect_line 'swift run --skip-build OverlayGallery --check'
-expect_line 'swift run --skip-build CoreChecks --performance-only'
-[[ "$(grep -c '^swift build$' "$HOOK_TEST_LOG")" == 1 ]]
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build CoreChecks --skip-performance'
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build CaptureChecks'
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build ModelInstallChecks'
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build EmbedChecks'
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build OverlayGallery --check'
+expect_swift_line 'swift run --scratch-path SCRATCH --skip-build CoreChecks --performance-only'
+expect_one_scratch
+expect_scratch_removed
+
+# Keyboard-focus checks are manual: pre-push and --all never run them, and
+# --live-focus runs them after every other Swift check.
+[[ "$(grep -c 'check-live-focus' "$HOOK_TEST_LOG")" == 0 ]]
+: > "$HOOK_TEST_LOG"
+bash scripts/check-local.sh --all > "$temp_root/output" 2>&1
+expect_one_scratch
+[[ "$(grep -c 'check-live-focus' "$HOOK_TEST_LOG")" == 0 ]]
+: > "$HOOK_TEST_LOG"
+bash scripts/check-local.sh --live-focus > "$temp_root/output" 2>&1
+expect_one_scratch
+[[ "$(grep '^swift ' "$HOOK_TEST_LOG" | tail -n 1)" == "swift run --scratch-path $(scratch_path) --skip-build OverlayGallery --check-live-focus" ]]
+
+# A failing SwiftPM command fails the run and still removes its scratch directory.
+: > "$HOOK_TEST_LOG"
+export HOOK_TEST_FAIL_SWIFT_ARG=CaptureChecks
+if push_update "$tip" "$base"; then echo 'Ignored a failing Swift check.' >&2; exit 1; fi
+unset HOOK_TEST_FAIL_SWIFT_ARG
+expect_one_scratch
+expect_scratch_removed
 
 # Prefer Python 3, tolerate hosts where it is named python, and fail clearly
 # before native builds when neither executable is a Python 3 interpreter.
@@ -127,13 +174,13 @@ unset HOOK_TEST_NO_PYTHON
 # The same source range is detected for a new branch; HEAD refspecs are supported.
 : > "$HOOK_TEST_LOG"
 push_update "$tip" "$zero" ignored HEAD
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 : > "$HOOK_TEST_LOG"
 push_update "$tip" "$zero" ignored "$tip"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 : > "$HOOK_TEST_LOG"
 push_update "$tip" ffffffffffffffffffffffffffffffffffffffff
-expect_line 'swift build' # Missing remote objects conservatively inspect the new tree.
+expect_swift_line 'swift build --scratch-path SCRATCH' # Missing remote objects conservatively inspect the new tree.
 
 # Multiple branch updates run the suite once; tags and deletion-only pushes are free.
 : > "$HOOK_TEST_LOG"
@@ -141,7 +188,7 @@ expect_line 'swift build' # Missing remote objects conservatively inspect the ne
   printf 'refs/heads/topic %s refs/heads/topic %s\n' "$tip" "$base"
   printf 'refs/heads/other %s refs/heads/other %s\n' "$tip" "$base"
 } | bash .githooks/pre-push origin ignored > "$temp_root/output" 2>&1
-[[ "$(grep -c '^swift build$' "$HOOK_TEST_LOG")" == 1 ]]
+expect_one_scratch
 : > "$HOOK_TEST_LOG"
 printf 'refs/tags/v1 %s refs/tags/v1 %s\n' "$tip" "$zero" | bash .githooks/pre-push origin ignored > "$temp_root/output" 2>&1
 printf '(delete) %s refs/heads/topic %s\n' "$zero" "$base" | bash .githooks/pre-push origin ignored > "$temp_root/output" 2>&1
@@ -197,7 +244,7 @@ for path in Sources/EmbedKit/ModelManifest.swift Sources/EmbedKit/Embedder.swift
     : > "$HOOK_TEST_LOG"
     push_update "$shared_embedding_tip" "$previous_tip"
     if [[ "$HOOK_TEST_HOST" == Darwin ]]; then
-      expect_line 'swift build'
+      expect_swift_line 'swift build --scratch-path SCRATCH'
     else
       expect_line 'dotnet build CaptureApp.sln -c Release --no-restore -m:1 -warnaserror'
     fi
@@ -236,7 +283,7 @@ merge_tip="$(git rev-parse HEAD)"
 git update-ref refs/remotes/origin/main "$windows_tip"
 : > "$HOOK_TEST_LOG"
 push_update "$merge_tip" "$zero"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 export HOOK_TEST_DIRTY_BUILD=1
 if push_update "$merge_tip" "$windows_tip"; then echo 'Accepted edits made during checks.' >&2; exit 1; fi
 unset HOOK_TEST_DIRTY_BUILD
@@ -249,23 +296,23 @@ commit_file Sources/Core/Fixtures/README.md fixture
 fixture_tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$fixture_tip" "$merge_tip"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 commit_file Config/signing-requirement.txt requirement
 config_tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$config_tip" "$fixture_tip"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 git mv Sources/Core/Fixtures/README.md docs/removed-fixture.md
 git commit -qm 'move fixture into docs'
 rename_tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$rename_tip" "$config_tip"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 commit_file .editorconfig 'unknown shared build configuration'
 shared_tip="$(git rev-parse HEAD)"
 : > "$HOOK_TEST_LOG"
 push_update "$shared_tip" "$rename_tip"
-expect_line 'swift build'
+expect_swift_line 'swift build --scratch-path SCRATCH'
 
 # Staged whitespace is checked independently of the expensive pre-push commands.
 printf 'trailing whitespace \n' >> README.md
