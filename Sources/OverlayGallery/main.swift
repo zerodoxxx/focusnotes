@@ -227,8 +227,8 @@ final class LiveGallery: NSObject {
     }
 }
 
-// Interactive panels dismiss when another process takes key focus, so concurrent runs
-// would fail each other. Serialize them on a lock held for this process's lifetime.
+// Serializes check runs for this process's lifetime: they share UserDefaults.standard,
+// and live-focus runs dismiss each other's panels when another process takes key focus.
 func acquireCheckLock() throws {
     let lock = open(NSTemporaryDirectory() + "overlaygallery-check.lock", O_CREAT | O_RDWR, 0o600)
     if lock >= 0 {
@@ -260,7 +260,7 @@ do {
         let guardian = FocusGuard()
         var failure: Error?
         Task { @MainActor in
-            do { try await runBehaviorChecks(); try guardian.verify() } catch { failure = error }
+            do { try await runBehaviorChecks(); try await settle(); try guardian.verify() } catch { failure = error }
             NSApp.stop(nil)
             if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
                 timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
