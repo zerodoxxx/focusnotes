@@ -25,7 +25,7 @@ struct FolderShortcut: Codable, Equatable, Sendable, Identifiable {
     /// The menu title, e.g. "Start Session → Sessions/Work".
     var menuTitle: String {
         guard action == .startSession else { return "\(action.title) → \(folder)" }
-        let path = (try? NoteFolder(rawValue: folder))?.sessionsRelativePath ?? "\(Vault.sessionsDirectoryName)/\(folder)"
+        let path = "\(Vault.sessionsDirectoryName)/\(folder)"
         return "\(action.title) → \(path)"
     }
 
