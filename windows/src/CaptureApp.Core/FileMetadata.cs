@@ -199,29 +199,3 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
         internal static extern bool GetFileTagInfo(SafeFileHandle handle, int kind, out TagInfo info, uint size);
     }
 }
-
-public static class FileErrors
-{
-    public static int Code(Exception e) => e.HResult & 0xFFFF;
-
-    public static bool IsSharingCode(int c) => c is 11 or 32 or 33;
-
-    public static bool IsAbsentCode(int c) => OperatingSystem.IsWindows() ? c is 2 or 3 : c is 2 or 20;
-
-    public static bool IsUnavailableCode(int c) => OperatingSystem.IsWindows() ? c is 21 or 55 or 1117 or 1167 : c is 5 or 6 or 19;
-
-    public static bool IsSharingViolation(Exception e) => e is IOException && IsSharingCode(Code(e));
-}
-
-public static class PathIdentity
-{
-    public static StringComparer Comparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-
-    public static StringComparison Comparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-}
-
-public static class CloudRecall
-{
-    // Cloud placeholder attributes; sweeps and restores skip files carrying them so they never trigger a recall.
-    public const FileAttributes Mask = (FileAttributes)(0x400000 | 0x40000);
-}

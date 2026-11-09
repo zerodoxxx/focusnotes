@@ -123,6 +123,7 @@ public static partial class NoteFile
 
     // Test seams: replace/move used by ReplaceFile instead of the real calls, scoped to the calling flow.
     internal static readonly AsyncLocal<Action<string, string>?> ReplaceHook = new();
+    // Intercepts every NoteFile.Move call, so it sees state-file (DurableFile) moves as well as note moves.
     internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
     // Test seam: replaces the note append's write (handle, offset, data), so a test can write some bytes and then fail.
     internal static readonly AsyncLocal<Action<Microsoft.Win32.SafeHandles.SafeFileHandle, long, byte[]>?> AppendWriteHook = new();
@@ -557,27 +558,4 @@ public static partial class NoteFile
             AtomicWrite(bytes, root, relativePath);
         }
     }
-}
-
-public static class FileRetry
-{
-    public const int LockedRetryBudgetMs = 10000;
-    public const int LockedRetryPollMs = 2;
-    public const int SectionedJsonRetries = 4;
-    public const int SectionedJsonDelayMs = 20;
-    public const int MoveFallbackAttempts = 3;
-    public const int MoveFallbackDelayMs = 75;
-}
-
-internal static class TempNames
-{
-    internal const string PendingPrefix = ".pending-";
-    internal const string RecoveredPrefix = ".recovered-";
-    internal const int MaxRestorableNameBytes = 100;
-    private static readonly System.Text.RegularExpressions.Regex PendingName =
-        new("^" + System.Text.RegularExpressions.Regex.Escape(PendingPrefix) + "[0-9a-f]{32}$");
-    internal static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
-        new("^" + System.Text.RegularExpressions.Regex.Escape(RecoveredPrefix) + "(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2," + 2 * MaxRestorableNameBytes + "})\\z");
-
-    internal static bool IsPending(string name) => PendingName.IsMatch(name);
 }
