@@ -136,6 +136,8 @@ if [[ -z "$python_command" ]]; then
   exit 1
 fi
 "$python_command" scripts/test-ci-selection.py
+# Hooks export GIT_DIR and friends; SwiftPM's dependency checkouts would use this repo.
+while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
 if [[ "$host" == Darwin ]]; then
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/focusnotes-build.XXXXXX")"
   export FOCUSNOTES_SWIFT_SCRATCH="$scratch"
