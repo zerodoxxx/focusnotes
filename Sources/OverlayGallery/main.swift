@@ -1,6 +1,6 @@
 import AppKit
 import Darwin
-import OverlayKit
+@_spi(Checks) import OverlayKit
 
 @MainActor
 func thumbnail() -> NSImage {
@@ -252,9 +252,11 @@ do {
         } else {
             FileHandle.standardError.write(Data("OverlayGallery: could not open the check lock (errno \(errno)); running unserialised\n".utf8))
         }
+        OverlayPanel.simulatesFocus = true
+        let guardian = FocusGuard()
         var failure: Error?
         Task { @MainActor in
-            do { try await runBehaviorChecks() } catch { failure = error }
+            do { try await runBehaviorChecks(); try guardian.verify() } catch { failure = error }
             NSApp.stop(nil)
             if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
                 timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {

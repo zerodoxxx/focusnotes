@@ -45,7 +45,11 @@ private func field(in panel: OverlayPanel) throws -> NSTextField {
 }
 
 @MainActor
-private func settle() async throws { try await Task.sleep(for: .milliseconds(230)) }
+private func settle() async throws {
+    if let tick = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+        windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) { NSApp.postEvent(tick, atStart: false) }
+    try await Task.sleep(for: .milliseconds(230))
+}
 
 @MainActor
 private func settle(until condition: () -> Bool) async throws {
