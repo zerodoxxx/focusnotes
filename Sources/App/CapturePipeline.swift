@@ -40,6 +40,7 @@ struct CapturePipeline: Sendable {
     private let journal: CaptureJournal
     let drafts: NoteDraftStore
     let pins: NotePinStore
+    let folderShortcuts: FolderShortcutStore
     let calendar: Calendar
     let logger: Logger
     private let renames: SessionRenameTransaction
@@ -56,8 +57,8 @@ struct CapturePipeline: Sendable {
 
     init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
          semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
-         drafts: NoteDraftStore, pins: NotePinStore, calendar: Calendar, logger: Logger,
-         noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
+         drafts: NoteDraftStore, pins: NotePinStore, folderShortcuts: FolderShortcutStore,
+         calendar: Calendar, logger: Logger, noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
         self.vault = vault
         self.sessions = sessions
         self.service = service
@@ -67,11 +68,12 @@ struct CapturePipeline: Sendable {
         self.journal = journal
         self.drafts = drafts
         self.pins = pins
+        self.folderShortcuts = folderShortcuts
         self.calendar = calendar
         self.logger = logger
         self.noteIDForPin = noteIDForPin
-        renames = SessionRenameTransaction(vault: vault, sessions: sessions, journal: journal, pins: pins,
-                                           index: index, semantic: semantic, logger: logger)
+        renames = SessionRenameTransaction(vault: vault, stateDirectory: journal.stateDirectory, sessions: sessions,
+                                           journal: journal, pins: pins, index: index, semantic: semantic, logger: logger)
         selfCheck = SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames)
     }
 
@@ -101,9 +103,10 @@ struct CapturePipeline: Sendable {
             journal: CaptureJournal(stateDirectory: stateDirectory),
             drafts: NoteDraftStore(stateDirectory: stateDirectory),
             pins: NotePinStore(stateDirectory: stateDirectory),
+            folderShortcuts: FolderShortcutStore(stateDirectory: stateDirectory),
             calendar: calendar, logger: logger
         )
-        try await pipeline.renames.recover(allowFileRename: true)
+        try await pipeline.recoverPendingRename(allowFileRename: true)
         try await pipeline.journal.discardPreviousProcessRedirects()
         return pipeline
     }
@@ -133,7 +136,12 @@ struct CapturePipeline: Sendable {
     }
 
     func recoverSessionIdentity() async throws {
-        try await renames.recover(allowFileRename: false)
+        try await recoverPendingRename(allowFileRename: false)
+    }
+
+    /// Only startup may rename files; `open` alone then discards earlier-process redirects.
+    private func recoverPendingRename(allowFileRename: Bool) async throws {
+        try await renames.recover(allowFileRename: allowFileRename)
     }
 
     func currentSession() async -> Session? { await sessions.current() }
@@ -189,7 +197,7 @@ struct CapturePipeline: Sendable {
 
     func commit(_ originalJob: CaptureJob, pinOnSave: Bool? = nil,
                 onNoteSaved: (@MainActor @Sendable (SavedCapture, Bool) -> Void)? = nil) async throws -> SavedCapture {
-        try await renames.recover(allowFileRename: false)
+        try await recoverPendingRename(allowFileRename: false)
         let job = try await journal.redirected(originalJob)
         let saved = try await service.save(job.prepared, png: job.png)
         monitor.refreshExternalRoots()
@@ -308,10 +316,6 @@ struct CapturePipeline: Sendable {
         try Self.assetData(path, vault: vault)
     }
 
-    func assetURL(_ path: String) throws -> URL {
-        try Self.assetURL(path, vault: vault)
-    }
-
     private static func assetData(_ path: String, vault: Vault) throws -> Data {
         guard let snapshot = try vault.fileSnapshot(relativePath: path), let contents = snapshot.contents else {
             throw CocoaError(.fileReadNoSuchFile)
@@ -319,7 +323,7 @@ struct CapturePipeline: Sendable {
         return contents
     }
 
-    private static func assetURL(_ path: String, vault: Vault) throws -> URL {
+    static func assetURL(_ path: String, vault: Vault) throws -> URL {
         let url = vault.root.appendingPathComponent(path).standardizedFileURL.resolvingSymlinksInPath()
         guard !path.hasPrefix("/"), url.path.hasPrefix(vault.root.path + "/") else {
             throw CocoaError(.fileReadInvalidFileName)
@@ -330,7 +334,6 @@ struct CapturePipeline: Sendable {
     @concurrent
     func region(png: Data, context: FrontmostContext, id: UUID = UUID(), createdAt: Date = Date(),
                 recognize: @escaping @Sendable (Data) async throws -> OCRResult = { try await OCR.recognize(pngData: $0) }) async -> PendingCapture {
-        let race = OCRBudgetRace()
         let recognition = Task.detached(priority: .userInitiated) { () -> OCRResult? in
             do { return try await recognize(png) }
             catch {
@@ -338,16 +341,10 @@ struct CapturePipeline: Sendable {
                 return nil
             }
         }
-        Task { await race.resolve(.finished(await recognition.value)) }
-        let timer = Task {
-            do { try await Task.sleep(for: .milliseconds(1500)); await race.resolve(.expired) }
-            catch {} // An on-time result cancels the one-shot deadline.
-        }
-        let outcome = await race.wait()
-        timer.cancel()
-        guard case .finished(let recognized) = outcome else {
+        // Returns at the deadline without waiting for Vision to stop.
+        guard let recognized = await withDeadline(.now + .milliseconds(1500), { await recognition.value }) else {
             return PendingCapture(id: id, createdAt: createdAt, trigger: .region, content: .image(png: png, ocr: nil),
-                                  source: Self.source(context), subtitle: "Image", deferredOCR: recognition)
+                                  source: Self.source(context), subtitle: Self.imageSubtitle(), deferredOCR: recognition)
         }
         let result = recognized ?? OCRResult(text: "", lines: [], imageSize: .zero)
         let classification = CaptureClassifier.classify(result)
@@ -358,7 +355,7 @@ struct CapturePipeline: Sendable {
             trigger: .region,
             content: classification.decision == .text ? .text(result.text) : .image(png: png, ocr: recognized?.text),
             source: Self.source(context),
-            subtitle: classification.decision == .text ? "Text · \(preview)" : (preview.isEmpty ? "Image" : "Image · \(preview)")
+            subtitle: classification.decision == .text ? "Text · \(preview)" : Self.imageSubtitle(preview: preview)
         )
     }
 
@@ -370,25 +367,13 @@ struct CapturePipeline: Sendable {
         CaptureSource(appName: context.appName, windowTitle: context.windowTitle, url: context.url)
     }
 
+    static func imageSubtitle(preview: String? = nil) -> String {
+        guard let preview, !preview.isEmpty else { return "Image" }
+        return "Image · \(preview)"
+    }
+
     static func firstLine(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         return line.count > 100 ? String(line.prefix(99)) + "…" : line
-    }
-}
-
-/// An unstructured race returns at the deadline without waiting for Vision to stop.
-private actor OCRBudgetRace {
-    enum Outcome: Sendable { case finished(OCRResult?), expired }
-    private var outcome: Outcome?
-    private var continuation: CheckedContinuation<Outcome, Never>?
-    func resolve(_ value: Outcome) {
-        guard outcome == nil else { return }
-        outcome = value
-        continuation?.resume(returning: value)
-        continuation = nil
-    }
-    func wait() async -> Outcome {
-        if let outcome { return outcome }
-        return await withCheckedContinuation { continuation = $0 }
     }
 }

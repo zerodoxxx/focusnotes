@@ -8,6 +8,7 @@ internal sealed class ForegroundTracker : IDisposable
 {
     private const uint EventSystemForeground = 3;
     private const uint WinEventOutOfContext = 0;
+    private static readonly string[] DesktopClasses = ["Progman", "WorkerW"];
     private static readonly string[] ShellClasses =
     [
         "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland", "Progman", "WorkerW"
@@ -24,8 +25,6 @@ internal sealed class ForegroundTracker : IDisposable
         if (hook == 0) { log?.Invoke("The foreground window hook could not be installed; tray Capture Selection has no target."); }
     }
 
-    private static readonly string[] DesktopClasses = ["Progman", "WorkerW"];
-
     /// Track: remember it. Keep: ignore (our own windows and the tray windows the menu opens). Clear: the user went to the desktop.
     public static Decision Decide(uint processId, uint ownProcessId, string? className)
     {
@@ -35,10 +34,6 @@ internal sealed class ForegroundTracker : IDisposable
     }
 
     public enum Decision { Track, Keep, Clear }
-
-    /// Our own windows and the shell are never targets.
-    public static bool ShouldTrack(uint processId, uint ownProcessId, string? className) =>
-        Decide(processId, ownProcessId, className) == Decision.Track;
 
     /// The last tracked window, or 0.
     public nint Last => (nint)Interlocked.Read(ref last);

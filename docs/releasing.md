@@ -1,6 +1,6 @@
 # Releasing focusnotes
 
-Last Updated: 2026-10-23 (previous commit: `1aaa52c`)
+Last Updated: 2026-11-07 (previous commit: `a01f453`)
 
 This is the maintainer runbook for building, signing, checking, and publishing a
 release. The app is distributed without Apple Developer ID signing or
@@ -205,7 +205,7 @@ Setting up these prerequisites is a maintainer task; agents never handle the sec
 | Item | Kind | Purpose |
 | --- | --- | --- |
 | `WINDOWS_UPDATE_ED_KEY_1` | Secret | Private half of update key K1, used by the Mac release job to sign each `releases.win-*.json`. |
-| `WINDOWS_UPDATE_ED_KEYS` | `Config/app.env` | Public keys the app trusts, as `<keyId>:<base64>` entries. Committed. |
+| `WINDOWS_UPDATE_ED_KEYS` | `Config/app.env` | Public keys the app trusts, as comma-separated `<keyId>:<base64>` entries. Committed. |
 | `SIGNPATH_API_TOKEN` | Optional secret | Used only when enabling Authenticode signing. |
 | `WINDOWS_SIGN_TEMPLATE` | Optional secret | The `vpk --signTemplate` command line. It must read the token from the environment (for example `%SIGNPATH_API_TOKEN%`), never inline. |
 | `WINDOWS_SIGNER_THUMBPRINTS` | Optional repository variable | Comma-separated expected signer thumbprints; required with the two optional signing secrets to enforce the signing inventory. |

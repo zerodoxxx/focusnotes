@@ -3,6 +3,11 @@ import ApplicationServices
 import Carbon
 import CoreGraphics
 
+// Bounds each AX call so a hung app cannot stall capture.
+enum AccessibilityTimeout {
+    static let messaging: Float = 0.2
+}
+
 public enum SelectionMethod: String, Sendable {
     case accessibility
     case clipboard
@@ -22,7 +27,6 @@ public enum SelectionFailure: Error, Equatable, Sendable {
 }
 
 public enum PasteboardSnapshotError: Error, Equatable, Sendable {
-    case unreadableType(String)
     case changedDuringSnapshot
 }
 
@@ -110,7 +114,6 @@ public enum SelectionReader {
         guard pasteboard.changeCount == snapshot.changeCount else { return .failure(.noSelection) }
         down.flags = .maskCommand
         up.flags = .maskCommand
-        // One Command-only copy through the current session, after the frontmost check.
         down.post(tap: .cgSessionEventTap)
         up.post(tap: .cgSessionEventTap)
 
@@ -135,14 +138,14 @@ public enum SelectionReader {
 
     private static func selectedText(in context: FrontmostContext) -> String? {
         let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.2)
+        AXUIElementSetMessagingTimeout(system, AccessibilityTimeout.messaging)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
         let element = unsafeDowncast(focused, to: AXUIElement.self)
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success, pid == context.processIdentifier else { return nil }
-        AXUIElementSetMessagingTimeout(element, 0.2)
+        AXUIElementSetMessagingTimeout(element, AccessibilityTimeout.messaging)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success else { return nil }
         return value as? String

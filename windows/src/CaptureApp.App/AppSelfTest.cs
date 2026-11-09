@@ -6,13 +6,13 @@ using CaptureApp.Embed;
 using CaptureApp.Platform.Hotkeys;
 using CaptureApp.Platform.Ocr;
 using CaptureApp.Platform.Tray;
+using CaptureApp.Updates;
 using SkiaSharp;
 using Velopack;
 using Velopack.Locators;
 
 namespace CaptureApp.App;
 
-/// The platform sections of --self-test: menu, architecture, helper background status, OCR and semantic embedding.
 /// The controller sections (staging, journaling, sessions, notes, shutdown) run in AppCore.Shell.ControllerSelfTest.
 internal static class AppSelfTest
 {
@@ -29,19 +29,7 @@ internal static class AppSelfTest
 
     private static void Menu()
     {
-        var bindings = new Dictionary<string, string>
-        {
-            [MenuIds.CaptureSelection] = HotkeyDefaults.For(HotkeyAction.CaptureSelection).DisplayString,
-            [MenuIds.CaptureArea] = HotkeyDefaults.For(HotkeyAction.CaptureArea).DisplayString,
-            [MenuIds.CaptureSelectionOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureSelectionOutsideSession).DisplayString,
-            [MenuIds.CaptureAreaOutsideSession] = HotkeyDefaults.For(HotkeyAction.CaptureAreaOutsideSession).DisplayString,
-            [MenuIds.Search] = HotkeyDefaults.For(HotkeyAction.SearchNotes).DisplayString,
-            [MenuIds.Session] = HotkeyDefaults.For(HotkeyAction.ToggleSession).DisplayString,
-            [MenuIds.WriteNote] = HotkeyDefaults.For(HotkeyAction.WriteNote).DisplayString,
-            [MenuIds.WriteNoteOutsideSession] = HotkeyDefaults.For(HotkeyAction.WriteNoteOutsideSession).DisplayString,
-            [MenuIds.AddSubheading] = HotkeyDefaults.For(HotkeyAction.AddSubheading).DisplayString,
-            [MenuIds.OpenFolder] = HotkeyDefaults.For(HotkeyAction.OpenNotesFolder).DisplayString
-        };
+        var bindings = AppController.ShortcutMenuItems.ToDictionary(item => item.MenuId, item => HotkeyDefaults.For(item.Action).DisplayString);
         var entries = TrayMenuBuilder.Build(new MenuState(true, 0, null, bindings, 0, new(SemanticMenuPhase.NotInstalled), new(UpdateMenuKind.Idle)));
         _ = new TrayMenuModel(entries.Select(Convert));
         if (bindings.Values.Any(string.IsNullOrEmpty) || entries.Count(e => e.Shortcut.Length > 0) != bindings.Count)
@@ -67,7 +55,7 @@ internal static class AppSelfTest
         string channel;
         try { channel = VelopackLocator.Current?.Channel ?? "not installed"; }
         catch (Exception) { channel = "not installed"; }
-        var expectedChannel = "win-" + architecture;
+        var expectedChannel = FeedNames.Channel(architecture);
         if (channel != "not installed" && !string.Equals(channel, expectedChannel, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"The installed channel {channel} does not match {expectedChannel}.");

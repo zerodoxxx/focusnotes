@@ -55,11 +55,6 @@ let suggestions = [
     Suggestion(title: "Distributed systems", secondary: "Note · System Design", symbolName: "doc.text")
 ]
 
-struct GalleryError: Error, CustomStringConvertible {
-    let description: String
-    init(_ description: String) { self.description = description }
-}
-
 @MainActor
 func writePNG(_ view: NSView, appearance: NSAppearance, to url: URL) throws {
     // Hosting in an unordered nonactivating panel supplies a backing environment
@@ -254,6 +249,8 @@ do {
                 if waited > 2, !announced { print("Waiting for another OverlayGallery --check run…"); announced = true }
                 usleep(100_000)
             }
+        } else {
+            FileHandle.standardError.write(Data("OverlayGallery: could not open the check lock (errno \(errno)); running unserialised\n".utf8))
         }
         var failure: Error?
         Task { @MainActor in

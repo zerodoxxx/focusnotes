@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 
 usage() {
     printf 'Usage: %s [--adhoc]\n' "$0" >&2
@@ -21,18 +22,10 @@ case "$#" in
     *) usage ;;
 esac
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-        VERSION) VERSION="$value" ;;
-        BUILD) BUILD="$value" ;;
-        GITHUB_REPO) GITHUB_REPO="$value" ;;
-        SPARKLE_PUBLIC_ED_KEY) SPARKLE_PUBLIC_ED_KEY="$value" ;;
-    esac
-done < "$ROOT_DIR/Config/app.env"
+app_env_load "$ROOT_DIR/Config/app.env" APPNAME VERSION BUILD GITHUB_REPO SPARKLE_PUBLIC_ED_KEY
 
 REQ_FILE="$ROOT_DIR/Config/signing-requirement.txt"
-SIGN_KEYCHAIN="${SIGN_KEYCHAIN:-$HOME/Library/Keychains/$APPNAME-signing.keychain-db}"
+SIGN_KEYCHAIN="${SIGN_KEYCHAIN:-$(app_signing_keychain "$APPNAME")}"
 
 if [[ "$ADHOC" == 1 ]]; then
     MODE="adhoc (local or CI test build, not for release)"
@@ -51,7 +44,7 @@ cd "$ROOT_DIR"
 # Guards (release mode only). These run before any check or build.
 if [[ "$ADHOC" == 0 ]]; then
     # Releases use the dedicated identity unless SIGN_IDENTITY is set explicitly in the environment.
-    SIGN_IDENTITY="${SIGN_IDENTITY:-$APPNAME Release Signing}"
+    SIGN_IDENTITY="${SIGN_IDENTITY:-$(app_signing_cn "$APPNAME")}"
     export SIGN_IDENTITY SIGN_KEYCHAIN
 
     [[ -f "$SIGN_KEYCHAIN" && ! -L "$SIGN_KEYCHAIN" ]] || fail "release signing keychain not found: $SIGN_KEYCHAIN. Restore it with scripts/import-signing-identity.sh <identity.p12>, or create it once with scripts/make-signing-identity.sh (never replace an existing identity)."

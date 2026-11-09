@@ -25,6 +25,11 @@ struct ImagePreprocessor {
         self.patch = patch; self.pooling = pooling; self.budget = budget; self.rescale = Float(factor)
     }
 
+    /// Patches in one image tensor.
+    var patchCount: Int { budget * pooling * pooling }
+    /// Floats per patch (RGB).
+    var patchVectorWidth: Int { patch * patch * 3 }
+
     func prepare(_ data: Data) throws -> (pixels: [Float], positions: [Int64], tokens: Int) {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetType(source) as String? == "public.png",
@@ -51,7 +56,7 @@ struct ImagePreprocessor {
                 rgb[i * 3 + c] = alpha == 0 ? 0 : UInt8(min(255, (Int(rgba[i * 4 + c]) * 255 + alpha / 2) / alpha))
             }
         }
-        let maxPatches = budget * pooling * pooling
+        let maxPatches = patchCount
         let side = patch * pooling
         let factor = sqrt(Double(maxPatches * patch * patch) / Double(width * height))
         var targetH = Int(floor(Double(height) * factor / Double(side))) * side
@@ -63,7 +68,7 @@ struct ImagePreprocessor {
         }
         let resized = Self.resize(rgb, width: width, height: height, targetW: targetW, targetH: targetH)
         let rows = targetH / patch, columns = targetW / patch
-        var pixels = [Float](repeating: 0, count: maxPatches * patch * patch * 3)
+        var pixels = [Float](repeating: 0, count: patchCount * patchVectorWidth)
         var positions = [Int64](repeating: -1, count: maxPatches * 2)
         for y in 0..<rows {
             for x in 0..<columns {

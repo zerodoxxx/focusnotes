@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -21,17 +22,11 @@ if [[ $# -gt 1 ]]; then
     exit 2
 fi
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-        BUNDLE_PREFIX) BUNDLE_PREFIX="$value" ;;
-    esac
-done < "$ROOT_DIR/Config/app.env"
+app_env_load "$ROOT_DIR/Config/app.env" APPNAME BUNDLE_PREFIX
 
-APPNAME_LOWER="$(printf '%s' "$APPNAME" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed 's/[^a-z0-9-]/-/g')"
-BUNDLE_ID="$BUNDLE_PREFIX.$APPNAME_LOWER"
-CN="$APPNAME Release Signing"
-KEYCHAIN="${1:-$HOME/Library/Keychains/$APPNAME-signing.keychain-db}"
+BUNDLE_ID="$(app_bundle_id "$BUNDLE_PREFIX" "$APPNAME")"
+CN="$(app_signing_cn "$APPNAME")"
+KEYCHAIN="${1:-$(app_signing_keychain "$APPNAME")}"
 BACKUP="$HOME/$APPNAME-signing-identity.p12"
 REQ_FILE="$ROOT_DIR/Config/signing-requirement.txt"
 
@@ -165,8 +160,7 @@ HASH="$(security find-identity -p codesigning "$KEYCHAIN" | grep -F "\"$CN\"" | 
 [[ "$HASH" =~ ^[0-9A-Fa-f]{40}$ ]] || fail "could not read the SHA-1 of the new identity from $KEYCHAIN"
 HASH="$(printf '%s' "$HASH" | tr '[:upper:]' '[:lower:]')"
 
-# noclobber: never overwrite an existing requirement file.
-(set -C; printf 'identifier "%s" and certificate leaf = H"%s"\n' "$BUNDLE_ID" "$HASH" > "$REQ_FILE") \
+(set -C; app_signing_requirement "$BUNDLE_ID" "$HASH" > "$REQ_FILE") \
     || fail "could not create $REQ_FILE (it must not already exist)"
 REQ_WRITTEN=1
 printf '==> wrote %s\n' "$REQ_FILE"

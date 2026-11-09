@@ -85,7 +85,7 @@ public sealed class FolderRouteTests
         Assert.False(first.Resumed);
         Assert.True(second.Resumed);
         Assert.Equal("Planning", first.Name);
-        Assert.Equal(second, new SessionStore(e.State, e.Vault, CheckVault.Zone, CheckVault.Clock).Current());
+        Assert.Equal(second, new SessionStore(e.State, e.Vault, CheckVault.Clock).Current());
         Assert.StartsWith("# Planning", File.ReadAllText(e.Vault.ManagedUrl(first.NotePath)), StringComparison.Ordinal);
         var elsewhere = e.Sessions.StartInFolder(new("Other"), "Planning");
         Assert.Equal("Sessions/Other/Planning.md", elsewhere.NotePath);

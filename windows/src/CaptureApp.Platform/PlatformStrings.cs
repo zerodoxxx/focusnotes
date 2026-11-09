@@ -10,6 +10,5 @@ public static class PlatformStrings
     public const string ElevatedTarget = "Can't capture from apps running as administrator";
     public const string CouldNotCapture = "Couldn't capture selection";
     public const string ClipboardTooLarge = "Your clipboard is too large to restore safely";
-    public const string UnknownSource = "Unknown source";
     public static string CaptureAreaHint(string binding) => $"Use Capture Area ({binding}) instead";
 }

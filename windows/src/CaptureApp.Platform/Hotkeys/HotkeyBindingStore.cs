@@ -80,7 +80,6 @@ public sealed class HotkeyBindingStore
         var pending = new List<HotkeyAction>();
         var adjustments = new List<HotkeyBindingAdjustment>();
         // Every explicit valid binding wins, even when it uses a newly introduced default.
-        // Reserve the remaining defaults before choosing fallback letters for conflicts.
         foreach (var action in HotkeyDefaults.All.Keys.Order())
         {
             if (bindings.ContainsKey(action)) { continue; }
@@ -139,7 +138,7 @@ public sealed class HotkeyBindingStore
             var shortcuts = existing as JsonObject ?? new JsonObject();
             foreach (var (action, chord) in bindings)
             {
-                shortcuts[action.ToString()] = chord.DisplayString;
+                shortcuts[HotkeyActionNames.Of(action)] = chord.DisplayString;
             }
 
             return shortcuts;
@@ -161,4 +160,10 @@ public sealed class HotkeyBindingStore
         Save(bindings);
         return availability with { Action = action };
     }
+}
+
+/// <summary>The persisted name of a built-in action in settings (shortcuts keys and disabled-shortcut entries).</summary>
+public static class HotkeyActionNames
+{
+    public static string Of(HotkeyAction action) => action.ToString();
 }

@@ -19,11 +19,11 @@ public static class Router
         if (cleaned.Length > 0)
         {
             var name = ResolvedPathName(noteTitle ?? "", vault.NamingRules);
-            if (name.Scope == NotePathScope.Home || name.Components.Count > 1)
+            if (name.IsQualified)
             {
                 var location = vault.ResolveNoteName(name);
-                var text = vault.NamingRules.WindowsRules ? cleaned.Replace('\\', '/') : cleaned;
-                return new(location.Url, NoteTitle.CleanTitle(text.Split('/')[^1]), NoteKind.Note);
+                var text = vault.NamingRules.NormalizeSeparators(cleaned);
+                return new(location.Url, NoteTitle.LastSegmentTitle(text), NoteKind.Note);
             }
 
             var key = NoteTitle.MatchKey(cleaned);
@@ -39,14 +39,16 @@ public static class Router
 
             if (key == NoteTitle.MatchKey(Vault.InboxTitle))
             {
-                return new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+                return InboxDestination(vault);
             }
 
             return new(vault.ResolveNoteName(name).Url, cleaned, NoteKind.Note);
         }
 
-        return activeSession is not null ? new(vault.ManagedUrl(activeSession.NotePath), activeSession.Name, NoteKind.Session) : new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
+        return activeSession is not null ? new(vault.ManagedUrl(activeSession.NotePath), activeSession.Name, NoteKind.Session) : InboxDestination(vault);
     }
+
+    public static Destination InboxDestination(Vault vault) => new(vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
 
     /// Whether a title is matched against note headings rather than read as a path to a nested or HOME note.
     public static bool IsHeadingTitle(string title, VaultNamingRules rules)
@@ -78,7 +80,7 @@ public static class Router
     // NoteTitle.resolvedPathName: malformed or whitespace-qualified relative slash forms keep the flat file name.
     private static NotePathName ResolvedPathName(string rawName, VaultNamingRules rules)
     {
-        var input = rules.WindowsRules ? rawName.Replace('\\', '/') : rawName;
+        var input = rules.NormalizeSeparators(rawName);
         NotePathName? parsed = null;
         NotePathNameError? error = null;
         try
@@ -95,6 +97,6 @@ public static class Router
             return parsed ?? throw new NotePathNameException(error!.Value);
         }
 
-        return NotePathName.Validated(NotePathScope.Vault, [rules.FileStem(NoteTitle.CleanTitle(input))], rules);
+        return NotePathName.FlatName(NoteTitle.CleanTitle(input), rules);
     }
 }

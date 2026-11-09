@@ -13,8 +13,10 @@ public struct TypedNote: Sendable {
     /// True when the first line has no text, so the title is a creation stamp.
     public let isGeneratedTitle: Bool
 
+    private static let htmlCommentPattern = #"<!--[\s\S]*?(?:-->|$)"#
+
     public init(markdown: String, createdAt: Date, calendar: Calendar) {
-        let withoutComments = Self.replace(#"<!--[\s\S]*?(?:-->|$)"#, in: markdown, with: "")
+        let withoutComments = Self.replace(Self.htmlCommentPattern, in: markdown, with: "")
         let first = withoutComments.components(separatedBy: .newlines).first {
             !$0.trimmingCharacters(in: .whitespaces).isEmpty
         } ?? ""
@@ -28,23 +30,20 @@ public struct TypedNote: Sendable {
         do {
             resolvedName = try NoteTitle.resolvedPathName(for: extractedName, normalizingWhitespace: false)
             parseError = nil
-        } catch let error as NotePathNameError {
-            resolvedName = nil
-            parseError = error
         } catch {
             resolvedName = nil
-            parseError = .invalidComponent
+            parseError = error
         }
         let isFolderQualified = resolvedName.map {
             $0.scope == .home || $0.components.count > 1
         } ?? false
         let rawLeaf = isFolderQualified
-            ? String(extractedName.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+            ? NoteTitle.leafName(of: extractedName)
             : extractedName
         rawName = extractedName
         pathName = resolvedName
         pathNameError = resolvedName == nil ? parseError : nil
-        title = Self.boundedTitle(isFolderQualified ? NoteTitle.cleanTitle(rawLeaf) : extractedName)
+        title = NoteTitle.displayTitle(isFolderQualified ? NoteTitle.cleanTitle(rawLeaf) : extractedName)
 
         // Only the physical first line is eligible. Lists, quotes and code are
         // meaningful body content even when their text becomes the note title.
@@ -62,7 +61,7 @@ public struct TypedNote: Sendable {
     }
 
     private static func strip(_ line: String) -> String {
-        var text = replace(#"<!--[\s\S]*?(?:-->|$)"#, in: line, with: "")
+        var text = replace(htmlCommentPattern, in: line, with: "")
         let prefix = #"^[ \t]*(?:#+[ \t]+|[-*+][ \t]+(?:\[[ xX]\][ \t]*)?|[0-9]+[.)][ \t]+|>[ \t]*)"#
         while true {
             let stripped = replace(prefix, in: text, with: "")
@@ -81,15 +80,5 @@ public struct TypedNote: Sendable {
 
     private static func replace(_ pattern: String, in text: String, with replacement: String) -> String {
         text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
-    }
-
-    private static func boundedTitle(_ title: String) -> String {
-        guard title.count > 60 else { return title }
-        let end = title.index(title.startIndex, offsetBy: 60)
-        var prefix = String(title[..<end])
-        if !title[end].isWhitespace, let boundary = prefix.lastIndex(of: " ") {
-            prefix = String(prefix[..<boundary])
-        }
-        return prefix.trimmingCharacters(in: .whitespaces) + "…"
     }
 }

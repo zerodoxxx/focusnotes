@@ -14,7 +14,7 @@ internal static class UiaSelection
     {
         var result = await Worker.Value.RunAsync(() => Read(targetPid, includeSelection),
             TimeSpan.FromMilliseconds(200), cancellationToken).ConfigureAwait(false);
-        // A timeout supplies no selection. Unknown password state fails closed at the caller's safety checkpoints.
+        // Unknown password state fails closed at the caller's safety checkpoints.
         return result ?? new(FieldSafety.Unknown);
     }
 

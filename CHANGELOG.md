@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-10-29 (previous commit: `f041974`)
+Last Updated: 2026-11-09 (previous commit: `92a3184`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -33,6 +33,7 @@ All notable changes to focusnotes are recorded here. The format follows
 - macOS: a search, note picker or quick-note panel requested during a selection capture now appears only after the selection is read, so the clipboard fallback's ⌘C can't land in that panel and report "No text selected".
 - macOS: quitting while the app is still launching no longer starts the initial index scan during shutdown.
 - Windows: after a second failed update apply, the next launch now deletes the downloaded package for that version, and any damaged package, so Retry downloads it again instead of reusing the failing package. Readable packages of other versions are kept, and a package that can't be deleted is logged without hiding the "Update failed" state.
+- Windows: trusted update keys are now separated only by commas; `;` and new lines no longer separate them.
 - Windows: an exception in a vault-change observer is now written to the app log instead of being ignored.
 - Windows: a failed note append (for example, a full disk or a dropped network vault) no longer leaves a typed note's marker without its body. The append is truncated back to the note's original length, so the retry writes the whole note.
 - Windows: when a recovered copy of a note can't be moved back in place, an append now fails and the capture is kept for retry instead of starting a new note holding only the new capture that hid the old one.
@@ -54,6 +55,15 @@ All notable changes to focusnotes are recorded here. The format follows
 - macOS: Save as New Note on a title already at the file-name length limit (about 120 characters, fewer for CJK and emoji) no longer hangs the app; the number is kept by shortening the title, as on Windows.
 - macOS: a subheading that failed to save and was then typed again is no longer written twice when the app quits.
 - macOS and Windows: a folder Quick Note shortcut now behaves like a standalone quick note in that folder. The title shows the folder until you type, then the note name; the footer reads Create note or Add to note for the name in that folder instead of always Add to note, and Save as New Note makes a numbered copy there instead of appending.
+- macOS: pinning or unpinning a note no longer erases the other pinned notes when the pin file can't be read. The change fails instead, and the pins stay as they were.
+- Windows: pinning or unpinning a note no longer erases the other pinned notes when the pin store can't be read. The change fails instead, and the pins stay as they were.
+- Windows: turning off semantic search no longer lets indexing, search or warm-up create the embedding client after it is turned off, which could then start the embedding helper.
+- Windows: the Shortcuts status now counts every shortcut action. It used to count seven, so it read Off once seven shortcuts were turned off, even with others still working.
+- Windows: Reset to defaults in the Shortcuts panel now shows the reason when saved folder shortcuts can't be read or conflict with the defaults, instead of an unhandled error.
+- macOS: renaming a session now saves the same start time that the rename reports. Before, the saved session could differ from the reported one, so it could show a different start time after a relaunch.
+- macOS: a session rename completed from its saved record after an interruption now rejects an invalid new name with the same checks as a typed rename, instead of applying it.
+- macOS and Windows: an assets folder written in another case, such as `ASSETS/`, is now recognised as assets, so changes there no longer trigger a full asset check.
+- macOS and Windows: asset rechecks now match the watcher's path case-insensitively, so a same-size, same-mtime replacement under a differently cased folder is re-OCR'd.
 
 ## [0.1.0] - Unreleased
 

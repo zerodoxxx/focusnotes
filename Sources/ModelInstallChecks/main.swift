@@ -1,4 +1,3 @@
-import CryptoKit
 import EmbedKit
 import Foundation
 import ModelInstall
@@ -26,10 +25,6 @@ final class Locked<Value>: @unchecked Sendable {
         defer { lock.unlock() }
         return body(&value)
     }
-}
-
-func sha256Hex(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 func deterministicBytes(count: Int, seed: UInt8) -> Data {
@@ -61,7 +56,6 @@ func runTar(_ arguments: [String]) throws {
     }
 }
 
-/// Relative paths of every regular file under `directory`.
 func regularFiles(under directory: URL) throws -> Set<String> {
     guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey]) else {
         return []
@@ -117,7 +111,7 @@ func makeFixture(in directory: URL) throws -> Fixture {
     for spec in modelSpecs {
         let bytes = deterministicBytes(count: spec.size, seed: spec.seed)
         let url = Fixture.servedURL(spec.path)
-        artifacts.append(ModelArtifact(path: spec.path, url: url, sha256: sha256Hex(bytes), size: Int64(bytes.count)))
+        artifacts.append(ModelArtifact(path: spec.path, url: url, sha256: FileDigest.sha256Hex(bytes), size: Int64(bytes.count)))
         served[url] = bytes
         finalFiles[spec.path] = bytes
     }
@@ -140,15 +134,14 @@ func makeFixture(in directory: URL) throws -> Fixture {
     let runtimeURL = Fixture.servedURL("runtime.tgz")
     served[runtimeURL] = archiveBytes
     let runtime = RuntimeArchive(
-        version: "9.9.9", url: runtimeURL, sha256: sha256Hex(archiveBytes), size: Int64(archiveBytes.count),
-        dylibMember: dylibMember, dylibSHA256: sha256Hex(dylib),
-        licenseMember: licenseMember, licenseSHA256: sha256Hex(runtimeLicense),
-        noticesMember: noticesMember, noticesSHA256: sha256Hex(runtimeNotices))
+        version: "9.9.9", url: runtimeURL, sha256: FileDigest.sha256Hex(archiveBytes), size: Int64(archiveBytes.count),
+        dylibMember: dylibMember, dylibSHA256: FileDigest.sha256Hex(dylib),
+        licenseMember: licenseMember, licenseSHA256: FileDigest.sha256Hex(runtimeLicense),
+        noticesMember: noticesMember, noticesSHA256: FileDigest.sha256Hex(runtimeNotices))
     finalFiles["libonnxruntime.dylib"] = dylib
     finalFiles["ORT-LICENSE"] = runtimeLicense
     finalFiles["ORT-ThirdPartyNotices.txt"] = runtimeNotices
 
-    // Bundled licenses that ship inside the app.
     let resources = directory.appendingPathComponent("resources", isDirectory: true)
     let bundledLicense = deterministicBytes(count: 120, seed: 70)
     let bundledNotice = deterministicBytes(count: 80, seed: 71)
@@ -157,8 +150,8 @@ func makeFixture(in directory: URL) throws -> Fixture {
     finalFiles["model-LICENSE.txt"] = bundledLicense
     finalFiles["model-NOTICE.txt"] = bundledNotice
     let licenses = [
-        BundledLicense(resourceName: "bundled-model-license.txt", sha256: sha256Hex(bundledLicense), installedName: "model-LICENSE.txt"),
-        BundledLicense(resourceName: "bundled-model-notice.txt", sha256: sha256Hex(bundledNotice), installedName: "model-NOTICE.txt"),
+        BundledLicense(resourceName: "bundled-model-license.txt", sha256: FileDigest.sha256Hex(bundledLicense), installedName: "model-LICENSE.txt"),
+        BundledLicense(resourceName: "bundled-model-notice.txt", sha256: FileDigest.sha256Hex(bundledNotice), installedName: "model-NOTICE.txt"),
     ]
 
     let manifest = ModelManifest(
@@ -444,7 +437,6 @@ func caseCancelAfterFinalFetch(_ root: URL, _ fixture: Fixture) async throws {
     try expect(!exists(stagingDirectory(root).appendingPathComponent(".runtime-extract", isDirectory: true)),
                "temporary extraction data survived cancellation")
 
-    // A second installer call should finish from the verified staged files without refetching.
     let requestCount = await transport.totalRequests()
     try await installer.install { _ in }
     try expect(await transport.totalRequests() == requestCount,
@@ -485,6 +477,22 @@ func caseReplaceExisting(_ root: URL, _ fixture: Fixture) async throws {
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("models.old-") }
     try expect(leftovers.isEmpty, "backup directories left behind: \(leftovers)")
     try expectFinalLayout(root, fixture)
+}
+
+func caseRecoversInterruptedCommit(_ root: URL, _ fixture: Fixture) async throws {
+    let interrupted = root.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+    try writeFile(interrupted.appendingPathComponent("keep.txt"), Data("new".utf8))
+    _ = makeInstaller(root: root, fixture: fixture, transport: FakeTransport(served: fixture.served))
+    try expect(exists(modelsDirectory(root).appendingPathComponent("keep.txt")), "init did not restore the interrupted commit")
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("models.old-") }
+    try expect(leftovers.isEmpty, "backup directories left after init: \(leftovers)")
+
+    let stale = root.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+    try writeFile(stale.appendingPathComponent("stale.txt"), Data("stale".utf8))
+    _ = makeInstaller(root: root, fixture: fixture, transport: FakeTransport(served: fixture.served))
+    let remaining = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix("models.old-") }
+    try expect(remaining.isEmpty, "backup directories left after second init: \(remaining)")
+    try expect(exists(modelsDirectory(root).appendingPathComponent("keep.txt")), "keep.txt lost on second init")
 }
 
 func caseMissingBundledLicense(_ root: URL, _ fixture: Fixture) async throws {
@@ -553,7 +561,6 @@ func caseNetworkExhausted(_ root: URL, _ fixture: Fixture) async throws {
     }) {
         try await installer.install { _ in }
     }
-    // One attempt plus maxNetworkRetries (3) retries, all against the first file.
     let requests = await transport.totalRequests()
     try expect(requests == 4, "\(requests) requests were made, expected 4 (1 attempt + 3 retries)")
 }
@@ -611,6 +618,7 @@ func runAllCases(_ fixture: Fixture) async -> Bool {
         ("disk space", caseDiskSpace),
         ("reuse valid model file", caseReuseValidFile),
         ("replace existing models directory", caseReplaceExisting),
+        ("interrupted commit recovered on init", caseRecoversInterruptedCommit),
         ("missing bundled license", caseMissingBundledLicense),
         ("remove()", caseRemove),
         ("insecure URL rejected", caseInsecureURL),

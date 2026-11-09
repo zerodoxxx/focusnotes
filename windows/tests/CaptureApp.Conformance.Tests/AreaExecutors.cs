@@ -57,7 +57,7 @@ public sealed class SearchIndexExecutor() : IAreaExecutor
 
         private string Url(string path)
         {
-            _ = NoteFile.PathComponents(path);
+            _ = Vault.PathComponents(path);
             return Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar));
         }
 
@@ -139,7 +139,12 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
             {
                 value = new
                 {
-                    error = error.Kind == SessionStoreError.Ambiguous ? "ambiguousSession" : "candidateNoLongerExists"
+                    error = error.Kind switch
+                    {
+                        SessionStoreError.Ambiguous => "ambiguousSession",
+                        SessionStoreError.CandidateNoLongerExists => "candidateNoLongerExists",
+                        _ => throw new InvalidOperationException($"Unmapped session store error {error.Kind}"),
+                    }
                 };
             }
 
@@ -182,7 +187,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
             clock = new(input.Clock);
             vault = new(root, homeDirectoryUrl: home, namingRules: new() { WindowsRules = false });
             writer = new(vault, zone, clock);
-            sessions = new(state, vault, zone, clock);
+            sessions = new(state, vault, clock);
             foreach (var file in input.Files.OrderBy(x => x.Key, StringComparer.Ordinal))
             {
                 Write(file.Key, file.Value);
@@ -192,7 +197,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
         private string Url(string path)
         {
             var relative = path.StartsWith('/') ? path[1..] : path;
-            _ = NoteFile.PathComponents(relative);
+            _ = Vault.PathComponents(relative);
             return Path.Combine(path.StartsWith('/') ? home : root, relative.Replace('/', Path.DirectorySeparatorChar));
         }
 
@@ -366,7 +371,7 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
                     sessions.End();
                     return null;
                 case "reload":
-                    sessions = new(state, vault, zone, clock);
+                    sessions = new(state, vault, clock);
                     return SessionResult(sessions.Current());
                 case "persisted":
                     return JsonDocument.Parse(File.ReadAllBytes(Path.Combine(state, "session.json"))).RootElement.Clone();

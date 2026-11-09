@@ -3,10 +3,9 @@ using System.Net.Http.Headers;
 
 namespace CaptureApp.ModelInstall;
 
-/// Fetches one URL into a file. The installer resumes partial files through the offset.
+/// The installer resumes partial files through the offset.
 public interface IModelTransport
 {
-    /// Downloads <paramref name="url"/> into <paramref name="file"/>.
     /// With an offset above zero it sends "Range: bytes=offset-". A 206 appends to the file, a 200
     /// truncates it and writes the full body, a 416 writes nothing (the caller verifies the hash), and
     /// any other non-2xx status throws <see cref="ModelInstallException"/>. <paramref name="progress"/>
@@ -105,7 +104,7 @@ public sealed class HttpModelTransport : IModelTransport, IDisposable
                 if (target.Seek(0, SeekOrigin.End) != offset)
                 {
                     await target.DisposeAsync().ConfigureAwait(false);
-                    // Retryable: the installer re-reads the partial's real size and resumes from there, or starts over.
+                    // The installer re-reads the partial's real size and resumes from there, or starts over.
                     throw ModelInstallException.Network("the partial download changed while it was being resumed");
                 }
 

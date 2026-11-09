@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -24,18 +25,14 @@ usage() {
 P12="$1"
 [[ -f "$P12" ]] || fail "identity file not found: $P12"
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-    esac
-done < "$ROOT_DIR/Config/app.env"
+app_env_load "$ROOT_DIR/Config/app.env" APPNAME
 
-CN="$APPNAME Release Signing"
-KEYCHAIN="${2:-$HOME/Library/Keychains/$APPNAME-signing.keychain-db}"
+CN="$(app_signing_cn "$APPNAME")"
+KEYCHAIN="${2:-$(app_signing_keychain "$APPNAME")}"
 REQ_FILE="$ROOT_DIR/Config/signing-requirement.txt"
 
 [[ -f "$REQ_FILE" ]] || fail "missing $REQ_FILE; it must be committed before importing"
-EXPECTED="$(sed -n 's/.*H"\([0-9a-f]\{40\}\)".*/\1/p' "$REQ_FILE")"
+EXPECTED="$(app_signing_requirement_hash "$REQ_FILE")"
 [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ ]] || fail "could not read the expected certificate hash from $REQ_FILE"
 
 if [[ -e "$KEYCHAIN" || -L "$KEYCHAIN" ]]; then

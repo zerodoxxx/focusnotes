@@ -8,9 +8,9 @@ internal sealed record Fixture(string Name, Func<OverlaySurface> Create, double 
 internal static class Fixtures
 {
     internal static readonly Suggestion[] Suggestions = [
-        new("System Design", "Session · Oct 9", "record.circle"), new("MLE Interview Prep", "Session · Oct 8", "record.circle"),
-        new("Rate limiting", "Note · System Design", "doc.text"), new("Distributed systems", "Note · System Design", "doc.text")];
-    internal static readonly Suggestion[] Sessions = [new("System Design", "Modified Oct 9 · /vault/one.md", "record.circle", "/vault/one.md"), new("System Design", "Modified Oct 8 · /vault/two.md", "record.circle", "/vault/two.md")];
+        new("System Design", "Session · Oct 9", Icons.Session), new("MLE Interview Prep", "Session · Oct 8", Icons.Session),
+        new("Rate limiting", "Note · System Design", Icons.Note), new("Distributed systems", "Note · System Design", Icons.Note)];
+    internal static readonly Suggestion[] Sessions = [new("System Design", "Modified Oct 9 · /vault/one.md", Icons.Session, "/vault/one.md"), new("System Design", "Modified Oct 8 · /vault/two.md", Icons.Session, "/vault/two.md")];
     internal static readonly SearchSection[] Recent = [new("Recent", [
         new("system", "System Design", "Design a reliable notification service at scale.", "10:04 · Edge · System Design"),
         new("limits", "Rate limiting", "Token buckets allow controlled bursts of requests.", "09:58 · Edge · System Design"),
@@ -64,11 +64,11 @@ internal static class Fixtures
     }
     internal static readonly BrowseItem[] BrowseItems =
     [
-        new("a", "Weekly review", "Note · Oct 12", "doc.text", true), new("b", "System Design", "Session · Oct 9", "record.circle", true),
-        new("c", "Rate limiting", "Note · Oct 9", "doc.text", false), new("d", "Caching patterns", "Note · Oct 8", "doc.text", false),
-        new("e", "Message queues", "Note · Oct 8", "doc.text", false), new("f", "MLE Interview Prep", "Session · Oct 7", "record.circle", false),
-        new("g", "Reading list", "Note · Oct 6", "doc.text", false), new("h", "Trip planning", "Note · Oct 5", "doc.text", false),
-        new("i", "Standup notes", "Note · Oct 4", "doc.text", false), new("j", "Ideas", "Note · Oct 3", "doc.text", false)
+        new("a", "Weekly review", "Note · Oct 12", Icons.Note, true), new("b", "System Design", "Session · Oct 9", Icons.Session, true),
+        new("c", "Rate limiting", "Note · Oct 9", Icons.Note, false), new("d", "Caching patterns", "Note · Oct 8", Icons.Note, false),
+        new("e", "Message queues", "Note · Oct 8", Icons.Note, false), new("f", "MLE Interview Prep", "Session · Oct 7", Icons.Session, false),
+        new("g", "Reading list", "Note · Oct 6", Icons.Note, false), new("h", "Trip planning", "Note · Oct 5", Icons.Note, false),
+        new("i", "Standup notes", "Note · Oct 4", Icons.Note, false), new("j", "Ideas", "Note · Oct 3", Icons.Note, false)
     ];
     internal const string MarkdownSample = "# Heading one\n## Heading two\n### Heading three\n#### Heading four\nPlain with **bold**, *italic*, ~~strike~~ and `code`.\n"
         + "A [link](https://example.com) and https://example.org\n- bullet item\n1. numbered item\n- [ ] open task\n- [x] done task\n> quoted line\n```\nlet x = 1;\n```\nTyping here";
@@ -156,7 +156,6 @@ internal static class Fixtures
         });
         yield return Quick("quick-browse", "Trip planning\nBook the train", v => { v.SetRevealed(true, false); v.BrowseItems = () => BrowseItems; v.ShowBrowse(BrowseItems); }, v =>
         {
-            // Two headers and seven visible rows, pinned section first.
             const double expected = Tokens.CardFieldHeight + Tokens.BorderWidth + Tokens.CardVerticalPadding * 2 + 2 * Tokens.BrowseHeaderHeight + Tokens.BrowseVisibleRows * Tokens.BrowseRowHeight + Tokens.BorderWidth + Tokens.BrowseFooterHeight;
             Require(v.CardSize is { } size && Math.Abs(size.Width - Tokens.BrowseCardWidth) < Tokens.LayoutTolerance && Math.Abs(size.Height - expected) < Tokens.LayoutTolerance, "quick-browse: card size from tokens");
         });

@@ -157,6 +157,17 @@ final class MarkdownLayoutManager: NSLayoutManager {
 
     func finishTextEdit() { pendingCharacterEdit = false }
 
+    /// Follows a styler pass over `range`: the edit must finish before selection
+    /// sync, which must precede the paragraph variants that depend on it.
+    func finishRestyle(in range: NSRange, for view: NSTextView) {
+        finishTextEdit()
+        synchronize(view)
+        applyParagraphs(in: range)
+        if range.length > 0 {
+            invalidateGlyphs(forCharacterRange: range, changeInLength: 0, actualCharacterRange: nil)
+        }
+    }
+
     func prepareComposition() {
         startingComposition = true
         startingCompositionCharacters = indices(in: selectionLines)
@@ -167,7 +178,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
 
     func synchronize(_ view: NSTextView) {
         startingComposition = false
-        updateSelection(view.selectedRanges.map(\.rangeValue), markedRange: view.hasMarkedText() ? view.markedRange() : NSRange(location: NSNotFound, length: 0))
+        updateSelection(view.selectedRanges.map(\.rangeValue), markedRange: view.activeMarkedRange)
     }
 
     /// Attribute restyles restore raw paragraph styles; reapply just the task and
@@ -242,7 +253,11 @@ final class MarkdownLayoutManager: NSLayoutManager {
         guard let storage = textStorage, location >= 0, location < storage.length,
               let element = storage.attribute(MarkdownStyler.element, at: location, effectiveRange: nil) as? MarkdownStyler.Element,
               element.kind == .blockMarker else { return false }
-        return activeElements.contains(element) || composingLines.contains { NSIntersectionRange($0, element.range).length > 0 }
+        return isBlockMarkerActive(element, at: location)
+    }
+
+    private func isBlockMarkerActive(_ element: MarkdownStyler.Element, at location: Int) -> Bool {
+        activeElements.contains(element) || composingLines.contains { NSIntersectionRange($0, element.range).length > 0 }
             || startingCompositionCharacters.contains(location)
     }
 
@@ -251,8 +266,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
         var active = false
         storage.enumerateAttribute(MarkdownStyler.element, in: line) { value, _, stop in
             guard let element = value as? MarkdownStyler.Element, element.kind == .blockMarker else { return }
-            active = activeElements.contains(element) || composingLines.contains { NSIntersectionRange($0, element.range).length > 0 }
-                || startingCompositionCharacters.contains(element.range.location)
+            active = isBlockMarkerActive(element, at: element.range.location)
             if active { stop.pointee = true }
         }
         return active
@@ -302,7 +316,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
               storage.attribute(MarkdownStyler.syntax, at: index, effectiveRange: nil) as? Bool == true,
               let element = storage.attribute(MarkdownStyler.element, at: index, effectiveRange: nil) as? MarkdownStyler.Element,
               element.kind == .blockMarker,
-              storage.attribute(MarkdownStyler.task, at: index, effectiveRange: nil) is Bool || storage.attribute(MarkdownStyler.quote, at: index, effectiveRange: nil) as? Bool == true else { return false }
+              MarkdownStyler.taskState(storage.attribute(MarkdownStyler.task, at: index, effectiveRange: nil)) != nil || storage.attribute(MarkdownStyler.quote, at: index, effectiveRange: nil) as? Bool == true else { return false }
         let source = storage.string as NSString
         let line = source.lineRange(for: NSRange(location: index, length: 0))
         var contentEnd = NSMaxRange(line)
@@ -346,7 +360,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
         let line = source.lineRange(for: NSRange(location: min(characterIndexForGlyph(at: glyph), storage.length - 1), length: 0))
         var result: NSRange?
         storage.enumerateAttribute(MarkdownStyler.task, in: line) { value, marker, stop in
-            guard value is Bool, !isBlockMarkerActive(at: marker.location) else { return }
+            guard MarkdownStyler.taskState(value) != nil, !isBlockMarkerActive(at: marker.location) else { return }
             guard checkboxRect(for: line, in: container).contains(point) else { return }
             let bracket = source.range(of: "[", options: [], range: marker)
             guard bracket.location != NSNotFound else { return }
@@ -399,7 +413,7 @@ final class MarkdownLayoutManager: NSLayoutManager {
                 guard !isBlockMarkerActive(on: line) else { continue }
                 var taskState: Bool?
                 storage.enumerateAttribute(MarkdownStyler.task, in: line) { value, _, stop in
-                    guard let checked = value as? Bool else { return }
+                    guard let checked = MarkdownStyler.taskState(value) else { return }
                     taskState = checked; stop.pointee = true
                 }
                 if let checked = taskState {
@@ -476,7 +490,6 @@ final class MarkdownLayoutManager: NSLayoutManager {
                                       in: NSRange(location: 0, length: storage.length))
                 let glyphs = visibleGlyphs(for: code)
                 guard glyphs.length > 0 else { return }
-                // A wrapped span gets a separate rounded fill per visual line.
                 enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, fragmentGlyphs, _ in
                     let run = NSIntersectionRange(glyphs, fragmentGlyphs)
                     let bounds = self.boundingRect(forGlyphRange: run, in: container)
@@ -507,4 +520,9 @@ private final class MarkdownGlyphDelegate: NSObject, @MainActor NSLayoutManagerD
                        proposedLineFragment proposedRect: NSRect, glyphPosition: NSPoint, characterIndex charIndex: Int) -> NSRect {
         owner?.isDecorationAnchor(at: charIndex) == true ? owner!.decorationBounds(at: charIndex) : .zero
     }
+}
+
+extension NSTextView {
+    /// The marked (IME composition) range, or NSNotFound when nothing is marked.
+    var activeMarkedRange: NSRange { hasMarkedText() ? markedRange() : NSRange(location: NSNotFound, length: 0) }
 }

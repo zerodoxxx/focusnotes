@@ -39,11 +39,12 @@ public interface ICaptureHost
 public static class PendingCaptures
 {
     private static readonly char[] NewLines = ['\r', '\n', '\u0085', '\u2028', '\u2029'];
+    public const string ImageSubtitle = "Image";
 
     public static PendingCapture Selection(string text, CaptureSource source, Guid? id = null, DateTimeOffset? createdAt = null) =>
         new(id ?? Guid.NewGuid(), createdAt ?? DateTimeOffset.UtcNow, CaptureTrigger.Selection, CaptureContent.Text(text), source, FirstLine(text));
 
-    public static PendingCapture Image(byte[] png, string? ocr, CaptureSource source, string subtitle = "Image",
+    public static PendingCapture Image(byte[] png, string? ocr, CaptureSource source, string subtitle = ImageSubtitle,
         Guid? id = null, DateTimeOffset? createdAt = null) =>
         new(id ?? Guid.NewGuid(), createdAt ?? DateTimeOffset.UtcNow, CaptureTrigger.Region, CaptureContent.Image(""), source, subtitle, png, ocr);
 
@@ -72,11 +73,7 @@ public static class RegionProcessing
         var recognition = Task.Run(() =>
         {
             try { return recognize(png); }
-            catch (Exception error)
-            {
-                log?.Invoke($"OCR failed; retaining image: {error.GetType().Name}");
-                return null;
-            }
+            catch (Exception error) { return OcrFailed(log, error); }
         });
         return await ProcessWithBudgetAsync(png, source, id, createdAt, recognition, registerDeferred, budget).ConfigureAwait(false);
     }
@@ -89,11 +86,7 @@ public static class RegionProcessing
         var recognition = Task.Run(async () =>
         {
             try { return await recognize(png).ConfigureAwait(false); }
-            catch (Exception error)
-            {
-                log?.Invoke($"OCR failed; retaining image: {error.GetType().Name}");
-                return null;
-            }
+            catch (Exception error) { return OcrFailed(log, error); }
         });
         return ProcessWithBudgetAsync(png, source, id, createdAt, recognition, registerDeferred, budget);
     }
@@ -105,7 +98,7 @@ public static class RegionProcessing
         if (!ReferenceEquals(winner, recognition))
         {
             registerDeferred?.Invoke(id, recognition.ContinueWith(task => task.Result?.Text, TaskScheduler.Default));
-            return PendingCaptures.Image(png, null, source, "Image", id, createdAt);
+            return PendingCaptures.Image(png, null, source, PendingCaptures.ImageSubtitle, id, createdAt);
         }
 
         var recognized = await recognition.ConfigureAwait(false);
@@ -116,6 +109,12 @@ public static class RegionProcessing
             return new(id, createdAt, CaptureTrigger.Region, CaptureContent.Text(text), source, $"Text · {preview}");
         }
 
-        return PendingCaptures.Image(png, recognized?.Text, source, preview.Length == 0 ? "Image" : $"Image · {preview}", id, createdAt);
+        return PendingCaptures.Image(png, recognized?.Text, source, preview.Length == 0 ? PendingCaptures.ImageSubtitle : $"{PendingCaptures.ImageSubtitle} · {preview}", id, createdAt);
+    }
+
+    private static RegionRecognition? OcrFailed(Action<string>? log, Exception error)
+    {
+        log?.Invoke($"OCR failed; retaining image: {error.GetType().Name}");
+        return null;
     }
 }

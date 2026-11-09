@@ -1,5 +1,6 @@
 using System.Text;
 using CaptureApp.AppCore;
+using CaptureApp.AppCore.Tests.Semantic;
 using CaptureApp.Core;
 using CaptureApp.Core.Index;
 using Xunit;
@@ -18,11 +19,8 @@ public sealed class VaultMonitorDeadlockTests
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         using var temp = new TempDirectory();
-        var vaultRoot = System.IO.Path.Combine(temp.Path, "vault");
-        var state = System.IO.Path.Combine(temp.Path, "state");
-        var vault = new Vault(vaultRoot, System.IO.Path.Combine(state, "external-notes.json"));
-        vault.Prepare();
-        using var index = new SearchIndex(vault, System.IO.Path.Combine(state, "index.sqlite"), TimeZoneInfo.Local);
+        var (vaultRoot, state, vault, openedIndex) = TestPipeline.OpenIndexedVault(temp);
+        using var index = openedIndex;
         using var monitor = new VaultMonitor(vault, index, state, 0.01);
         var deliveries = 0;
         monitor.ChangeReceived += _ => Interlocked.Increment(ref deliveries);
@@ -42,6 +40,7 @@ public sealed class VaultMonitorDeadlockTests
         }, cancellationToken);
 
         await Task.WhenAll(work, refresher).WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
+        await Wait.Until(() => Volatile.Read(ref deliveries) > 0, "a change delivery");
         Assert.True(monitor.IsRunning);
     }
 }

@@ -55,7 +55,7 @@ public sealed class FolderPersistenceTests
         using var drafts = new NoteDraftStore(temp.Path);
         File.WriteAllText(drafts.Url, "{\"text\":\"unsafe\",\"pinOnSave\":true,\"folder\":{\"rawValue\":\"../escape\"}}");
         Assert.Empty(drafts.Load());
-        Assert.True(File.Exists(Path.Combine(temp.Path, "draft-note.corrupt.json")));
+        Assert.True(File.Exists(Path.Combine(temp.Path, NoteDraftStore.CorruptFileName)));
         File.WriteAllText(drafts.Url, "{\"text\":\"legacy\",\"pinOnSave\":true}");
         Assert.Equal(new("legacy", true), drafts.LoadSnapshot());
     }

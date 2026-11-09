@@ -90,7 +90,7 @@ func checkCaptureService() async throws {
     _ = try await service.save(newNestedPrepared)
     _ = try await service.save(newNestedPrepared)
     let newNestedText = try checkRead(newNestedPrepared.destination.url)
-    try require(newNestedText.components(separatedBy: checkCaptureMarker(newNestedCapture.id)).count - 1 == 1,
+    try require(checkCount(checkCaptureMarker(newNestedCapture.id), in: newNestedText) == 1,
                 "replaying a queued nested destination should append its capture only once")
 
     do {
@@ -138,11 +138,9 @@ func checkCaptureService() async throws {
     let retryCapture = Capture(id: retryID, createdAt: now, content: .text("retry identity"), source: CaptureSource(appName: "Test"))
     let prepared = try await service.prepare(retryCapture, noteTitle: "Retry Destination")
     try FileManager.default.createDirectory(at: prepared.destination.url, withIntermediateDirectories: false)
-    do {
+    try await expectRejection("a directory cannot be appended as a note", matching: isPOSIX(.EISDIR)) {
         _ = try await service.save(prepared)
-        throw CheckFailure.failed("a directory cannot be appended as a note")
-    } catch is CheckFailure { throw CheckFailure.failed("prepared save should have failed") }
-    catch {}
+    }
     try FileManager.default.removeItem(at: prepared.destination.url)
     _ = try await sessions.start(name: "Changed Session")
     let retried = try await service.save(prepared)
@@ -150,7 +148,7 @@ func checkCaptureService() async throws {
     let retryText = try checkRead(prepared.destination.url)
     try require(retried.captureID == retryID && replayed == retried && retried.destination == prepared.destination,
                 "retry must preserve ID, date, and destination after session changes")
-    try require(retryText.components(separatedBy: checkCaptureMarker(retryID)).count - 1 == 1,
+    try require(checkCount(checkCaptureMarker(retryID), in: retryText) == 1,
                 "replaying a prepared capture must not duplicate its marker")
     let parsedRetry = NoteParser.parse(contents: retryText, notePath: "Retry Destination.md", titleFallback: "", calendar: calendar)
     try require(parsedRetry.blocks.first?.createdAt == now, "retry must preserve the original timestamp")
@@ -219,7 +217,7 @@ private func checkOutsideSessionWrites(base: URL, calendar: Calendar, now: Date,
         _ = try await service.save(prepared)
         _ = try await service.save(prepared)
         let text = try checkRead(prepared.destination.url)
-        try require(text.components(separatedBy: checkCaptureMarker(capture.id)).count - 1 == 1,
+        try require(checkCount(checkCaptureMarker(capture.id), in: text) == 1,
                     "outside capture replay must keep its destination without duplicating the block")
     }
     let region = try await service.saveImage(png: png, source: CaptureSource(), noteTitle: "science/Capture")
@@ -313,11 +311,9 @@ private func checkDirectCaptureMethodsRejectLinks(base: URL, calendar: Calendar,
                                     vault: textVault, calendar: calendar, now: { now })
     let textWriter = NoteWriter(vault: textVault, calendar: calendar)
     let textService = CaptureService(vault: textVault, sessions: textSessions, writer: textWriter, now: { now })
-    do {
+    try await expectRejection("direct saveText must reject a linked Inbox.md", matching: isPOSIX(.ELOOP)) {
         _ = try await textService.saveText("must not escape", source: CaptureSource(), noteTitle: nil)
-        throw CheckFailure.failed("direct saveText must reject a linked Inbox.md")
-    } catch is CheckFailure { throw CheckFailure.failed("direct saveText unexpectedly accepted a linked Inbox.md") }
-    catch {}
+    }
     let outsideText = try checkRead(outsideNote)
     try require(outsideText == "outside text\n", "direct saveText changed the Inbox symlink target")
 
@@ -331,16 +327,12 @@ private func checkDirectCaptureMethodsRejectLinks(base: URL, calendar: Calendar,
                                      vault: imageVault, calendar: calendar, now: { now })
     let imageWriter = NoteWriter(vault: imageVault, calendar: calendar)
     let imageService = CaptureService(vault: imageVault, sessions: imageSessions, writer: imageWriter, now: { now })
-    do {
+    try await expectRejection("direct saveImage must reject a linked assets directory", matching: isPOSIX(.ENOTDIR)) {
         _ = try await imageService.saveImage(png: png, source: CaptureSource(), noteTitle: nil)
-        throw CheckFailure.failed("direct saveImage must reject a linked assets directory")
-    } catch is CheckFailure { throw CheckFailure.failed("direct saveImage unexpectedly accepted a linked assets directory") }
-    catch {}
-    do {
+    }
+    try await expectRejection("direct NoteWriter.saveImage must reject a linked assets directory", matching: isPOSIX(.ENOTDIR)) {
         _ = try await imageWriter.saveImage(png: png, createdAt: now)
-        throw CheckFailure.failed("direct NoteWriter.saveImage must reject a linked assets directory")
-    } catch is CheckFailure { throw CheckFailure.failed("direct NoteWriter.saveImage unexpectedly accepted a linked assets directory") }
-    catch {}
+    }
     let outsideAssetNames = try fm.contentsOfDirectory(atPath: outsideAssets.path)
     try require(outsideAssetNames.isEmpty, "image writes through a linked assets directory created an outside file")
 }

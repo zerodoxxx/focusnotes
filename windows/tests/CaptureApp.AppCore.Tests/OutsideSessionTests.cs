@@ -46,7 +46,7 @@ public sealed class OutsideSessionTests
     public async Task DetachedBrowseAndInboxNamesRespectExplicitDestinations()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = await coordinator.StartSessionAsync("Thermo");
         var destination = new Destination(Path.Combine(pipeline.Vault.Root, "Picked.md"), "Picked", NoteKind.Note);
@@ -65,7 +65,7 @@ public sealed class OutsideSessionTests
     public async Task OutsideCapturePromptsImmediatelyAndDefaultCommitUsesJournaledInbox(bool image, bool nestedInbox)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var session = await coordinator.StartSessionAsync("Inbox");
@@ -116,7 +116,7 @@ public sealed class OutsideSessionTests
         string sessionBefore;
         string nestedUrl;
         const string nestedBefore = "# Inbox\n\nPreserve nested Inbox.\n";
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
             var session = await coordinator.StartSessionAsync("Inbox");
@@ -138,7 +138,7 @@ public sealed class OutsideSessionTests
                 Assert.Equal("Inbox.md", pipeline.Index.Capture(id)?.NotePath);
             }
         }
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.Equal(replay ? 1 : 0, await reopened.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
         Assert.Equal("Inbox.md", reopened.Index.Capture(id)?.NotePath);
         Assert.Equal(sessionBefore, File.ReadAllText(sessionUrl));
@@ -157,7 +157,7 @@ public sealed class OutsideSessionTests
     public async Task FixedDestinationsBypassRoutingBeforePreparation(bool image)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var destination = new Destination(pipeline.Vault.InboxUrl, Vault.InboxTitle, NoteKind.Inbox);
         var registry = Path.Combine(pipeline.StateDirectory, "external-notes.json");
         const string invalidRegistry = "{invalid JSON";
@@ -185,7 +185,7 @@ public sealed class OutsideSessionTests
     public async Task OutsideCaptureChosenTitleWorksWithOrWithoutSession(bool hasSession)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = hasSession ? await coordinator.StartSessionAsync("Thermo") : null;
         await coordinator.StageAsync(PendingCaptures.Selection("chosen title capture", new()) with { OutsideSession = true });
@@ -241,7 +241,6 @@ public sealed class OutsideSessionTests
         Assert.False(plain.OutsideSession);
         Assert.Equal(session, plain.Destination);
 
-        // Without a session the outside launch matches the plain one.
         var idle = new QuickNoteState(null, pinOnSave: true, outsideSession: true);
         Assert.False(idle.OutsideSession);
         Assert.Null(idle.Destination);
@@ -261,7 +260,7 @@ public sealed class OutsideSessionTests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Requires Windows destination-sharing semantics.");
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var session = await coordinator.StartSessionAsync("Thermo");
         const string draft = "Biology\n\nretryroutingneedle";
@@ -289,7 +288,7 @@ public sealed class OutsideSessionTests
         Assert.True(await coordinator.BeginTermination());
         Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
         Assert.Empty(pipeline.Journal.RecordPaths());
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.Equal(0, await reopened.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
         Assert.Null(reopened.Index.Capture(failed.Prepared.Capture.Id));
         Assert.Equal(failedBefore, File.ReadAllBytes(failedUrl));
@@ -302,7 +301,7 @@ public sealed class OutsideSessionTests
     public void OutsideIntentRoundTripsInTheJournal()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         pipeline.Sessions.Start("Thermo");
         var job = pipeline.PrepareNote("Biology\n\nbody", new(), outsideSession: true);
         pipeline.Journal.Store(job);
@@ -310,7 +309,4 @@ public sealed class OutsideSessionTests
         Assert.True(restored.NoteOutsideSession);
         Assert.Equal(job.Prepared.Destination, restored.Prepared.Destination);
     }
-
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
 }

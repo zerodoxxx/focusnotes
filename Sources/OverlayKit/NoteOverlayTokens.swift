@@ -4,11 +4,11 @@ import AppKit
 public extension OverlayTheme {
     // Shared card surface
     static let cardFill = NSColor(name: NSColor.Name("OverlayKit.cardFill"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return dark ? NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1) : NSColor(white: 1, alpha: 1)
     })
     static let cardBorder = NSColor(name: NSColor.Name("OverlayKit.cardBorder"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: 0.10)
     })
     static let cardRadius: CGFloat = 12
@@ -28,6 +28,8 @@ public extension OverlayTheme {
     static let menuRowInset: CGFloat = 4
     static let menuRowRadius: CGFloat = 6
     static let menuContentInset: CGFloat = 12
+    /// Content inset inside a menu row, which itself sits menuRowInset inside the card.
+    static let menuRowContentInset: CGFloat = menuContentInset - menuRowInset
     static let menuIconSize: CGFloat = 14
     static let menuIconGap: CGFloat = 8
     static let menuDisabledAlpha: CGFloat = 0.4

@@ -28,7 +28,7 @@ public static class ControllerSelfTest
         var stateDirectory = Path.Combine(baseDirectory, "State");
         var homeDirectory = Path.Combine(baseDirectory, "Home");
         Directory.CreateDirectory(homeDirectory);
-        var pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, null, 0.12, homeDirectory: homeDirectory);
+        var pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, null, SelfTest.SelfTestTextCoverage, homeDirectory: homeDirectory);
         var host = new HeadlessCaptureHost();
         var coordinator = new CaptureCoordinator(pipeline, host);
         var terminated = false;
@@ -277,7 +277,7 @@ public static class ControllerSelfTest
         var vault = Path.Combine(baseDirectory, "QuitVault");
         var state = Path.Combine(baseDirectory, "QuitState");
         var home = Path.Combine(baseDirectory, "Home");
-        var pipeline = CapturePipeline.Open(vault, state, zone, null, 0.12, homeDirectory: home);
+        var pipeline = CapturePipeline.Open(vault, state, zone, null, SelfTest.SelfTestTextCoverage, homeDirectory: home);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var release = new ManualResetEventSlim();
         var acquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -320,7 +320,7 @@ public static class ControllerSelfTest
             finally { pipeline.Dispose(); }
         }
 
-        pipeline = CapturePipeline.Open(vault, state, zone, null, 0.12, homeDirectory: home);
+        pipeline = CapturePipeline.Open(vault, state, zone, null, SelfTest.SelfTestTextCoverage, homeDirectory: home);
         try
         {
             await pipeline.ReplayUnsavedAsync().ConfigureAwait(false);

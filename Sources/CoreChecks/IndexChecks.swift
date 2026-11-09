@@ -3,6 +3,19 @@ import Core
 import SQLite3
 import Foundation
 
+/// A manual note whose paragraph contains a U+200B-only line must stay one searchable block.
+func checkZeroWidthSpaceSearch() async throws {
+    let base = try checkMakeDirectory("zero-width-search")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    try vault.prepare()
+    try checkWrite("# Fixture\n\nalpha\n\u{200B}\nbeta\n", to: vault.root.appendingPathComponent("Fixture.md"))
+    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("index.sqlite"), calendar: checkCalendar())
+    _ = try await index.sync()
+    let hits = try await index.search("alpha beta")
+    try require(hits.count == 1 && hits[0].notePath == "Fixture.md", "both words of a zero-width-space paragraph must match one block")
+}
+
 func checkSearchIndex() async throws {
     let base = try checkMakeDirectory("index")
     defer { checkRemoveDirectory(base) }
@@ -172,12 +185,9 @@ func checkSearchIndex() async throws {
         let staleMtime = try await index.assetsMissingText()
         try require(staleMtime == [imagePath], "changed asset mtime alone should invalidate OCR")
         try await index.setImageText(assetPath: imagePath, text: "persistedocr", fingerprint: SearchIndex.imageFingerprint(try Data(contentsOf: vault.root.appendingPathComponent(imagePath))))
-        // Invalid paths cannot access files outside the vault.
-        do {
+        try await expectRejection("setImageText should reject paths outside the vault", matching: isPOSIX(.EPERM)) {
             try await index.setImageText(assetPath: "../outside.png", text: "bad", fingerprint: SearchIndex.imageFingerprint(Data()))
-            throw CheckFailure.failed("setImageText should reject paths outside the vault")
-        } catch is CheckFailure { throw CheckFailure.failed("setImageText accepted an outside path") }
-        catch {}
+        }
     }
 
     do {
@@ -212,6 +222,7 @@ func checkSearchIndex() async throws {
     }
     try await checkIndexRankingAndSharedAssets()
     try await checkOCRFingerprintRace()
+    try await checkOCRFingerprintRaceWithMixedCaseRecheck()
     try await checkIndexRejectsLinkedManagedReads()
     try await checkIndexSkipsUnreadableNote()
     try await checkIndexSyncSurvivesChangingNote()
@@ -221,7 +232,10 @@ func checkSearchIndex() async throws {
 private func checkIndexSkipsUnreadableNote() async throws {
     // Root can read mode-000 files, so this filesystem behavior check only applies
     // to the normal non-root test account used by local and CI runs.
-    guard getuid() != 0 else { return }
+    guard getuid() != 0 else {
+        checkSkip("unreadable-note index check: root can read mode-000 files")
+        return
+    }
 
     let base = try checkMakeDirectory("index-unreadable-note")
     let vault = Vault(root: base.appendingPathComponent("Vault"))
@@ -500,7 +514,6 @@ private func checkOCRFingerprintRace() async throws {
     _ = try await checkIndexOperation("OCR race initial store \(path)") {
         try await index.setImageText(assetPath: path, text: "originalocr", fingerprint: originalFingerprint)
     }
-    // Replace during OCR, even preserving the old size and modification time.
     try replacement.write(to: url, options: .atomic)
     try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
     guard let replacementSnapshot = try vault.fileSnapshot(relativePath: path) else {
@@ -535,6 +548,45 @@ private func checkOCRFingerprintRace() async throws {
     let currentMissing = try await checkIndexOperation("OCR race current full scan \(path)") { try await index.assetsMissingText() }
     try require(replacementStored && currentHits.count == 1 && currentChangedPathScan.isEmpty && currentMissing.isEmpty,
                 "next OCR pass should store only image B's text")
+}
+
+private func checkOCRFingerprintRaceWithMixedCaseRecheck() async throws {
+    let base = try checkMakeDirectory("ocr-race-mixed-case")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault"))
+    try vault.prepare()
+    let calendar = checkCalendar()
+    let path = "assets/sub/x.png"
+    let url = vault.root.appendingPathComponent(path)
+    let original = Data([1, 2, 3, 4])
+    let replacement = Data([4, 3, 2, 1])
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try original.write(to: url)
+    let modified = checkDate(2026, 10, 13, 10, 0)
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+    let capture = Capture(id: UUID(), createdAt: checkDate(2026, 10, 13, 10, 0), content: .image(assetPath: path), source: CaptureSource())
+    try await writer.append(capture, to: vault.inboxURL, title: Vault.inboxTitle)
+    let index = try SearchIndex(vault: vault, databaseURL: base.appendingPathComponent("index.sqlite"), calendar: calendar)
+    _ = try await checkIndexOperation("mixed-case OCR sync") { try await index.sync() }
+    let originalStored = try await checkIndexOperation("mixed-case OCR initial store \(path)") {
+        try await index.setImageText(assetPath: path, text: "originalocr", fingerprint: SearchIndex.imageFingerprint(original))
+    }
+    try replacement.write(to: url, options: .atomic)
+    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    let changedPathScan = try await checkIndexOperation("mixed-case OCR changed-path scan \(path)") {
+        try await index.assetsMissingText(recheckingAssetPaths: ["ASSETS/Sub/X.png"])
+    }
+    try require(originalStored && changedPathScan == [path],
+                "Mixed-case recheck spelling must re-digest a same-metadata replacement (initial store: \(originalStored), changed paths: \(changedPathScan))")
+    let replacementStored = try await checkIndexOperation("mixed-case OCR replacement store \(path)") {
+        try await index.setImageText(assetPath: path, text: "replacementocr", fingerprint: SearchIndex.imageFingerprint(replacement))
+    }
+    let currentChangedPathScan = try await checkIndexOperation("mixed-case OCR current changed-path scan \(path)") {
+        try await index.assetsMissingText(recheckingAssetPaths: ["ASSETS/Sub/X.png"])
+    }
+    try require(replacementStored && currentChangedPathScan.isEmpty,
+                "Mixed-case recheck must accept the replacement once its OCR is stored (stored: \(replacementStored), changed paths: \(currentChangedPathScan))")
 }
 
 private func checkIndexRejectsLinkedManagedReads() async throws {
@@ -607,24 +659,18 @@ private func checkIndexRejectsLinkedManagedReads() async throws {
     try require(Set(missing) == Set(assetPaths) && Set(changedLink) == Set(assetPaths),
                 "full and changed-path scans must reject same-metadata linked assets (full: \(missing), changed: \(changedLink), expected: \(assetPaths))")
 
-    for path in assetPaths {
-        do {
-            _ = try await index.setImageText(
+    for (path, code) in [(symlinkAssetPath, POSIXErrorCode.ELOOP), (hardlinkAssetPath, POSIXErrorCode.EPERM)] {
+        try await expectRejection("setImageText linked outside asset at \(path)", matching: isPOSIX(code)) {
+            try await index.setImageText(
                 assetPath: path, text: "readoutsideafterlinksecret",
                 fingerprint: SearchIndex.imageFingerprint(outsideAssetBytes)
             )
-            throw CheckFailure.failed("setImageText read a linked outside asset at \(path)")
-        } catch is CheckFailure {
-            throw CheckFailure.failed("setImageText accepted a linked outside asset at \(path)")
-        } catch {}
+        }
     }
-    for note in [symlinkNote, hardlinkNote] {
-        do {
+    for (note, code) in [(symlinkNote, POSIXErrorCode.ELOOP), (hardlinkNote, POSIXErrorCode.EPERM)] {
+        try await expectRejection("reindex linked outside note \(note.lastPathComponent)", matching: isPOSIX(code)) {
             try await index.reindex(note: note)
-            throw CheckFailure.failed("reindex read a linked outside note at \(note.lastPathComponent)")
-        } catch is CheckFailure {
-            throw CheckFailure.failed("reindex accepted a linked outside note at \(note.lastPathComponent)")
-        } catch {}
+        }
     }
 
     let leakedNote = try await index.search("outside-note-secret")

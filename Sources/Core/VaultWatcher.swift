@@ -85,14 +85,42 @@ public final class VaultWatcher: @unchecked Sendable {
     private let queueKey = DispatchSpecificKey<Bool>()
     private var maximumVnodeDescriptors = VaultWatcher.defaultMaximumVnodeDescriptors
     private var maximumParentVnodeDescriptors = VaultWatcher.defaultMaximumParentVnodeDescriptors
+    private var maximumParentDescriptors: Int {
+        min(maximumParentVnodeDescriptors, maximumVnodeDescriptors)
+    }
     private var fallbackInterval = VaultWatcher.defaultFallbackInterval
     private var failNextStreamStartForChecks = false
     // Includes descriptors whose dispatch sources have been cancelled but whose
     // cancel handlers have not closed them yet.
     private var retainedVnodeDescriptorCount = 0
-    private var reportedWatchIssues = Set<String>()
+    private var reportedWatchIssues = Set<WatchIssue>()
 
-    // FSEvents is intentionally limited to the vault root.
+    private enum WatchIssue: Hashable {
+        case vaultStreamUnavailable
+        case registrySnapshot
+        case registryWatch
+        case parentWatchCap
+        case fileWatchCap
+        case externalWatchFallback
+        case parentOpen(String)
+        case fileOpen(String)
+        case snapshot(String)
+
+        var key: String {
+            switch self {
+            case .vaultStreamUnavailable: return "vault-stream-unavailable"
+            case .registrySnapshot: return "registry-snapshot"
+            case .registryWatch: return "registry-watch"
+            case .parentWatchCap: return "parent-watch-cap"
+            case .fileWatchCap: return "file-watch-cap"
+            case .externalWatchFallback: return "external-watch-fallback"
+            case .parentOpen(let path): return "parent-open:\(path)"
+            case .fileOpen(let id): return "file-open:\(id)"
+            case .snapshot(let id): return "snapshot:\(id)"
+            }
+        }
+    }
+
     private var stream: FSEventStreamRef?
     private var streamGeneration = 0
     private var fallbackTimer: DispatchSourceTimer?
@@ -175,7 +203,7 @@ public final class VaultWatcher: @unchecked Sendable {
     @_spi(Checks)
     public var reportedWatchIssuesForChecks: Set<String> {
         var issues = Set<String>()
-        performOnQueue { issues = self.reportedWatchIssues }
+        performOnQueue { issues = Set(self.reportedWatchIssues.map(\.key)) }
         return issues
     }
 
@@ -219,8 +247,7 @@ public final class VaultWatcher: @unchecked Sendable {
         performOnQueue { self.stopOnQueue() }
     }
 
-    /// Reloads the cached exact-path snapshot after a local registration. The
-    /// registry cache generation avoids rescanning paths on ordinary commits.
+    /// The registry cache generation avoids rescanning paths on ordinary commits.
     public func refreshExternalRoots() {
         performOnQueue {
             guard self.stream != nil else { return }
@@ -236,12 +263,12 @@ public final class VaultWatcher: @unchecked Sendable {
         guard stream == nil else { return }
         guard let stream = createStartedVaultStream() else {
             reportWatchIssue(
-                key: "vault-stream-unavailable",
+                key: .vaultStreamUnavailable,
                 message: "Could not start the vault FSEvents stream; requesting a full sync."
             )
             return
         }
-        clearWatchIssue("vault-stream-unavailable")
+        clearWatchIssue(.vaultStreamUnavailable)
         self.stream = stream
         streamGeneration += 1
 
@@ -346,16 +373,9 @@ public final class VaultWatcher: @unchecked Sendable {
                                   context: "loading the external note registry", notify: true)
             replaceRegistryFileWatchAfterChange()
             return
-        } catch let error as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            reportRegistryFailure(error, fingerprint: fingerprint,
-                                  context: "loading the external note registry", notify: true)
-            replaceRegistryFileWatchAfterChange()
-            return
         } catch {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            let typedError = ExternalNoteRegistryError.unreadableRegistry
-            Self.logger.error("Unexpected error loading the external note registry: \(String(describing: error), privacy: .public)")
+            let typedError = registryError(from: error, context: "loading the external note registry")
+            let fingerprint = readRegistryFingerprint(context: "loading the external note registry")
             reportRegistryFailure(typedError, fingerprint: fingerprint,
                                   context: "loading the external note registry", notify: true)
             replaceRegistryFileWatchAfterChange()
@@ -381,17 +401,12 @@ public final class VaultWatcher: @unchecked Sendable {
         let locations: [VaultNoteLocation]
         do {
             locations = try vault.externalNoteLocations(snapshot: snapshot)
-        } catch let error as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            _ = reportRegistryFailure(error, fingerprint: fingerprint,
-                                      context: "building the registered external-note snapshot", notify: false)
-            return (true, error, false)
         } catch {
-            Self.logger.error("Unexpected error building the external-note snapshot: \(String(describing: error), privacy: .public)")
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            _ = reportRegistryFailure(.unreadableRegistry, fingerprint: fingerprint,
+            let typedError = registryError(from: error, context: "building the external-note snapshot")
+            let fingerprint = readRegistryFingerprint(context: "building the registered external-note snapshot")
+            _ = reportRegistryFailure(typedError, fingerprint: fingerprint,
                                       context: "building the registered external-note snapshot", notify: false)
-            return (true, .unreadableRegistry, false)
+            return (true, typedError, false)
         }
 
         registryGeneration = generation
@@ -401,7 +416,7 @@ public final class VaultWatcher: @unchecked Sendable {
         reconcileExternalWatches()
         if registryWasInvalid {
             lastRegistryError = nil
-            clearWatchIssue("registry-snapshot")
+            clearWatchIssue(.registrySnapshot)
             return (true, nil, true)
         }
         return (requestSyncWhenApplied, nil, false)
@@ -428,14 +443,14 @@ public final class VaultWatcher: @unchecked Sendable {
                 }
                 shouldReload = true
             } catch let registryError as ExternalNoteRegistryError {
-                let after = try? vault.externalRegistryFingerprint()
+                let after = readRegistryFingerprint(context: "loading the external note registry")
                 if before == after {
                     registryFingerprint = after ?? nil
                     throw StableRegistryFailure(registryError: registryError, fingerprint: after ?? nil)
                 }
                 shouldReload = true
             } catch {
-                let after = try? vault.externalRegistryFingerprint()
+                let after = readRegistryFingerprint(context: "loading the external note registry")
                 if before == after { throw error }
                 shouldReload = true
             }
@@ -447,7 +462,7 @@ public final class VaultWatcher: @unchecked Sendable {
         let desiredParentPaths = parentPathsByNoteID()
         reconcileParentWatches(desiredParentPaths, forceRearm: forceParentRearm)
 
-        let maximumParents = min(maximumParentVnodeDescriptors, maximumVnodeDescriptors)
+        let maximumParents = maximumParentDescriptors
         let maximumFiles = max(0, maximumVnodeDescriptors - 2 - maximumParents)
         var selectedFiles = Set(fileWatches.keys.filter { externalLocationsByID[$0] != nil })
         for id in externalLocationsByID.keys.sorted() where selectedFiles.count < maximumFiles {
@@ -463,39 +478,41 @@ public final class VaultWatcher: @unchecked Sendable {
         updatePollingFallbackIDs()
         let validNoteIDs = Set(externalLocationsByID.keys)
         let validParentPaths = Set(desiredParentPaths.values)
-        reportedWatchIssues = Set(reportedWatchIssues.filter { key in
-            if key.hasPrefix("file-open:") || key.hasPrefix("snapshot:") {
-                return validNoteIDs.contains(String(key.dropFirst(key.hasPrefix("file-open:") ? "file-open:".count : "snapshot:".count)))
+        // Literal issues carry no identifier, so only keyed issues can go stale when a note or parent leaves the registry.
+        reportedWatchIssues = reportedWatchIssues.filter { issue in
+            switch issue {
+            case .fileOpen(let id), .snapshot(let id):
+                return validNoteIDs.contains(id)
+            case .parentOpen(let path):
+                return validParentPaths.contains(path)
+            default:
+                return true
             }
-            if key.hasPrefix("parent-open:") {
-                return validParentPaths.contains(String(key.dropFirst("parent-open:".count)))
-            }
-            return true
-        })
+        }
 
         if Set(desiredParentPaths.values).count > maximumParents {
             reportWatchIssue(
-                key: "parent-watch-cap",
+                key: .parentWatchCap,
                 message: "External notes exceed the parent vnode limit; \(pollingFallbackIDs.count) registered notes are covered by polling."
             )
         } else {
-            clearWatchIssue("parent-watch-cap")
+            clearWatchIssue(.parentWatchCap)
         }
         if externalLocationsByID.count > maximumFiles {
             reportWatchIssue(
-                key: "file-watch-cap",
+                key: .fileWatchCap,
                 message: "External notes exceed the file vnode limit; \(pollingFallbackIDs.count) registered notes are covered by polling."
             )
         } else {
-            clearWatchIssue("file-watch-cap")
+            clearWatchIssue(.fileWatchCap)
         }
         if !pollingFallbackIDs.isEmpty {
             reportWatchIssue(
-                key: "external-watch-fallback",
+                key: .externalWatchFallback,
                 message: "Some registered external notes do not have both vnode sources; exact-path polling is active for \(pollingFallbackIDs.count) notes."
             )
         } else {
-            clearWatchIssue("external-watch-fallback")
+            clearWatchIssue(.externalWatchFallback)
         }
     }
 
@@ -547,7 +564,7 @@ public final class VaultWatcher: @unchecked Sendable {
         guard reserveVnodeDescriptor() else { return nil }
         guard let descriptor = vault.openExternalWatchDirectory(relativePath: path) else {
             releaseVnodeDescriptor()
-            reportWatchIssue(key: "parent-open:\(path)", message: "Could not open an external note parent vnode; registered notes below it will be polled.")
+            reportWatchIssue(key: .parentOpen(path), message: "Could not open an external note parent vnode; registered notes below it will be polled.")
             return nil
         }
         let token = UUID()
@@ -562,7 +579,7 @@ public final class VaultWatcher: @unchecked Sendable {
             self?.vnodeDescriptorDidClose()
         }
         source.resume()
-        clearWatchIssue("parent-open:\(path)")
+        clearWatchIssue(.parentOpen(path))
         return VnodeWatch(token: token, descriptor: descriptor, source: source)
     }
 
@@ -572,11 +589,11 @@ public final class VaultWatcher: @unchecked Sendable {
         do {
             snapshot = try externalNoteSnapshot(id: id)
             externalSnapshotFailures.remove(id)
-            clearWatchIssue("snapshot:\(id)")
+            clearWatchIssue(.snapshot(id))
         } catch {
             externalSnapshotFailures.insert(id)
             reportWatchIssue(
-                key: "snapshot:\(id)",
+                key: .snapshot(id),
                 message: "Could not snapshot a registered external note; requesting a full sync and keeping it on the polling fallback."
             )
             return
@@ -593,17 +610,17 @@ public final class VaultWatcher: @unchecked Sendable {
         if let existing = fileWatches.removeValue(forKey: id) { cancel(existing) }
 
         guard fingerprint != nil else {
-            clearWatchIssue("file-open:\(id)")
+            clearWatchIssue(.fileOpen(id))
             return
         }
         guard allowWatch else { return }
         guard reserveVnodeDescriptor() else {
-            reportWatchIssue(key: "file-watch-cap", message: "External file vnode descriptor limit reached; exact-path polling is active.")
+            reportWatchIssue(key: .fileWatchCap, message: "External file vnode descriptor limit reached; exact-path polling is active.")
             return
         }
         guard let descriptor = vault.openExternalWatchFile(location) else {
             releaseVnodeDescriptor()
-            reportWatchIssue(key: "file-open:\(id)", message: "Could not open a registered external note vnode; exact-path polling is active for that note.")
+            reportWatchIssue(key: .fileOpen(id), message: "Could not open a registered external note vnode; exact-path polling is active for that note.")
             return
         }
         let token = UUID()
@@ -619,7 +636,7 @@ public final class VaultWatcher: @unchecked Sendable {
         }
         source.resume()
         fileWatches[id] = VnodeWatch(token: token, descriptor: descriptor, source: source)
-        clearWatchIssue("file-open:\(id)")
+        clearWatchIssue(.fileOpen(id))
     }
 
     private func externalNoteSnapshot(id: String) throws -> VaultFileSnapshot? {
@@ -681,7 +698,7 @@ public final class VaultWatcher: @unchecked Sendable {
         guard registryParentWatch == nil else { return false }
         guard reserveVnodeDescriptors(2) else {
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "The watcher descriptor limit prevented registry vnode setup; registry fingerprint polling is active."
             )
             return false
@@ -693,7 +710,7 @@ public final class VaultWatcher: @unchecked Sendable {
         } catch {
             releaseVnodeDescriptors(2)
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "Could not open external registry vnode descriptors (\(String(describing: error))); registry fingerprint polling is active."
             )
             return false
@@ -703,7 +720,8 @@ public final class VaultWatcher: @unchecked Sendable {
             do {
                 guard try vault.externalRegistrySnapshot() != nil else { return false }
             } catch let registryError as ExternalNoteRegistryError {
-                reportRegistryFailure(registryError, fingerprint: try? vault.externalRegistryFingerprint(),
+                let fingerprint = readRegistryFingerprint(context: "checking registry watch availability")
+                reportRegistryFailure(registryError, fingerprint: fingerprint,
                                       context: "checking registry watch availability", notify: true)
                 return false
             } catch {
@@ -713,7 +731,7 @@ public final class VaultWatcher: @unchecked Sendable {
                 return false
             }
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "External registry vnode descriptors are unavailable; registry fingerprint polling is active."
             )
             return false
@@ -723,7 +741,7 @@ public final class VaultWatcher: @unchecked Sendable {
         guard let parentDescriptor = descriptors.parent.descriptor else {
             releaseVnodeDescriptors(2)
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "The external registry parent descriptor was already closed; registry fingerprint polling is active."
             )
             return false
@@ -742,7 +760,7 @@ public final class VaultWatcher: @unchecked Sendable {
         registryParentWatch = VnodeWatch(token: parentToken, descriptor: parentDescriptor, source: parentSource)
 
         installRegistryFileWatch(descriptors.file)
-        clearWatchIssue("registry-watch")
+        clearWatchIssue(.registryWatch)
         return true
     }
 
@@ -823,6 +841,23 @@ public final class VaultWatcher: @unchecked Sendable {
         return true
     }
 
+    /// Callers treat an unreadable fingerprint as unknown, so a failed read is logged
+    /// here rather than discarded.
+    private func readRegistryFingerprint(context: String) -> ExternalNoteRegistry.Fingerprint? {
+        do {
+            return try vault.externalRegistryFingerprint()
+        } catch {
+            Self.logger.error("Could not read the external note registry fingerprint while \(context, privacy: .public): \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    private func registryError(from error: Error, context: String) -> ExternalNoteRegistryError {
+        if let typedError = error as? ExternalNoteRegistryError { return typedError }
+        Self.logger.error("Unexpected error \(context, privacy: .public): \(String(describing: error), privacy: .public)")
+        return .unreadableRegistry
+    }
+
     @discardableResult
     private func reportRegistryFailure(
         _ error: ExternalNoteRegistryError,
@@ -839,14 +874,14 @@ public final class VaultWatcher: @unchecked Sendable {
         return true
     }
 
-    private func reportWatchIssue(key: String, message: String) {
-        guard reportedWatchIssues.insert(key).inserted else { return }
+    private func reportWatchIssue(key issue: WatchIssue, message: String) {
+        guard reportedWatchIssues.insert(issue).inserted else { return }
         Self.logger.warning("\(message, privacy: .public)")
         onChange(VaultChange(notesChanged: [], assetsChanged: [], needsFullSync: true))
     }
 
-    private func clearWatchIssue(_ key: String) {
-        reportedWatchIssues.remove(key)
+    private func clearWatchIssue(_ issue: WatchIssue) {
+        reportedWatchIssues.remove(issue)
     }
 
     private func enqueueExternalFlush(_ update: () -> Void) {
@@ -886,11 +921,11 @@ public final class VaultWatcher: @unchecked Sendable {
             do {
                 current = try externalNoteSnapshot(id: id)
                 externalSnapshotFailures.remove(id)
-                clearWatchIssue("snapshot:\(id)")
+                clearWatchIssue(.snapshot(id))
             } catch {
                 externalSnapshotFailures.insert(id)
                 reportWatchIssue(
-                    key: "snapshot:\(id)",
+                    key: .snapshot(id),
                     message: "Could not poll a registered external note; requesting a full sync and retaining its polling fallback."
                 )
                 continue
@@ -980,11 +1015,11 @@ public final class VaultWatcher: @unchecked Sendable {
             do {
                 current = try externalNoteSnapshot(id: id)
                 externalSnapshotFailures.remove(id)
-                clearWatchIssue("snapshot:\(id)")
+                clearWatchIssue(.snapshot(id))
             } catch {
                 externalSnapshotFailures.insert(id)
                 reportWatchIssue(
-                    key: "snapshot:\(id)",
+                    key: .snapshot(id),
                     message: "Could not snapshot a changed external note; requesting a full sync and keeping it on the polling fallback."
                 )
                 continue
@@ -1025,7 +1060,7 @@ public final class VaultWatcher: @unchecked Sendable {
         do {
             currentFingerprint = try vault.externalRegistryFingerprint()
         } catch let registryError as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
+            let fingerprint = readRegistryFingerprint(context: "checking its fingerprint")
             if reportRegistryFailure(registryError, fingerprint: fingerprint,
                                      context: "checking its fingerprint", notify: false) {
                 reportedError = registryError
@@ -1034,10 +1069,10 @@ public final class VaultWatcher: @unchecked Sendable {
             replaceRegistryFileWatchAfterChange()
             return
         } catch {
-            Self.logger.error("Unexpected error checking the external registry fingerprint: \(String(describing: error), privacy: .public)")
-            if reportRegistryFailure(.unreadableRegistry, fingerprint: nil,
+            let typedError = registryError(from: error, context: "checking the external registry fingerprint")
+            if reportRegistryFailure(typedError, fingerprint: nil,
                                      context: "checking its fingerprint", notify: false) {
-                reportedError = .unreadableRegistry
+                reportedError = typedError
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
@@ -1061,20 +1096,12 @@ public final class VaultWatcher: @unchecked Sendable {
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
-        } catch let registryError as ExternalNoteRegistryError {
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            if reportRegistryFailure(registryError, fingerprint: fingerprint,
-                                     context: "reloading after a registry change", notify: false) {
-                reportedError = registryError
-                needsFullSync = true
-            }
-            replaceRegistryFileWatchAfterChange()
         } catch {
-            Self.logger.error("Unexpected error reloading the external registry: \(String(describing: error), privacy: .public)")
-            let fingerprint = try? vault.externalRegistryFingerprint()
-            if reportRegistryFailure(.unreadableRegistry, fingerprint: fingerprint,
+            let typedError = registryError(from: error, context: "reloading the external registry")
+            let fingerprint = readRegistryFingerprint(context: "reloading after a registry change")
+            if reportRegistryFailure(typedError, fingerprint: fingerprint,
                                      context: "reloading after a registry change", notify: false) {
-                reportedError = .unreadableRegistry
+                reportedError = typedError
                 needsFullSync = true
             }
             replaceRegistryFileWatchAfterChange()
@@ -1088,7 +1115,7 @@ public final class VaultWatcher: @unchecked Sendable {
         }
         guard reserveVnodeDescriptor() else {
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "The watcher descriptor limit prevented registry file vnode rearming; registry fingerprint polling is active."
             )
             return
@@ -1099,7 +1126,7 @@ public final class VaultWatcher: @unchecked Sendable {
         } catch {
             releaseVnodeDescriptor()
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "Could not rearm the external registry file vnode (\(String(describing: error))); registry fingerprint polling is active."
             )
             return
@@ -1107,14 +1134,14 @@ public final class VaultWatcher: @unchecked Sendable {
         guard let descriptors else {
             releaseVnodeDescriptor()
             reportWatchIssue(
-                key: "registry-watch",
+                key: .registryWatch,
                 message: "External registry file vnode is unavailable after a change; registry fingerprint polling is active."
             )
             return
         }
         descriptors.parent.close()
         installRegistryFileWatch(descriptors.file)
-        clearWatchIssue("registry-watch")
+        clearWatchIssue(.registryWatch)
     }
 
     private func reconcileParentWatches(_ desiredParentPaths: [String: String], forceRearm: Set<String> = []) {
@@ -1125,7 +1152,7 @@ public final class VaultWatcher: @unchecked Sendable {
             if let watch = parentWatches.removeValue(forKey: path) { cancel(watch.vnode) }
         }
 
-        let maximumParents = min(maximumParentVnodeDescriptors, maximumVnodeDescriptors)
+        let maximumParents = maximumParentDescriptors
         var selectedPaths = Set(parentWatches.keys.filter { idsByParent[$0] != nil })
         for path in idsByParent.keys.sorted() where selectedPaths.count < maximumParents {
             selectedPaths.insert(path)
@@ -1172,10 +1199,11 @@ public final class VaultWatcher: @unchecked Sendable {
                 needsFullSync = true
             }
 
-            guard isReportablePath(components) else { continue }
-            if components[0].caseInsensitiveCompare(Vault.assetsDirectoryName) == .orderedSame {
+            let kind = Vault.classify(components)
+            guard kind != .ignored, !isEditorTemporaryName(name) else { continue }
+            if kind == .asset {
                 assetsChanged.insert(relativePath)
-            } else if isMarkdown(name), !isDirectory(flags) {
+            } else if !isDirectory(flags) {
                 notesChanged.insert(relativePath)
             }
         }
@@ -1188,26 +1216,12 @@ public final class VaultWatcher: @unchecked Sendable {
         ))
     }
 
-    private func isReportablePath(_ components: [String]) -> Bool {
-        guard !components.isEmpty,
-              !components.contains(where: { $0.hasPrefix(".") }),
-              let name = components.last,
-              !name.hasPrefix(".~"),
-              !name.hasPrefix("~$"),
-              name != ".DS_Store",
-              !name.lowercased().hasSuffix(".swp"),
-              !name.lowercased().hasSuffix(".icloud") else {
-            return false
-        }
-
-        if components[0].caseInsensitiveCompare(Vault.assetsDirectoryName) == .orderedSame {
-            return components.count >= 2
-        }
-        return isMarkdown(name)
-    }
-
-    private func isMarkdown(_ name: String) -> Bool {
-        URL(fileURLWithPath: name).pathExtension.lowercased() == "md"
+    /// Editor and OS scratch names are dropped here; owner lock files are already ignored by `Vault.classify`.
+    private func isEditorTemporaryName(_ name: String) -> Bool {
+        name.hasPrefix(".~")
+            || name == ".DS_Store"
+            || name.lowercased().hasSuffix(".swp")
+            || name.lowercased().hasSuffix(".icloud")
     }
 
     private func isDirectory(_ flags: FSEventStreamEventFlags) -> Bool {

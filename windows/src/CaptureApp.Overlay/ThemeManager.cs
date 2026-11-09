@@ -10,6 +10,9 @@ namespace CaptureApp.Overlay;
 /// <summary>Own one per UI dispatcher. Views use dynamic palette resources.</summary>
 public sealed class ThemeManager : IDisposable
 {
+    private static readonly string[] HighContrastWindowKeys = ["SurfaceTint", "CardFill", "HintFill", "QuickClusterFill", "CodeBackground", "QuickButtonHoverFill", "QuickButtonPressedFill"];
+    private static readonly string[] HighContrastTextKeys = ["TextPrimary", "Secondary", "Tertiary", "SurfaceBorder", "CardBorder", "Separator", "KeycapBoxBorder", "QuickClusterBorder", "BrandAccent", "Warning", "Session"];
+    private static readonly string[] HighContrastSelectionKeys = ["MenuSelectedFill", "SelectedText", "SelectedSecondary"];
     private readonly ResourceDictionary resources;
     private readonly System.Windows.Threading.Dispatcher dispatcher;
     private readonly bool? darkOverride;
@@ -40,8 +43,8 @@ public sealed class ThemeManager : IDisposable
         var contrast = highContrast ?? SystemParameters.HighContrast;
         if (contrast)
         {
-            foreach (var key in new[] { "SurfaceTint", "CardFill", "HintFill", "QuickClusterFill", "CodeBackground", "QuickButtonHoverFill", "QuickButtonPressedFill" }) dictionary[key] = SystemColors.WindowBrush;
-            foreach (var key in new[] { "TextPrimary", "Secondary", "Tertiary", "SurfaceBorder", "CardBorder", "Separator", "KeycapBoxBorder", "QuickClusterBorder", "BrandAccent", "Warning", "Session" }) dictionary[key] = SystemColors.WindowTextBrush;
+            foreach (var key in HighContrastWindowKeys) dictionary[key] = SystemColors.WindowBrush;
+            foreach (var key in HighContrastTextKeys) dictionary[key] = SystemColors.WindowTextBrush;
             dictionary["SelectedFill"] = SystemColors.HighlightBrush;
             dictionary["MenuSelectedFill"] = SystemColors.HighlightBrush;
             dictionary["SelectedText"] = SystemColors.HighlightTextBrush;
@@ -56,7 +59,7 @@ public sealed class ThemeManager : IDisposable
         else
         {
             // Remove previous high-contrast overrides, leaving the palette dictionaries authoritative.
-            foreach (var key in new[] { "SurfaceTint", "CardFill", "HintFill", "QuickClusterFill", "CodeBackground", "QuickButtonHoverFill", "QuickButtonPressedFill", "TextPrimary", "Secondary", "Tertiary", "SurfaceBorder", "CardBorder", "Separator", "KeycapBoxBorder", "QuickClusterBorder", "BrandAccent", "Warning", "Session", "MenuSelectedFill", "SelectedText", "SelectedSecondary" }) dictionary.Remove(key);
+            foreach (var key in HighContrastWindowKeys.Concat(HighContrastTextKeys).Concat(HighContrastSelectionKeys)) dictionary.Remove(key);
             if (darkOverride is true)
             {
                 dictionary.Remove("EditorLink");

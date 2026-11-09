@@ -138,7 +138,7 @@ internal sealed partial class AppController
                 return state.Suggestions.OrderByDescending(s => s.Modified).Select(s =>
                 {
                     var session = s.Kind == NoteKind.Session;
-                    return new BrowseItem(s.Path, s.Title, Strings.BrowseDetail(session, s.Modified, zone), session ? "record.circle" : "doc.text", pinned.Contains(s.Path));
+                    return new BrowseItem(s.Path, s.Title, Strings.BrowseDetail(session, s.Modified, zone), session ? Icons.Session : Icons.Note, pinned.Contains(s.Path));
                 }).ToArray();
             },
             OnBrowse: (item, choice) =>

@@ -9,11 +9,11 @@ public sealed class IndexSignatureTests
     private const string Channel = "win-x64";
     private static readonly byte[] Index = Encoding.UTF8.GetBytes("{\"Assets\":[{\"PackageId\":\"x\"}]}");
 
-    private static (byte[] Seed, string Entry, string Id) NewKey()
+    private static (byte[] Seed, byte[] PublicKey, string Entry, string Id) NewKey()
     {
         var (seed, publicKey) = IndexSignature.GenerateKeyPair();
         var id = IndexSignature.KeyIdFor(publicKey);
-        return (seed, $"{id}:{Convert.ToBase64String(publicKey)}", id);
+        return (seed, publicKey, $"{id}:{Convert.ToBase64String(publicKey)}", id);
     }
 
     private static IndexRejection Rejection(Action action) =>
@@ -110,6 +110,7 @@ public sealed class IndexSignatureTests
     [Fact]
     public void EmptyKeySetMeansNothingIsTrusted()
     {
+        Assert.True(TrustedKeys.Parse("").IsEmpty);
         Assert.True(TrustedKeys.Parse("  ").IsEmpty);
         Assert.True(TrustedKeys.Parse(null).IsEmpty);
         var k1 = NewKey();
@@ -121,12 +122,22 @@ public sealed class IndexSignatureTests
     {
         var a = NewKey();
         var b = NewKey();
-        Assert.Throws<FormatException>(() => TrustedKeys.Parse($"{a.Entry},{a.Id}:{b.Entry[(b.Entry.IndexOf(':') + 1)..]}"));
+        Assert.Throws<FormatException>(() => TrustedKeys.Parse($"{a.Entry},{a.Id}:{Convert.ToBase64String(b.PublicKey)}"));
     }
 
     [Theory]
     [InlineData("nocolon")]
     [InlineData("id:***")]
     [InlineData("id:AAAA")]
+    [InlineData("a:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=;b:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
+    [InlineData("a:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nb:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
     public void MalformedKeyListThrows(string list) => Assert.Throws<FormatException>(() => TrustedKeys.Parse(list));
+
+    [Fact]
+    public void CommittedKeyListParses()
+    {
+        var keys = TrustedKeys.Parse("kbf4ab7d4:rIE1XtVJiExoWRe9BDxQ7kLgyyrRER5FJIBnkWFK4Vk=,k86ab515c:ShR8AP9gQs0IWwYUGHei0R1KkDq7MUdUb2igadx5P2U=");
+        Assert.True(keys.TryGet("kbf4ab7d4", out _));
+        Assert.True(keys.TryGet("k86ab515c", out _));
+    }
 }

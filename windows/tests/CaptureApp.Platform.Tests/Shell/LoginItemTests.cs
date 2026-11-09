@@ -17,7 +17,7 @@ public sealed class LoginItemTests
         {
             loginItem.SetEnabled(true);
             Assert.True(loginItem.IsEnabled);
-            Assert.Equal(LoginItem.QuoteExecutablePath(executablePath), loginItem.RegisteredCommand);
+            Assert.Equal($"\"{executablePath}\"", loginItem.RegisteredCommand);
 
             loginItem.SetEnabled(false);
             Assert.False(loginItem.IsEnabled);

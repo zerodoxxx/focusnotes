@@ -1,6 +1,9 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using CaptureApp.AppCore;
+using CaptureApp.AppCore.Tests.Semantic;
 using CaptureApp.Core;
 using CaptureApp.Core.Index;
 using Xunit;
@@ -32,7 +35,7 @@ public sealed class StateStoreTests
 
         File.WriteAllText(store.Url, "{ invalid", new UTF8Encoding(false));
         Assert.Equal(new NoteDraftSnapshot("", false), store.LoadSnapshot());
-        Assert.True(File.Exists(System.IO.Path.Combine(temp.Path, "draft-note.corrupt.json")));
+        Assert.True(File.Exists(System.IO.Path.Combine(temp.Path, NoteDraftStore.CorruptFileName)));
         store.Dispose();
     }
 
@@ -43,19 +46,19 @@ public sealed class StateStoreTests
         using var temp = new TempDirectory();
         var writes = 0;
         using var coalesced = new NoteDraftStore(System.IO.Path.Combine(temp.Path, "coalesced"),
-            TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1), () => Interlocked.Increment(ref writes));
+            TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1), beforeScheduledWriteForTesting: () => Interlocked.Increment(ref writes));
         coalesced.ScheduleStore("older", true);
         await Task.Delay(15, cancellationToken);
         coalesced.ScheduleStore("latest", false);
         Assert.False(File.Exists(coalesced.Url));
-        await WaitUntil(() => File.Exists(coalesced.Url), cancellationToken);
+        await Wait.Until(() => File.Exists(coalesced.Url), "the coalesced draft write");
         Assert.Equal(new NoteDraftSnapshot("latest", false), JsonSerializer.Deserialize<NoteDraftSnapshot>(File.ReadAllBytes(coalesced.Url)));
         Assert.Equal(1, Volatile.Read(ref writes));
 
         var firstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var producerFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var bounded = new NoteDraftStore(System.IO.Path.Combine(temp.Path, "bounded"),
-            TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(120), () => firstWrite.TrySetResult());
+            TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(120), beforeScheduledWriteForTesting: () => firstWrite.TrySetResult());
         var producer = Task.Run(async () =>
         {
             for (var index = 0; index < 10; index++)
@@ -69,11 +72,11 @@ public sealed class StateStoreTests
         await firstWrite.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken);
         Assert.False(producerFinished.Task.IsCompleted);
         await producer;
-        await WaitUntil(() =>
+        await Wait.Until(() =>
         {
             try { return bounded.LoadSnapshot().Text == "continuous 9"; }
             catch (Exception) { return false; }
-        }, cancellationToken);
+        }, "the last continuous draft");
     }
 
     [Fact]
@@ -84,7 +87,7 @@ public sealed class StateStoreTests
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         using var ordered = new NoteDraftStore(System.IO.Path.Combine(temp.Path, "ordered"),
-            TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(1), () =>
+            TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(1), beforeScheduledWriteForTesting: () =>
             {
                 entered.Set();
                 if (!release.Wait(TimeSpan.FromSeconds(3))) { throw new IOException("Test write barrier timed out."); }
@@ -98,7 +101,7 @@ public sealed class StateStoreTests
 
         var failedWrite = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var retry = new NoteDraftStore(System.IO.Path.Combine(temp.Path, "retry"),
-            TimeSpan.FromMilliseconds(20), TimeSpan.FromSeconds(1), () => throw new IOException("Injected background failure."));
+            TimeSpan.FromMilliseconds(20), TimeSpan.FromSeconds(1), beforeScheduledWriteForTesting: () => throw new IOException("Injected background failure."));
         retry.ScheduleStore("latest after failure", true, error => failedWrite.TrySetResult(error));
         Assert.IsType<IOException>(await failedWrite.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken));
         retry.FlushScheduledStore("latest after failure", true);
@@ -150,6 +153,36 @@ public sealed class StateStoreTests
     }
 
     [Fact]
+    public void UnreadablePinStoreRejectsMutationsWithoutErasingPins()
+    {
+        using var temp = new TempDirectory();
+        var store = new NotePinStore(temp.Path);
+        store.Set("a.md", true);
+        store.Set("b.md", true);
+        WithUnreadablePinStore(store.Url, () =>
+        {
+            var toggleFailure = Record.Exception(() => store.Toggle("c.md"));
+            Assert.True(toggleFailure is IOException or UnauthorizedAccessException, toggleFailure?.ToString());
+            var setFailure = Record.Exception(() => store.Set("c.md", true));
+            Assert.True(setFailure is IOException or UnauthorizedAccessException, setFailure?.ToString());
+        });
+        Assert.Equal(new[] { "a.md", "b.md" }, store.Paths().Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void UnreadablePinStoreReadsAsEmptyForQueries()
+    {
+        using var temp = new TempDirectory();
+        var store = new NotePinStore(temp.Path);
+        store.Set("a.md", true);
+        WithUnreadablePinStore(store.Url, () =>
+        {
+            Assert.False(store.IsPinned("a.md"));
+            Assert.Empty(store.Paths());
+        });
+    }
+
+    [Fact]
     public void JournalCanRecoverOCRTextWhenAnImagePayloadWasLost()
     {
         using var temp = new TempDirectory();
@@ -172,13 +205,39 @@ public sealed class StateStoreTests
         Assert.Null(recovered.Png);
     }
 
-    private static async Task WaitUntil(Func<bool> predicate, CancellationToken cancellationToken)
+    private static void WithUnreadablePinStore(string url, Action body)
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
-        while (!predicate())
+        if (OperatingSystem.IsWindows())
         {
-            Assert.True(DateTimeOffset.UtcNow < deadline, "The scheduled draft state did not converge.");
-            await Task.Delay(10, cancellationToken);
+            // Deny only reading: a sharing lock would also block the store's temp-file replace, so an
+            // unguarded mutation would fail anyway instead of overwriting the pins.
+            var file = new FileInfo(url);
+            var denyRead = new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.ReadData, AccessControlType.Deny);
+            var security = file.GetAccessControl();
+            security.AddAccessRule(denyRead);
+            file.SetAccessControl(security);
+            try
+            {
+                body();
+            }
+            finally
+            {
+                security = file.GetAccessControl();
+                security.RemoveAccessRule(denyRead);
+                file.SetAccessControl(security);
+            }
+            return;
+        }
+
+        // Advisory flock() locks do not block reads on macOS, so permissions simulate the unreadable store.
+        File.SetUnixFileMode(url, UnixFileMode.None);
+        try
+        {
+            body();
+        }
+        finally
+        {
+            File.SetUnixFileMode(url, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
     }
 }

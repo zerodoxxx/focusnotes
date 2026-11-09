@@ -96,7 +96,7 @@ public sealed class StableIndexLocator(string githubRepo, IIndexFetcher fetcher)
 {
     public async Task<IndexLocation> LocateAsync(string channel, CancellationToken cancellationToken)
     {
-        var target = await fetcher.ResolveRedirectAsync(new Uri($"https://github.com/{githubRepo}/releases/latest"), cancellationToken).ConfigureAwait(false);
+        var target = await fetcher.ResolveRedirectAsync(new Uri(FeedNames.LatestReleaseUrl(githubRepo)), cancellationToken).ConfigureAwait(false);
         const string Marker = "/releases/tag/";
         var path = target.AbsolutePath;
         var at = path.IndexOf(Marker, StringComparison.Ordinal);
@@ -117,7 +117,7 @@ public sealed class PrereleaseIndexLocator(string githubRepo, IIndexFetcher fetc
     {
         var bytes = await fetcher.GetBytesAsync(new Uri($"https://api.github.com/repos/{githubRepo}/releases?per_page=15"), cancellationToken).ConfigureAwait(false);
         using var document = JsonDocument.Parse(bytes);
-        var index = $"releases.{channel}.json";
+        var index = FeedNames.IndexFile(channel);
         foreach (var release in document.RootElement.EnumerateArray())
         {
             if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean())
@@ -131,7 +131,7 @@ public sealed class PrereleaseIndexLocator(string githubRepo, IIndexFetcher fetc
             }
 
             var names = assets.EnumerateArray().Select(asset => asset.GetProperty("name").GetString()).ToHashSet(StringComparer.Ordinal);
-            if (names.Contains(index) && names.Contains(index + ".sig"))
+            if (names.Contains(index) && names.Contains(FeedNames.SignatureFile(channel)))
             {
                 return new IndexLocation(new Uri($"https://github.com/{githubRepo}/releases/download/{Uri.EscapeDataString(tag.GetString()!)}/"));
             }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using CaptureApp.Embed;
 
 namespace CaptureApp.EmbedHelper;
 
@@ -7,8 +8,6 @@ namespace CaptureApp.EmbedHelper;
 /// background resource mode). Each flag reports whether the call succeeded.
 internal static class BackgroundMode
 {
-    internal readonly record struct Status(bool EcoQos, bool BelowNormal, bool BackgroundMode);
-
     private const int ProcessPowerThrottling = 4;
     private const uint ProcessPowerThrottlingCurrentVersion = 1;
     private const uint ProcessPowerThrottlingExecutionSpeed = 1;
@@ -16,7 +15,7 @@ internal static class BackgroundMode
     private const uint ProcessModeBackgroundBegin = 0x00100000;
 
     /// Null on platforms without these controls.
-    public static Status? Apply()
+    public static BackgroundReport? Apply()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -33,7 +32,7 @@ internal static class BackgroundMode
         var ecoQos = SetProcessInformation(process, ProcessPowerThrottling, ref state, (uint)Marshal.SizeOf<PowerThrottlingState>());
         var belowNormal = SetPriorityClass(process, BelowNormalPriorityClass);
         var background = SetPriorityClass(process, ProcessModeBackgroundBegin);
-        return new Status(ecoQos, belowNormal, background);
+        return new BackgroundReport(ecoQos, belowNormal, background);
     }
 
     [StructLayout(LayoutKind.Sequential)]

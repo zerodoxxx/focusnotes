@@ -1,3 +1,5 @@
+using CaptureApp.Core;
+
 namespace CaptureApp.AppCore.Shell;
 
 /// Validates a folder before it can become the saved notes destination.
@@ -28,5 +30,5 @@ public static class NotesFolderChoice
     public static bool SameFolder(string first, string second) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        PathIdentity.Comparison);
 }

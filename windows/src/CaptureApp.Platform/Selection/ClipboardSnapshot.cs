@@ -9,7 +9,7 @@ internal sealed record SnapshotResult(ClipboardSnapshot? Snapshot, SnapshotFailu
     public void Dispose() => Snapshot?.Dispose();
 }
 
-/// <summary>Owns detached copies. No clipboard-owned handle escapes the open-clipboard scope.</summary>
+/// <summary>No clipboard-owned handle escapes the open-clipboard scope.</summary>
 internal sealed class ClipboardSnapshot(uint sequence, IReadOnlyList<ClipboardValue> values) : IDisposable
 {
     private int references = 1;
@@ -76,7 +76,7 @@ internal sealed class ClipboardSnapshot(uint sequence, IReadOnlyList<ClipboardVa
     // GDI handles are skipped only when they are a conversion; native handles use the corresponding copy API.
     internal static bool IsSynthesized(uint format, IReadOnlySet<uint> earlier) => format switch
     {
-        1 or 7 or 13 => earlier.Contains(1) || earlier.Contains(7) || earlier.Contains(13),
+        ClipboardGuard.CfText or ClipboardGuard.CfOemText or ClipboardGuard.CfUnicodeText => earlier.Contains(ClipboardGuard.CfText) || earlier.Contains(ClipboardGuard.CfOemText) || earlier.Contains(ClipboardGuard.CfUnicodeText),
         2 or 8 or 17 => earlier.Contains(2) || earlier.Contains(8) || earlier.Contains(17),
         9 => earlier.Contains(8) || earlier.Contains(17),
         3 or 14 => earlier.Contains(3) || earlier.Contains(14),

@@ -44,7 +44,7 @@ public sealed class CaptureJournal
         {
             job = Resolve(job);
             Directory.CreateDirectory(DirectoryPath);
-            var stem = job.Prepared.Capture.Id.ToString("D").ToLowerInvariant();
+            var stem = Stem(job.Prepared.Capture.Id);
             if (job.Png is not null)
             {
                 DurableFile.Write(Path.Combine(DirectoryPath, stem + ".png"), job.Png);
@@ -87,7 +87,7 @@ public sealed class CaptureJournal
             if (record.Prepared is null || record.Prepared.Capture is null || record.Prepared.Destination is null)
                 throw new RecordException("The journal record is missing capture or destination data.");
             var stem = Path.GetFileNameWithoutExtension(recordPath);
-            if (!string.Equals(stem, record.Prepared.Capture.Id.ToString("D").ToLowerInvariant(), StringComparison.Ordinal))
+            if (!string.Equals(stem, Stem(record.Prepared.Capture.Id), StringComparison.Ordinal))
             {
                 throw new RecordException("The journal filename does not match its capture identity.");
             }
@@ -96,19 +96,7 @@ public sealed class CaptureJournal
             if (record.HasPNG)
             {
                 try { png = File.ReadAllBytes(Path.Combine(DirectoryPath, stem + ".png")); }
-                catch (FileNotFoundException)
-                {
-                    if (string.IsNullOrWhiteSpace(record.Ocr))
-                    {
-                        throw new RecordException("The journal image is missing and has no OCR recovery text.");
-                    }
-
-                    var original = record.Prepared;
-                    var textCapture = original.Capture with { Content = CaptureContent.Text(record.Ocr) };
-                    var recovered = new PreparedCapture(textCapture, original.Destination, original.CreatesNote, original.NoteMarkerIsIdentity);
-                    return Resolve(new(recovered));
-                }
-                catch (DirectoryNotFoundException)
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
                 {
                     if (string.IsNullOrWhiteSpace(record.Ocr))
                     {
@@ -165,27 +153,30 @@ public sealed class CaptureJournal
             foreach (var id in ids) redirects[id] = destination;
             foreach (var id in ids)
             {
-                var path = Path.Combine(DirectoryPath, id.ToString("D").ToLowerInvariant() + ".json");
+                var path = Path.Combine(DirectoryPath, Stem(id) + ".json");
                 if (!File.Exists(path)) continue;
                 try { Store(Resolve(Load(path))); }
-                catch (RecordException) { /* Preserve it for the normal replay quarantine path. */ }
+                catch (RecordException error)
+                {
+                    // Preserve it for the normal replay quarantine path.
+                    logger.Notice($"Could not relocate capture journal record {id}: {error.Message}");
+                }
             }
         }
     }
 
-    private static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
-        Path.GetFullPath(right).Normalize(), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    internal static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
+        Path.GetFullPath(right).Normalize(), PathIdentity.Comparison);
+
+    private static string Stem(Guid id) => id.ToString("D").ToLowerInvariant();
 
     public void Quarantine(string recordPath)
     {
         lock (gate)
         {
-            var corrupt = Path.Combine(DirectoryPath, "corrupt");
-            System.IO.Directory.CreateDirectory(corrupt);
+            var corrupt = CorruptFiles.CreateDirectory(DirectoryPath);
             var stem = Path.GetFileNameWithoutExtension(recordPath);
-            var targetStem = File.Exists(Path.Combine(corrupt, stem + ".json"))
-                ? stem + "-" + Guid.NewGuid().ToString("N")
-                : stem;
+            var targetStem = CorruptFiles.Stem(corrupt, stem, ".json");
             foreach (var extension in new[] { ".json", ".png" })
             {
                 var source = Path.Combine(DirectoryPath, stem + extension);
@@ -203,7 +194,7 @@ public sealed class CaptureJournal
     {
         lock (gate)
         {
-            var stem = id.ToString("D").ToLowerInvariant();
+            var stem = Stem(id);
             DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".json")));
             DurableFile.RetryWhileLocked(() => File.Delete(Path.Combine(DirectoryPath, stem + ".png")));
             // Keep redirects for this instance: an older commit can still retry its prepared object

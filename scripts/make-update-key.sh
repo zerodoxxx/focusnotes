@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+source "$SCRIPT_DIR/lib/app-env.sh"
 ENV_FILE="$ROOT_DIR/Config/app.env"
 PUB_RE='^[A-Za-z0-9+/]{43}=$'
 
@@ -20,11 +21,7 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-while IFS= read -r line; do key="${line%%=*}"; value="${line#*=}"
-    case "$key" in
-        APPNAME) APPNAME="$value" ;;
-    esac
-done < "$ENV_FILE"
+app_env_load "$ENV_FILE" APPNAME
 [[ -n "${APPNAME:-}" ]] || fail "APPNAME is missing from Config/app.env"
 
 ACCOUNT="$APPNAME"

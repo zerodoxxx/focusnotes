@@ -39,12 +39,12 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
             if (Native.LStat(path, out var value) != 0)
             {
                 var error = Marshal.GetLastPInvokeError();
-                if (error is 2 or 20)
+                if (FileErrors.IsAbsentCode(error))
                 {
                     return null;
                 }
 
-                if (error is 5 or 6 or 19)
+                if (FileErrors.IsUnavailableCode(error))
                 {
                     throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
                 }
@@ -58,12 +58,12 @@ internal sealed record FileMetadata(ulong Device, ulong Inode, long Size, long M
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastPInvokeError();
-            if (error is 2 or 3)
+            if (FileErrors.IsAbsentCode(error))
             {
                 return null;
             }
 
-            if (error is 21 or 55 or 1117 or 1167)
+            if (FileErrors.IsUnavailableCode(error))
             {
                 throw new VaultFileException(VaultFileError.Unavailable, new Win32Exception(error).Message);
             }

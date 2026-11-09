@@ -89,7 +89,7 @@ private final class DownloadDelegate: NSObject, URLSessionDataDelegate, @uncheck
         task.resume()
     }
 
-    /// Cancels the data task. The awaiting continuation resumes when URLSession reports completion.
+    /// The awaiting continuation resumes when URLSession reports completion.
     func cancel() {
         lock.lock()
         cancelRequested = true

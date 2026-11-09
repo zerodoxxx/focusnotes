@@ -16,6 +16,8 @@ public sealed record ParsedBlock(Guid? CaptureId, BlockKind Kind, DateTimeOffset
 public sealed record ParsedNote(string Title, IReadOnlyList<ParsedBlock> Blocks);
 public static class NoteParser
 {
+    private const int ChunkLength = 2000;
+    private static readonly string NoteMarkerPattern = "^" + Regex.Escape(CaptureFormat.NoteMarkerPrefix) + "([0-9a-fA-F-]{36}) at=(.+)" + Regex.Escape(CaptureFormat.MarkerSuffix) + "$";
     private sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
     private sealed record Marker(Guid Id, DateTimeOffset? Date, string? App);
     public static ParsedNote Parse(string contents, string notePath, string titleFallback, TimeZoneInfo timeZone, string? assetRootUrl = null)
@@ -86,7 +88,7 @@ public static class NoteParser
                 source = line[4..];
             }
 
-            if (line.StartsWith("<!-- subheading:", StringComparison.Ordinal) && line.EndsWith(" -->", StringComparison.Ordinal) && Guid.TryParseExact(line[16..^4], "D", out _) && i > start && visible.Contains(i - 1) && CaptureFormat.AtxHeading(lines[i - 1])?.Level == 2)
+            if (line.StartsWith(CaptureFormat.SubheadingMarkerPrefix, StringComparison.Ordinal) && line.EndsWith(" -->", StringComparison.Ordinal) && Guid.TryParseExact(line[CaptureFormat.SubheadingMarkerPrefix.Length..^4], "D", out _) && i > start && visible.Contains(i - 1) && CaptureFormat.AtxHeading(lines[i - 1])?.Level == 2)
             {
                 result.Add(new(i - 1, i, null, null, null, null, null));
                 continue;
@@ -169,7 +171,7 @@ public static class NoteParser
             // A pending non-marker cannot complete a capture, but an unfenced heading
             // can break source grouping. Clone fence visibility to avoid consuming it.
             var marker = ParseMarker(pending);
-            if (marker is not null && fence.Copy().IsVisible(pending))
+            if (marker is not null && fence.Peek(pending))
             {
                 var effective = source;
                 if (marker.Date is null)
@@ -186,12 +188,12 @@ public static class NoteParser
                 return effective != requested;
             }
 
-            return !hasCapture || lastSource != requested || headingAfter || fence.Copy().IsVisible(pending) && CaptureFormat.AtxHeading(pending) is not null;
+            return !hasCapture || lastSource != requested || headingAfter || fence.Peek(pending) && CaptureFormat.AtxHeading(pending) is not null;
         }
 
         private void ConsumeLine(string line, TimeZoneInfo zone)
         {
-            if (!fence.IsVisible(line))
+            if (!fence.Advance(line))
             {
                 previous = null;
                 return;
@@ -238,13 +240,13 @@ public static class NoteParser
 
     private static Marker? ParseNoteMarker(string line)
     {
-        var match = Regex.Match(line, @"^<!-- note:([0-9a-fA-F-]{36}) at=(.+) -->$");
+        var match = Regex.Match(line, NoteMarkerPattern);
         return match.Success && Guid.TryParseExact(match.Groups[1].Value, "D", out var id) && TryStamp(match.Groups[2].Value, out var date) ? new(id, date, null) : null;
     }
 
     private static Marker? ParseMarker(string line)
     {
-        var match = Regex.Match(line, "^<!-- capture:([0-9a-fA-F-]{36})(?: at=(.+) app=\"(.*)\")? -->$");
+        var match = Regex.Match(line, $"^{CaptureFormat.MarkerPrefix}([0-9a-fA-F-]{{{CaptureFormat.CaptureIdLength}}})(?: at=(.+) app=\"(.*)\")? -->$");
         if (!match.Success || !Guid.TryParseExact(match.Groups[1].Value, "D", out var id))
         {
             return null;
@@ -264,7 +266,7 @@ public static class NoteParser
         return new(id, date, app.Length == 0 ? null : app);
     }
 
-    private static bool TryStamp(string text, out DateTimeOffset date) => DateTimeOffset.TryParseExact(text, ["yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss'Z'"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out date);
+    private static bool TryStamp(string text, out DateTimeOffset date) => DateTimeOffset.TryParseExact(text, [CaptureFormat.IsoOffsetStampPattern, CaptureFormat.IsoUtcStampPattern], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out date);
     private static (DateTimeOffset Date, string? App, string? Window)? ParseHeader(string text, TimeZoneInfo zone)
     {
         var parts = text.Split(" · ", StringSplitOptions.None);
@@ -281,7 +283,7 @@ public static class NoteParser
     private static string? ImagePath(string body, string notePath, string? assetRoot)
     {
         var imageBody = body;
-        const string sourcePrefix = "[Source](<";
+        const string sourcePrefix = CaptureFormat.SourceLinkPrefix;
         const string sourceSuffix = ">)";
         if (body.StartsWith(sourcePrefix, StringComparison.Ordinal))
         {
@@ -301,7 +303,7 @@ public static class NoteParser
             }
         }
 
-        if (imageBody.Contains('\n') || !imageBody.StartsWith("![](", StringComparison.Ordinal) || !imageBody.EndsWith(')'))
+        if (imageBody.Contains('\n') || !imageBody.StartsWith(CaptureFormat.ImageLinkPrefix, StringComparison.Ordinal) || !imageBody.EndsWith(')'))
         {
             return null;
         }
@@ -322,7 +324,7 @@ public static class NoteParser
 
             try
             {
-                var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Vault.DecodeFilePath(notePath))!, link.Replace('/', Path.DirectorySeparatorChar)));
+                var resolved = Path.GetFullPath(Vault.UrlUnder(Path.GetDirectoryName(Vault.DecodeFilePath(notePath))!, link));
                 var relative = Vault.RelativeUnder(resolved, Vault.DecodeFilePath(assetRoot));
                 return relative is null ? null : Vault.AssetsDirectoryName + "/" + relative;
             }
@@ -365,9 +367,9 @@ public static class NoteParser
         void Flush()
         {
             var graphemes = NoteTitle.Graphemes(string.Join('\n', region));
-            for (var i = 0; i < graphemes.Count; i += 2000)
+            for (var i = 0; i < graphemes.Count; i += ChunkLength)
             {
-                blocks.Add(new(null, BlockKind.Loose, null, null, null, string.Concat(graphemes.Skip(i).Take(2000)), null));
+                blocks.Add(new(null, BlockKind.Loose, null, null, null, string.Concat(graphemes.Skip(i).Take(ChunkLength)), null));
             }
 
             region.Clear();

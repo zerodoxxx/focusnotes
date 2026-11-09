@@ -13,21 +13,23 @@ public interface IPowerSource : IDisposable
     event EventHandler? Resumed;
 }
 
+/// <summary>A change is any difference in either field.</summary>
+internal readonly record struct PowerSnapshot(bool IsOnAc, bool IsBatterySaverOn);
+
 /// <summary>Mutable power source for deterministic gate tests.</summary>
 public sealed class FakePowerSource(bool isOnAc = true, bool isBatterySaverOn = false) : IPowerSource
 {
     private readonly object _sync = new();
-    private bool _isOnAc = isOnAc;
-    private bool _isBatterySaverOn = isBatterySaverOn;
+    private PowerSnapshot _power = new(isOnAc, isBatterySaverOn);
 
     public bool IsOnAC
     {
-        get { lock (_sync) return _isOnAc; }
+        get { lock (_sync) return _power.IsOnAc; }
     }
 
     public bool IsBatterySaverOn
     {
-        get { lock (_sync) return _isBatterySaverOn; }
+        get { lock (_sync) return _power.IsBatterySaverOn; }
     }
 
     public event EventHandler? Changed;
@@ -41,9 +43,9 @@ public sealed class FakePowerSource(bool isOnAc = true, bool isBatterySaverOn = 
         var changed = false;
         lock (_sync)
         {
-            changed = _isOnAc != isOnAc || _isBatterySaverOn != isBatterySaverOn;
-            _isOnAc = isOnAc;
-            _isBatterySaverOn = isBatterySaverOn;
+            var next = new PowerSnapshot(isOnAc, isBatterySaverOn);
+            changed = _power != next;
+            _power = next;
         }
 
         if (changed)

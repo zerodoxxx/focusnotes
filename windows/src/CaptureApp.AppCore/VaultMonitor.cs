@@ -13,14 +13,13 @@ public sealed class VaultMonitor : IDisposable
     private readonly VaultWatcher watcher;
     private readonly SearchIndex index;
     private readonly AppLog logger;
-    private readonly Func<Task>? beforeIndexSyncForTesting;
     private readonly Func<Task>? afterIndexSyncForTesting;
     private Task? worker;
     private bool notesDirty;
     private bool assetsDirty;
     private bool fullAssetValidation;
     private bool stopped;
-    private readonly HashSet<string> changedAssetPaths = new(StringComparer.Ordinal);
+    private readonly HashSet<string> changedAssetPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public event Action<VaultChange>? ChangeReceived;
     public event Action<VaultRefreshRequest>? RefreshRequested;
@@ -33,11 +32,10 @@ public sealed class VaultMonitor : IDisposable
     }
 
     public VaultMonitor(Vault vault, SearchIndex index, string stateDirectory, double latency = 1.0,
-        Func<Task>? beforeIndexSyncForTesting = null, Func<Task>? afterIndexSyncForTesting = null)
+        Func<Task>? afterIndexSyncForTesting = null)
     {
         this.index = index;
         logger = new(stateDirectory, "vault-monitor");
-        this.beforeIndexSyncForTesting = beforeIndexSyncForTesting;
         this.afterIndexSyncForTesting = afterIndexSyncForTesting;
         watcher = new(vault, OnChanged, latency);
     }
@@ -113,7 +111,7 @@ public sealed class VaultMonitor : IDisposable
                 }
                 else
                 {
-                    changedAssetPaths.UnionWith(assetPaths);
+                    changedAssetPaths.UnionWith(assetPaths.Select(CanonicalAssetPath));
                 }
             }
 
@@ -138,7 +136,7 @@ public sealed class VaultMonitor : IDisposable
                 var notes = notesDirty;
                 var assets = assetsDirty;
                 var full = fullAssetValidation;
-                var paths = assets && !full ? changedAssetPaths.ToFrozenSet(StringComparer.Ordinal) : null;
+                var paths = assets && !full ? changedAssetPaths.ToFrozenSet(StringComparer.OrdinalIgnoreCase) : null;
                 notesDirty = false;
                 assetsDirty = false;
                 fullAssetValidation = false;
@@ -150,11 +148,6 @@ public sealed class VaultMonitor : IDisposable
             {
                 if (request.Notes)
                 {
-                    if (beforeIndexSyncForTesting is not null)
-                    {
-                        await beforeIndexSyncForTesting().ConfigureAwait(false);
-                    }
-
                     await Task.Run(index.Sync).ConfigureAwait(false);
                     if (afterIndexSyncForTesting is not null)
                     {
@@ -172,12 +165,20 @@ public sealed class VaultMonitor : IDisposable
         }
     }
 
-    private static bool IsKnownAssetPath(string path)
+    internal static bool IsKnownAssetPath(string path)
     {
         var components = path.Split('/', StringSplitOptions.None);
         return !path.StartsWith("/", StringComparison.Ordinal) && components.Length >= 2
-            && components[0] == Vault.AssetsDirectoryName
+            && Vault.IsAssetPath(path)
             && components.All(component => component.Length != 0 && component is not ("." or ".."));
+    }
+
+    // Recheck membership ignores case over the whole path, so only the assets root spelling is normalized.
+    internal static string CanonicalAssetPath(string path)
+    {
+        if (!Vault.IsAssetPath(path)) { return path; }
+        var separator = path.IndexOf('/');
+        return separator < 0 ? Vault.AssetsDirectoryName : Vault.AssetsDirectoryName + path[separator..];
     }
 
     public void Dispose() => StopAsync().GetAwaiter().GetResult();

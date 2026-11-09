@@ -22,10 +22,11 @@ public class OverlaySurface : Grid
     }
     public static Grid Frame(OverlaySurface surface)
     {
-        var frame = new Grid { Width = surface.Width + Tokens.ShadowMargin * 2, Height = surface.Height + Tokens.ShadowMargin * 2 };
+        var frameSize = PanelGeometry.WindowSize(new Size(surface.Width, surface.Height));
+        var frame = new Grid { Width = frameSize.Width, Height = frameSize.Height };
         surface.Margin = new Thickness(Tokens.ShadowMargin);
         frame.Children.Add(surface);
-        surface.SizeChanged += (_, _) => { frame.Width = surface.Width + Tokens.ShadowMargin * 2; frame.Height = surface.Height + Tokens.ShadowMargin * 2; };
+        surface.SizeChanged += (_, _) => { var size = PanelGeometry.WindowSize(new Size(surface.Width, surface.Height)); frame.Width = size.Width; frame.Height = size.Height; };
         return frame;
     }
 }
@@ -123,7 +124,7 @@ internal sealed class ChoiceRowView : Button
             icon = new Border { CornerRadius = new CornerRadius(Tokens.ThumbnailRadius), Child = Thumbnail, Clip = new RectangleGeometry(new Rect(Tokens.Zero, Tokens.Zero, Tokens.ThumbnailSize, Tokens.ThumbnailSize), Tokens.ThumbnailRadius, Tokens.ThumbnailRadius) };
             icon.SetResourceReference(Border.BackgroundProperty, "HintFill");
         }
-        else icon = Ui.Icon(model.Kind == SearchRowKind.Note ? "doc.text" : "text.alignleft", selected ? "SelectedText" : "Secondary");
+        else icon = Ui.Icon(model.Kind == SearchRowKind.Note ? Icons.Default : "text.alignleft", selected ? "SelectedText" : "Secondary");
         SizeChanged += (_, _) =>
         {
             canvas.Children.Clear();
@@ -150,7 +151,7 @@ internal sealed class ChoiceRowView : Button
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Tokens.SuggestionLeadingWidth) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Tokens.One, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = Ui.Icon(model.SymbolName ?? "doc.text", selected ? "SelectedText" : "Secondary", Tokens.SuggestionIconSize); grid.Children.Add(icon);
+        var icon = Ui.Icon(model.SymbolName ?? Icons.Default, selected ? "SelectedText" : "Secondary", Tokens.SuggestionIconSize); grid.Children.Add(icon);
         var title = Ui.Text(model.Title, "SuggestionTitle", selected ? "SelectedText" : "TextPrimary");
         title.Margin = new Thickness(Tokens.SuggestionIconGap, Tokens.Zero, Tokens.Padding, Tokens.Zero); Grid.SetColumn(title, 1); grid.Children.Add(title);
         var secondary = Ui.Text(model.Secondary ?? "", "Meta", selected ? "SelectedSecondary" : "Tertiary"); Grid.SetColumn(secondary, 2); grid.Children.Add(secondary);

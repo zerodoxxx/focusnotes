@@ -4,6 +4,8 @@ import SQLite3
 @_spi(Checks) import Core
 @_spi(Checks) import OverlayKit
 
+private let sessionTemporaryPrefix = ".session-"
+
 /// Regressions that run without OCR, model downloads, or system permission prompts.
 @MainActor
 func checkAppReliability() async throws {
@@ -13,8 +15,12 @@ func checkAppReliability() async throws {
     try checkRelaunchLifecycle()
     try await checkNotesFolder()
     try await checkChangesDuringInitialScan()
+    try checkMixedCaseAssetChangesSkipFullValidation()
+    try checkMixedCaseAssetChangesRecheckCanonicalPaths()
     try await checkDraftTerminationVeto()
     try await checkSessionRenameIdentity()
+    try await checkSessionRenameSingleDestination()
+    try await checkSessionRenameRecoveryInstallsIntent()
     try await checkSessionRenameCrashBoundaries()
     try await checkSessionRenameAbandonment()
     try await checkSessionPickerEscapeRestoresSelection()
@@ -53,30 +59,26 @@ private func checkAmbiguousCaptureDestinations() async throws {
         let capture = PendingCapture(trigger: .selection, content: .text("save to the selected duplicate"),
                                      source: CaptureSource(appName: "Ambiguity check"), subtitle: "check")
         await controller.captures.stage(capture, outsideSession: true)
-        do {
+        try await expectRejection(RouterError.self, "Ambiguous capture title unexpectedly selected a destination", matching: { error in
+            if case .ambiguous = error { return true }
+            return false
+        }) {
             _ = try await controller.captures.commitPending(noteTitle: "Target")?.value
-            throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination")
-        } catch is SelfTestFailure { throw SelfTestFailure("Ambiguous capture title unexpectedly selected a destination") }
-        catch {}
-
-        let pickerDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !controller.isChoosingDestinationForChecks, ContinuousClock.now < pickerDeadline {
-            try await Task.sleep(for: .milliseconds(20))
         }
-        guard controller.isChoosingDestinationForChecks, let picker = controller.inputForChecks,
+
+        try await waitUntil("the destination picker", timeout: .seconds(3), poll: .milliseconds(20)) {
+            controller.isChoosingDestinationForChecks
+        }
+        guard let picker = controller.inputForChecks,
               controller.captures.pending?.id == capture.id else {
             throw SelfTestFailure("Ambiguous title did not retain the capture and show exact destinations")
         }
 
         if outcome == "cancel" {
-            guard let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53) else {
-                throw SelfTestFailure("Could not create destination picker cancel event")
-            }
+            let escape = try keyDownEvent(53)
             _ = picker.handleKeyForChecks(escape)
-            let closeDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-            while controller.isChoosingDestinationForChecks, ContinuousClock.now < closeDeadline {
-                try await Task.sleep(for: .milliseconds(20))
+            try await waitUntil("the destination picker to close", timeout: .seconds(3), poll: .milliseconds(20)) {
+                !controller.isChoosingDestinationForChecks
             }
             guard controller.captures.pending?.id == capture.id,
                   toasts.last?.title == "Choose where to save",
@@ -94,8 +96,7 @@ private func checkAmbiguousCaptureDestinations() async throws {
                 selectedSecond = true
                 break
             }
-            guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                              windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) else { break }
+            guard let down = try? keyDownEvent(125) else { break }
             _ = picker.handleKeyForChecks(down)
         }
         guard selectedSecond,
@@ -183,27 +184,22 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
     let capture = PendingCapture(trigger: .selection, content: .text("retry this capture once"),
                                  source: CaptureSource(appName: "Retry check"), subtitle: "check")
     await controller.captures.stage(capture, outsideSession: true)
-    do {
+    try await expectRejection(NotePathNameError.self, "Invalid chosen note unexpectedly saved", matching: { $0 == .invalidComponent }) {
         _ = try await controller.captures.commitPending(noteTitle: "../escape")?.value
-        throw SelfTestFailure("Invalid chosen note unexpectedly saved")
-    } catch is SelfTestFailure { throw SelfTestFailure("Invalid chosen note unexpectedly saved") }
-    catch {}
-
-    let failureDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.captures.pending?.id != capture.id, ContinuousClock.now < failureDeadline {
-        try await Task.sleep(for: .milliseconds(20))
     }
-    guard controller.captures.pending?.id == capture.id,
-          toasts.last?.title == "Couldn't save to that note",
+
+    try await waitUntil("the failed chosen-note capture to return", timeout: .seconds(3), poll: .milliseconds(20)) {
+        controller.captures.pending?.id == capture.id
+    }
+    guard toasts.last?.title == "Couldn't save to that note",
           toasts.last?.subtitle?.contains("Capture kept") == true else {
         throw SelfTestFailure("Failed chosen-note save did not preserve the capture with retry guidance")
     }
 
     controller.capture(.selection, context: FrontmostContext(appName: "Other app", bundleIdentifier: nil,
                                                                processIdentifier: 1, windowTitle: nil))
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.inputForChecks == nil, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil("the note chooser to reopen", timeout: .seconds(3), poll: .milliseconds(20)) {
+        controller.inputForChecks != nil
     }
     guard let input = controller.inputForChecks else {
         throw SelfTestFailure("Repeating the capture shortcut did not reopen the note chooser")
@@ -214,8 +210,7 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
             selectedTarget = true
             break
         }
-        guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                          windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) else { break }
+        guard let down = try? keyDownEvent(125) else { break }
         _ = input.handleKeyForChecks(down)
     }
     guard selectedTarget,
@@ -224,10 +219,10 @@ private func checkChosenNoteRetry(notes: [String], pick: String) async throws {
         throw SelfTestFailure("Retry chooser did not offer the existing target note")
     }
     _ = input.handleKeyForChecks(enter)
-    let saveDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.captures.pending != nil, ContinuousClock.now < saveDeadline {
-        try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil("the retry capture to leave the pending slot", timeout: .seconds(3), poll: .milliseconds(20)) {
+        controller.captures.pending == nil
     }
+    let saveDeadline = ContinuousClock.now.advanced(by: .seconds(3))
     var saved = try await pipeline.index.capture(id: capture.id)
     while saved == nil, ContinuousClock.now < saveDeadline {
         try await Task.sleep(for: .milliseconds(20))
@@ -281,21 +276,16 @@ private func checkOutsideCaptureInboxCollisions() async throws {
                     throw SelfTestFailure("Outside default matched a session or nested note named Inbox")
                 }
                 if completion == "escape" {
-                    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-                    while controller.inputForChecks == nil, ContinuousClock.now < deadline {
-                        try await Task.sleep(for: .milliseconds(20))
+                    try await waitUntil("the outside capture picker to open", timeout: .seconds(3), poll: .milliseconds(20)) {
+                        controller.inputForChecks != nil
                     }
-                    guard let input = controller.inputForChecks,
-                          let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                      windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53) else {
+                    let event = try keyDownEvent(53)
+                    guard let input = controller.inputForChecks else {
                         throw SelfTestFailure("Outside capture did not present its picker")
                     }
                     _ = input.handleKeyForChecks(event)
-                    while controller.inputForChecks != nil, ContinuousClock.now < deadline {
-                        try await Task.sleep(for: .milliseconds(20))
-                    }
-                    guard controller.inputForChecks == nil else {
-                        throw SelfTestFailure("Escape did not finish the outside capture picker callback")
+                    try await waitUntil("the outside capture picker to close", timeout: .seconds(3), poll: .milliseconds(20)) {
+                        controller.inputForChecks == nil
                     }
                     _ = await controller.beginTermination().value
                 } else if completion == "shutdown" {
@@ -433,7 +423,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
                   try await pipeline.selfCheck.renames.pending() == nil,
                   !FileManager.default.fileExists(atPath: oldURL.path),
                   try String(contentsOf: targetURL, encoding: .utf8) == "# Daily sync\n" + body,
-                  !pending.contains(where: { $0.hasPrefix(".session-") }) else {
+                  !pending.contains(where: { $0.hasPrefix(sessionTemporaryPrefix) }) else {
                 throw SelfTestFailure("Rename catch did not complete the interrupted swap before returning success")
             }
         } else if checkpoint == "caught-recovery-error" {
@@ -447,7 +437,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
             } catch SessionRenameInterruption.afterSwap {}
             // The blocked resume abandons: the half-applied rename stays put with its backup.
             let temporaries = try FileManager.default.contentsOfDirectory(at: oldURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
-                .filter { $0.lastPathComponent.hasPrefix(".session-") }
+                .filter { $0.lastPathComponent.hasPrefix(sessionTemporaryPrefix) }
             let renamedBytes = "# Daily sync\n" + body
             guard try await pipeline.selfCheck.renames.pending() == nil,
                   try String(contentsOf: oldURL, encoding: .utf8) == renamedBytes,
@@ -486,7 +476,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
                     throw SelfTestFailure("The simulated crash checkpoint did not interrupt rename")
                 } catch SessionRenameInterruption.afterSwap {}
                 let pending = try FileManager.default.contentsOfDirectory(atPath: oldURL.deletingLastPathComponent().path)
-                guard pending.contains(where: { $0.hasPrefix(".session-") }), !FileManager.default.fileExists(atPath: targetURL.path) else {
+                guard pending.contains(where: { $0.hasPrefix(sessionTemporaryPrefix) }), !FileManager.default.fileExists(atPath: targetURL.path) else {
                     throw SelfTestFailure("Swap checkpoint did not retain the original backup and old filename")
                 }
             }
@@ -510,7 +500,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
             func temporaries() throws -> [String: Data] {
                 var found: [String: Data] = [:]
                 for url in try FileManager.default.contentsOfDirectory(at: oldURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
-                where url.lastPathComponent.hasPrefix(".session-") { found[url.lastPathComponent] = try Data(contentsOf: url) }
+                where url.lastPathComponent.hasPrefix(sessionTemporaryPrefix) { found[url.lastPathComponent] = try Data(contentsOf: url) }
                 return found
             }
             let before = try temporaries()
@@ -540,7 +530,7 @@ private func checkSessionRenameCrashBoundaries() async throws {
         let again = try await CapturePipeline.open(vaultRoot: vault, stateDirectory: state, calendar: .current)
         let bytes = try String(contentsOf: targetURL, encoding: .utf8)
         let pending = try FileManager.default.contentsOfDirectory(atPath: targetURL.deletingLastPathComponent().path)
-        guard bytes == "# Daily sync\n" + body, !pending.contains(where: { $0.hasPrefix(".session-") }),
+        guard bytes == "# Daily sync\n" + body, !pending.contains(where: { $0.hasPrefix(sessionTemporaryPrefix) }),
               !FileManager.default.fileExists(atPath: oldURL.path),
               await reopened.selfCheck.sessions.current()?.notePath == destination.notePath,
               await again.selfCheck.sessions.current()?.notePath == destination.notePath,
@@ -602,7 +592,7 @@ private func checkSessionRenameAbandonment() async throws {
             }
         }
         let temporaries = try FileManager.default.contentsOfDirectory(at: oldURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasPrefix(".session-") }
+            .filter { $0.lastPathComponent.hasPrefix(sessionTemporaryPrefix) }
         guard temporaries.count == 1, try Data(contentsOf: temporaries[0]) == original else {
             throw SelfTestFailure("Abandoning rename deleted the only copy of the original bytes")
         }
@@ -638,11 +628,10 @@ private func checkSessionPickerEscapeRestoresSelection() async throws {
     controller.presentSessionCandidates(candidates)
     defer { controller.inputForChecks?.dismiss() }
     func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) throws {
-        guard let input = controller.inputForChecks,
-              let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
-                                          windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else {
+        guard let input = controller.inputForChecks else {
             throw SelfTestFailure("Session-picker controller did not present input")
         }
+        let event = try keyDownEvent(code, modifiers: modifiers)
         _ = input.handleKeyForChecks(event)
     }
     try key(125); try key(125)
@@ -653,6 +642,70 @@ private func checkSessionPickerEscapeRestoresSelection() async throws {
     try await Task.sleep(for: .milliseconds(350))
     guard controller.inputForChecks?.selectedValueForChecks == second.notePath, await pipeline.selfCheck.sessions.current() == nil else {
         throw SelfTestFailure("Escape from rename did not restore the original picker selection without activating a session")
+    }
+}
+
+private final class AdvancingClock: @unchecked Sendable {
+    nonisolated private let lock = NSLock()
+    nonisolated(unsafe) private var seconds: TimeInterval = 1_700_000_000
+    nonisolated func now() -> Date { lock.withLock { seconds += 1; return Date(timeIntervalSince1970: seconds) } }
+}
+
+/// The store must install the exact session the intent persisted and the outcome reports.
+private func checkSessionRenameSingleDestination() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-clock-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let clock = AdvancingClock()
+    let sessions = SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: { clock.now() })
+    let renames = SessionRenameTransaction(vault: pipeline.vault, stateDirectory: state, sessions: sessions, journal: pipeline.selfCheck.journal,
+                                           pins: pipeline.pins, index: pipeline.index, semantic: pipeline.semantic, logger: pipeline.logger)
+    let source = try await sessions.start(name: "archive/Standup")
+    let candidate = SessionCandidate(name: source.name, notePath: source.notePath, modifiedAt: .distantPast)
+    // A corrupt intent after the swap skips recovery, so the store keeps whatever rename installed.
+    let intentURL = state.appendingPathComponent("session-rename.json")
+    let outcome = try await renames.rename(candidate, to: "Daily sync", followingCaptures: [], afterSwap: {
+        try Data("{invalid JSON".utf8).write(to: intentURL, options: .atomic)
+    })
+    let restored = await SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: Date.init).current()
+    guard await sessions.current() == outcome.session, restored == outcome.session else {
+        throw SelfTestFailure("Session rename installed a different session than its intent and outcome")
+    }
+}
+
+/// Recovery installs the persisted intent's session, not one re-derived from its name and the current clock.
+private func checkSessionRenameRecoveryInstallsIntent() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rename-recover-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let clock = AdvancingClock()
+    func transaction() -> (SessionStore, SessionRenameTransaction) {
+        let sessions = SessionStore(stateDirectory: state, vault: pipeline.vault, calendar: pipeline.calendar, now: { clock.now() })
+        return (sessions, SessionRenameTransaction(vault: pipeline.vault, stateDirectory: state, sessions: sessions, journal: pipeline.selfCheck.journal,
+                                                   pins: pipeline.pins, index: pipeline.index, semantic: pipeline.semantic, logger: pipeline.logger))
+    }
+    let (sessions, renames) = transaction()
+    let source = try await sessions.start(name: "archive/Standup")
+    try Data("# Standup\nbody\n".utf8).write(to: pipeline.vault.root.appendingPathComponent(source.notePath))
+    let candidate = SessionCandidate(name: source.name, notePath: source.notePath, modifiedAt: .distantPast)
+    // The persisted destination no longer matches what its name derives (e.g. an earlier build chose the filename).
+    let derived = try await sessions.renameDestination(candidate, to: "Daily sync")
+    var intended = try await sessions.renameDestination(candidate, to: "Daily sync earlier")
+    intended.name = derived.name
+    // Interrupted before the file step: only the intent is persisted.
+    let intent = try await renames.begin(oldPath: source.notePath, session: intended, followingCaptures: [])
+    // A restart recovers with a fresh store whose clock has moved on.
+    let (restartedSessions, restarted) = transaction()
+    let completed = try await restarted.recover(allowFileRename: true)
+    let installedURL = pipeline.vault.root.appendingPathComponent(intent.session.notePath)
+    guard completed, try await restarted.pending() == nil,
+          await restartedSessions.current() == intent.session,
+          FileManager.default.fileExists(atPath: installedURL.path),
+          !FileManager.default.fileExists(atPath: pipeline.vault.root.appendingPathComponent(derived.notePath).path),
+          !FileManager.default.fileExists(atPath: pipeline.vault.root.appendingPathComponent(source.notePath).path) else {
+        throw SelfTestFailure("Rename recovery installed a session other than the persisted intent's")
     }
 }
 
@@ -928,12 +981,11 @@ private func checkChangesDuringInitialScan() async throws {
     let pipeline = CapturePipeline(vault: original.vault, sessions: original.selfCheck.sessions, service: original.selfCheck.service,
                                    index: original.index, semantic: original.semantic, monitor: monitor,
                                    journal: original.selfCheck.journal, drafts: original.drafts, pins: original.pins,
-                                   calendar: original.calendar, logger: original.logger)
+                                   folderShortcuts: original.folderShortcuts, calendar: original.calendar, logger: original.logger)
     let controller = AppController(pipeline: pipeline, presentsUI: false)
     let initialSync = Task { await controller.start() }
-    let initialDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while await recorder.count() == 0, ContinuousClock.now < initialDeadline {
-        try await Task.sleep(for: .milliseconds(20))
+    try await waitUntil("the initial index scan to begin", timeout: .seconds(3), poll: .milliseconds(20)) {
+        await recorder.count() != 0
     }
     guard await recorder.count() == 1 else {
         await recorder.release()
@@ -953,12 +1005,8 @@ private func checkChangesDuringInitialScan() async throws {
     try await Task.sleep(for: .milliseconds(1600))
     await recorder.release()
     _ = await initialSync.value
-    let reconcileDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while await recorder.count() < 2, ContinuousClock.now < reconcileDeadline {
-        try await Task.sleep(for: .milliseconds(20))
-    }
-    guard await recorder.count() >= 2 else {
-        throw SelfTestFailure("A vault change received during startup did not trigger reconciliation")
+    try await waitUntil("a vault change received during startup to trigger reconciliation", timeout: .seconds(3), poll: .milliseconds(20)) {
+        await recorder.count() >= 2
     }
     guard await recorder.failure() == nil,
           try await pipeline.index.search("startupeventneedle").contains(where: { $0.notePath == "During startup.md" }) else {
@@ -966,6 +1014,26 @@ private func checkChangesDuringInitialScan() async throws {
     }
     guard await recorder.sawNoteOnlyAssetRefresh() else {
         throw SelfTestFailure("A note-only event must check new image references without rehashing unchanged assets")
+    }
+}
+
+/// Case-insensitive volumes report `assets/` in whatever case the folder has; those are still known assets.
+private func checkMixedCaseAssetChangesSkipFullValidation() throws {
+    let assets: Set<String> = ["ASSETS/x.png", "Assets/sub/y.jpg", "assets/z.png"]
+    guard !VaultMonitor.needsFullAssetValidation(for: VaultChange(notesChanged: [], assetsChanged: assets, needsFullSync: false)) else {
+        throw SelfTestFailure("Mixed-case asset paths forced a full asset validation")
+    }
+    guard VaultMonitor.needsFullAssetValidation(for: VaultChange(notesChanged: [], assetsChanged: assets.union(["notes/a.md"]),
+                                                                 needsFullSync: false)) else {
+        throw SelfTestFailure("A non-asset path was treated as a known asset change")
+    }
+}
+
+/// The asset index keys are canonical lowercase, so recheck requests must not carry the on-disk spelling.
+private func checkMixedCaseAssetChangesRecheckCanonicalPaths() throws {
+    let change = VaultChange(notesChanged: [], assetsChanged: ["Assets/x.png", "ASSETS/sub/Y.jpg", "assets/z.png"], needsFullSync: false)
+    guard VaultMonitor.recheckAssetPaths(for: change) == ["assets/x.png", "assets/sub/Y.jpg", "assets/z.png"] else {
+        throw SelfTestFailure("Mixed-case asset changes were not rechecked under their canonical lowercase paths")
     }
 }
 
@@ -1017,7 +1085,7 @@ private func checkDraftTerminationVeto() async throws {
     try FileManager.default.removeItem(at: pipeline.drafts.url)
     try oldDraft.write(to: pipeline.drafts.url)
     guard await controller.beginTermination().value, !panel.isVisible, !pipeline.monitor.isRunning,
-          try pipeline.drafts.load() == latestText else {
+          try pipeline.drafts.loadSnapshot().text == latestText else {
         throw SelfTestFailure("Quit could not retry after a draft failure or lost the newest editor text")
     }
 }
@@ -1028,13 +1096,11 @@ private func makeRetryPendingCapture(_ controller: AppController, text: String) 
     let capture = PendingCapture(trigger: .selection, content: .text(text),
                                  source: CaptureSource(appName: "Retry check"), subtitle: "check")
     await controller.captures.stage(capture, outsideSession: true)
-    _ = try? await controller.captures.commitPending(noteTitle: "../escape")?.value
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while controller.captures.pending?.id != capture.id, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
+    try await expectRejection(NotePathNameError.self, "The unsafe chosen note was not rejected", matching: { $0 == .invalidComponent }) {
+        _ = try await controller.captures.commitPending(noteTitle: "../escape")?.value
     }
-    guard controller.captures.pending?.id == capture.id else {
-        throw SelfTestFailure("Failed chosen-note save did not leave the capture retry-pending")
+    try await waitUntil("the failed chosen-note capture to return", timeout: .seconds(3), poll: .milliseconds(20)) {
+        controller.captures.pending?.id == capture.id
     }
     return capture
 }
@@ -1090,11 +1156,10 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let first = try await makeRetryPendingCapture(controller, text: "visible warning capture")
         controller.capture(.selection, context: other)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while controller.inputForChecks == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil("the capture chooser to reopen while the retry warning is visible", timeout: .seconds(3), poll: .milliseconds(20)) {
+            controller.inputForChecks != nil
         }
-        guard controller.inputForChecks != nil, controller.captures.pending?.id == first.id else {
+        guard controller.captures.pending?.id == first.id else {
             throw SelfTestFailure("The capture hotkey did not reopen the chooser while the retry warning was visible")
         }
     }
@@ -1124,11 +1189,10 @@ private func checkHotkeyRedirectEndsWithRetryWarning() async throws {
         controller.acquiredSelectionForChecks = second
         controller.hideToastForChecks()
         controller.capture(.selection, context: other)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while controller.captures.pending?.id != second.id, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil("the new capture to replace the retry-pending capture", timeout: .seconds(3), poll: .milliseconds(20)) {
+            controller.captures.pending?.id == second.id
         }
-        guard controller.captures.pending?.id == second.id, controller.inputForChecks == nil else {
+        guard controller.inputForChecks == nil else {
             throw SelfTestFailure("The capture hotkey did not stage a new capture after the retry warning was gone")
         }
         await controller.drainCaptures()
@@ -1163,9 +1227,7 @@ private func checkQueuedSubmissionSurvivesQuit() async throws {
         let heading = pastDeadline ? "Late quit heading" : "Queued quit heading"
         func inbox() -> String { (try? String(contentsOf: pipeline.vault.inboxURL, encoding: .utf8)) ?? "" }
         func waitForInput() async throws {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-            while controller.inputForChecks == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-            guard controller.inputForChecks != nil else { throw SelfTestFailure("Subheading prompt was not presented") }
+            try await waitUntil("the subheading prompt") { controller.inputForChecks != nil }
         }
         controller.openSubheading()
         try await waitForInput()
@@ -1179,11 +1241,10 @@ private func checkQueuedSubmissionSurvivesQuit() async throws {
         try await Task.sleep(for: .milliseconds(100))
         guard let release,
               let input = controller.inputForChecks,
-              let field = promptWindow(of: input).flatMap({ editableField(in: $0.contentView, label: "Add subheading") }),
-              let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
-                                           context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 36) else {
+              let field = promptWindow(of: input).flatMap({ editableField(in: $0.contentView, label: "Add subheading") }) else {
             throw SelfTestFailure("Could not submit the queued subheading")
         }
+        let enter = try keyDownEvent(36)
         field.stringValue = heading
         _ = input.handleKeyForChecks(enter)
         try await Task.sleep(for: .milliseconds(100))
@@ -1216,11 +1277,9 @@ private func checkRetypedFailedSubheadingSavesOnce() async throws {
     let link = root.appendingPathComponent("second-link.md")
     try FileManager.default.linkItem(at: vaultRoot.appendingPathComponent(session.notePath), to: link)
     for heading in ["Retyped heading", "Other heading"] {
-        do {
+        try await expectRejection(POSIXError.self, "A subheading unexpectedly saved to an unsafe note", matching: { $0.code == .EPERM }) {
             _ = try await controller.addSubheading(heading)
-            throw SelfTestFailure("A subheading unexpectedly saved to an unsafe note")
-        } catch is SelfTestFailure { throw SelfTestFailure("A subheading unexpectedly saved to an unsafe note") }
-        catch {}
+        }
     }
     try FileManager.default.removeItem(at: link)
     guard try await controller.addSubheading("Retyped heading") != nil else {
@@ -1283,12 +1342,8 @@ private func checkFailedCaptureDoesNotBlockNote() async throws {
     guard saved != nil, FileManager.default.fileExists(atPath: vaultRoot.appendingPathComponent("Unblocked note.md").path) else {
         throw SelfTestFailure("An unrelated failed capture commit blocked saving a quick note")
     }
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while !toasts.contains(where: { $0.title == "Couldn't save capture" }), ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-    }
-    guard toasts.contains(where: { $0.title == "Couldn't save capture" }) else {
-        throw SelfTestFailure("The failed capture commit did not report its own failure")
+    try await waitUntil("the failed capture commit to report its own failure", poll: .milliseconds(20)) {
+        toasts.contains(where: { $0.title == "Couldn't save capture" })
     }
 }
 
@@ -1342,11 +1397,8 @@ private func checkBlockedTitlePickerKeepsRetryWarning() async throws {
             $0.title == "Couldn't keep draft; editor stays open" && $0.subtitle?.contains("Capture kept") == true
         } ?? false
     }
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while !restoredWarning(), ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-    }
-    guard restoredWarning(), controller.captures.pending?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
+    try await waitUntil("the kept-capture warning for the blocked editor", poll: .milliseconds(20)) { restoredWarning() }
+    guard controller.captures.pending?.id == first.id, controller.inputForChecks == nil, editorPanel.isVisible else {
         throw SelfTestFailure("A picker blocked by an editor that can't close left a retry-pending capture without its warning")
     }
 }
@@ -1398,11 +1450,7 @@ private func checkQueuedPanelWaitsForSelectionRead() async throws {
         try await Task.sleep(for: .milliseconds(20))
     }
     gate.open()
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while editorPanel() == nil, ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-    }
-    guard editorPanel() != nil else {
-        throw SelfTestFailure("The queued editor did not open after the selection read finished")
+    try await waitUntil("the queued editor to open after the selection read finished", poll: .milliseconds(20)) {
+        editorPanel() != nil
     }
 }

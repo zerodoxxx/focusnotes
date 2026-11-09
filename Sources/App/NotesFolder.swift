@@ -1,6 +1,12 @@
 import AppKit
-import CryptoKit
+import Core
 import Foundation
+
+enum OnboardingDefaults {
+    static let accessibilityGuideShown = "didShowAccessibilityGuide"
+    static let notesFolderSetupShown = "didShowNotesFolderSetup"
+    static let vaultPath = "vaultPath"
+}
 
 /// Folder preferences change the next launch, never the running capture pipeline.
 @MainActor
@@ -10,8 +16,11 @@ enum NotesFolder {
         let canonicalPath: String?
     }
 
+    static let legacyVaultRootMarkerName = "legacy-vault-root.json"
+    static let writeTestPrefix = ".focusnotes-write-test-"
+
     static func configuredRoot(defaults: UserDefaults = .standard) -> URL {
-        if let path = defaults.string(forKey: "vaultPath") {
+        if let path = defaults.string(forKey: OnboardingDefaults.vaultPath) {
             return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
         }
         return FileManager.default.homeDirectoryForCurrentUser
@@ -26,7 +35,7 @@ enum NotesFolder {
         let reachable = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
         let canonical = reachable ? root.standardizedFileURL.resolvingSymlinksInPath().path : nil
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let marker = base.appendingPathComponent("legacy-vault-root.json")
+        let marker = base.appendingPathComponent(legacyVaultRootMarkerName)
         let legacy: LegacyRoot
         do {
             let decoded = try JSONDecoder().decode(LegacyRoot.self, from: Data(contentsOf: marker))
@@ -49,14 +58,14 @@ enum NotesFolder {
             }
             return base
         }
-        let key = SHA256.hash(data: Data((canonical ?? path).utf8)).map { String(format: "%02x", $0) }.joined()
+        let key = ContentDigest.sha256Hex(Data((canonical ?? path).utf8))
         return base.appendingPathComponent("vaults", isDirectory: true).appendingPathComponent(key, isDirectory: true)
     }
 
     @discardableResult
     static func save(_ root: URL, defaults: UserDefaults = .standard) throws -> URL {
         let folder = try validate(root)
-        defaults.set(folder.path, forKey: "vaultPath")
+        defaults.set(folder.path, forKey: OnboardingDefaults.vaultPath)
         return folder
     }
 
@@ -65,7 +74,7 @@ enum NotesFolder {
         let folder = root.standardizedFileURL.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Exercise the write rather than relying only on permission bits or ACLs.
-        let probe = folder.appendingPathComponent(".focusnotes-write-test-\(UUID().uuidString)")
+        let probe = folder.appendingPathComponent(writeTestPrefix + UUID().uuidString)
         try Data().write(to: probe, options: .withoutOverwriting)
         defer { try? FileManager.default.removeItem(at: probe) }
         try FileManager.default.removeItem(at: probe)
@@ -96,10 +105,10 @@ enum NotesFolder {
     /// Existing users retain their configured folder without another setup prompt.
     static func startupRoot(defaults: UserDefaults = .standard) -> URL? {
         let root = configuredRoot(defaults: defaults)
-        guard !defaults.bool(forKey: "didShowNotesFolderSetup"),
-              defaults.string(forKey: "vaultPath") == nil,
-              !defaults.bool(forKey: "didShowAccessibilityGuide") else {
-            defaults.set(true, forKey: "didShowNotesFolderSetup")
+        guard !defaults.bool(forKey: OnboardingDefaults.notesFolderSetupShown),
+              defaults.string(forKey: OnboardingDefaults.vaultPath) == nil,
+              !defaults.bool(forKey: OnboardingDefaults.accessibilityGuideShown) else {
+            defaults.set(true, forKey: OnboardingDefaults.notesFolderSetupShown)
             do { return try validate(root) }
             catch {
                 let alert = NSAlert()
@@ -132,7 +141,7 @@ enum NotesFolder {
                 return nil
             }
             guard let selected else { continue }
-            defaults.set(true, forKey: "didShowNotesFolderSetup")
+            defaults.set(true, forKey: OnboardingDefaults.notesFolderSetupShown)
             return selected
         }
     }

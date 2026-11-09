@@ -67,7 +67,7 @@ internal static class Program
                         if (surface is SearchPanelView search) await search.WaitForThumbnailsAsync();
                         var root = OverlaySurface.Frame(surface);
                         VisualTreeHelper.SetRootDpi(root, new DpiScale(scale, scale));
-                        var size = new Size(surface.Width + Tokens.ShadowMargin * 2, surface.Height + Tokens.ShadowMargin * 2);
+                        var size = PanelGeometry.WindowSize(new Size(surface.Width, surface.Height));
                         root.Measure(size); root.Arrange(new Rect(size)); root.UpdateLayout();
                         // Flush layout callbacks, including the absolute result-row layout, without creating an HWND.
                         await root.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
@@ -374,8 +374,8 @@ internal static class Program
             Require(resized.Top == rect.Top && Math.Abs(resized.Left + resized.Width / 2 - (rect.Left + rect.Width / 2)) < Tokens.LayoutTolerance, "Resize keeps top and center");
         }
         var store = new MemoryPanelPositionStore();
-        store.Save(PanelGeometry.NotePositionKey, new PanelPosition(Tokens.Center, Tokens.PanelTopFraction));
-        Require(store.Load(PanelGeometry.NotePositionKey) == new PanelPosition(Tokens.Center, Tokens.PanelTopFraction), "Position store contract");
+        store.Save(PanelGeometry.SharedPositionKey, new PanelPosition(Tokens.Center, Tokens.PanelTopFraction));
+        Require(store.Load(PanelGeometry.SharedPositionKey) == new PanelPosition(Tokens.Center, Tokens.PanelTopFraction), "Position store contract");
         Require(new Toast(ToastStyle.Warning, "Warning").DurationSeconds == Tokens.WarningToastDuration && new Toast(ToastStyle.Success, "Saved").DurationSeconds == Tokens.DefaultToastDuration, "Toast durations");
     }
     private static object? liveController;

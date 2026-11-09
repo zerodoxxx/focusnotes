@@ -8,7 +8,6 @@ namespace CaptureApp.ModelInstall;
 /// staging directory and resume on the next call. The models directory is replaced only after everything verifies.
 public sealed class ModelInstaller
 {
-    /// Bytes completed out of the total download size.
     public readonly record struct Progress(long CompletedBytes, long TotalBytes)
     {
         public double Fraction => TotalBytes > 0 ? Math.Min(1, (double)CompletedBytes / TotalBytes) : 1;
@@ -23,10 +22,12 @@ public sealed class ModelInstaller
     private readonly IModelTransport transport;
     private readonly Func<string, long> freeSpace;
     private readonly Func<int, TimeSpan> retryDelay;
+    private readonly Action<string>? log;
     private int installing;
 
+    /// Heals an interrupted commit before returning, so the models directory is safe to read.
     public ModelInstaller(string modelsDirectory, string bundledResources, ModelManifest? manifest = null, IModelTransport? transport = null,
-        Func<string, long>? freeSpace = null, Func<int, TimeSpan>? retryDelay = null)
+        Func<string, long>? freeSpace = null, Func<int, TimeSpan>? retryDelay = null, Action<string>? log = null)
     {
         this.modelsDirectory = Path.GetFullPath(modelsDirectory);
         this.bundledResources = bundledResources;
@@ -34,13 +35,15 @@ public sealed class ModelInstaller
         this.transport = transport ?? new HttpModelTransport();
         this.freeSpace = freeSpace ?? VolumeFreeSpace;
         this.retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
+        this.log = log;
+        RemoveStaleBackups(Path.GetDirectoryName(this.modelsDirectory)!);
     }
 
     /// The license files ship next to the app, under ModelLicenses.
     public static string DefaultBundledResources => Path.Combine(AppContext.BaseDirectory, "ModelLicenses");
 
     /// Sibling of the models directory where downloads accumulate until they verify.
-    public string StagingDirectory => Path.Combine(Path.GetDirectoryName(modelsDirectory)!, "models.download");
+    public string StagingDirectory => StagingLayout.Download(Path.GetDirectoryName(modelsDirectory)!);
 
     /// True when an earlier download left files behind that the next install call can resume.
     public bool HasPartialDownload => Directory.Exists(StagingDirectory) && Directory.EnumerateFileSystemEntries(StagingDirectory).Any();
@@ -71,7 +74,6 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Deletes the installed models and any partial download.
     public void Remove()
     {
         if (Volatile.Read(ref installing) != 0)
@@ -95,7 +97,6 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Free bytes available to the current user on the volume that holds the path.
     public static long VolumeFreeSpace(string path)
     {
         try
@@ -108,16 +109,13 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Heals an interrupted commit. Safe to call on every launch, before anything reads the models directory.
-    public void RecoverInterruptedCommit() => RemoveStaleBackups(Path.GetDirectoryName(modelsDirectory)!);
-
     private async Task PerformInstallAsync(Action<Progress> progress, CancellationToken cancellationToken)
     {
         var staging = StagingDirectory;
         var parent = Path.GetDirectoryName(modelsDirectory)!;
         var total = manifest.TotalDownloadBytes;
 
-        // Step 1: staging directory (also creates the parent) and cleanup of backups left by a crash.
+        // Staging directory (also creates the parent) and cleanup of backups left by a crash.
         Directory.CreateDirectory(staging);
         RemoveStaleBackups(parent);
 
@@ -130,7 +128,7 @@ public sealed class ModelInstaller
             }
         }
 
-        // Step 2: work list. Files that already verify are reused and count as completed.
+        // Files that already verify are reused and count as completed.
         var downloads = new List<ModelArtifact>();
         var completed = 0L;
         // .part files of files that no longer need downloading. Removed only after the space check passes.
@@ -157,7 +155,6 @@ public sealed class ModelInstaller
             downloads.Add(artifact);
         }
 
-        // Step 3: disk pre-flight, counting bytes already present in .part files as downloaded.
         // Read-only: nothing is deleted until the space check has passed.
         var remainingBytes = downloads.Sum(item => item.Size - PartialBytes(PartPath(item.Path), item.Size));
         var required = remainingBytes + SpaceHeadroom;
@@ -175,7 +172,6 @@ public sealed class ModelInstaller
         var throttle = new ProgressThrottle(total, progress);
         throttle.Report(completed, force: true);
 
-        // Step 4: downloads in manifest order.
         foreach (var item in downloads)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -188,7 +184,6 @@ public sealed class ModelInstaller
             completed += item.Size;
         }
 
-        // Step 5: bundled license files, verified before they are copied in.
         foreach (var license in manifest.Licenses)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -201,7 +196,7 @@ public sealed class ModelInstaller
             ReplaceByCopy(Path.Combine(staging, license.InstalledName), source);
         }
 
-        // Step 6: everything the app needs is present, and nothing is half-written.
+        // Everything the app needs is present, and nothing is half-written.
         foreach (var name in manifest.RequiredFiles.Concat(manifest.Licenses.Select(license => license.InstalledName)))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -212,12 +207,12 @@ public sealed class ModelInstaller
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (Directory.EnumerateFiles(staging, "*.part", SearchOption.AllDirectories).Any())
+        if (Directory.EnumerateFiles(staging, StagingLayout.PartPattern, SearchOption.AllDirectories).Any())
         {
             throw ModelInstallException.Io("an incomplete download is still present");
         }
 
-        // Step 7: atomic commit. The old directory is kept until the new one is in place. This is the final
+        // The old directory is kept until the new one is in place. This is the final
         // cancellation point before the swap: verified downloads stay in staging and the installed set stays untouched.
         if (!Directory.Exists(staging))
         {
@@ -227,11 +222,9 @@ public sealed class ModelInstaller
         cancellationToken.ThrowIfCancellationRequested();
         Commit(staging, cancellationToken);
 
-        // Step 8: final progress.
         throttle.Report(total, force: true);
     }
 
-    /// Downloads one file, resuming from its .part file, with retries on network errors.
     private async Task FetchAsync(ModelArtifact item, Action<long> progress, CancellationToken cancellationToken)
     {
         var part = PartPath(item.Path);
@@ -281,12 +274,11 @@ public sealed class ModelInstaller
                 throw ModelInstallException.ChecksumMismatch(item.Path);
             }
 
-            // Corrupt bytes: download the file again from the start, once.
             checksumRetried = true;
         }
     }
 
-    /// Swaps the staged directory in for the models directory. On failure the old directory is restored.
+    /// On failure the old directory is restored.
     private void Commit(string staging, CancellationToken cancellationToken)
     {
         var parent = Path.GetDirectoryName(modelsDirectory)!;
@@ -294,7 +286,7 @@ public sealed class ModelInstaller
         if (Directory.Exists(modelsDirectory))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            backup = Path.Combine(parent, "models.old-" + Guid.NewGuid());
+            backup = StagingLayout.NewBackup(parent);
             Directory.Move(modelsDirectory, backup);
         }
 
@@ -311,8 +303,9 @@ public sealed class ModelInstaller
                 {
                     Directory.Move(backup, modelsDirectory);
                 }
-                catch (IOException)
+                catch (IOException restoreError)
                 {
+                    log?.Invoke($"Model install rollback could not restore {backup}: {restoreError.Message}");
                 }
             }
 
@@ -335,7 +328,7 @@ public sealed class ModelInstaller
             return;
         }
 
-        var backups = Directory.EnumerateDirectories(parent, "models.old-*")
+        var backups = Directory.EnumerateDirectories(parent, StagingLayout.BackupPattern)
             .OrderByDescending(Directory.GetCreationTimeUtc).ToList();
         if (backups.Count == 0)
         {
@@ -374,7 +367,7 @@ public sealed class ModelInstaller
         return Convert.ToHexString(SHA256.HashData(stream)).Equals(expected, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// Bytes already in the partial file. Read-only: 0 when the file is missing or larger than expected.
+    /// Read-only: 0 when the file is missing or larger than expected.
     private static long PartialBytes(string part, long expectedSize)
     {
         var info = new FileInfo(part);
@@ -389,7 +382,7 @@ public sealed class ModelInstaller
         _ => false
     };
 
-    private string PartPath(string name) => Path.Combine(StagingDirectory, name + ".part");
+    private string PartPath(string name) => StagingLayout.Part(StagingDirectory, name);
 
     private static void ReplaceByCopy(string destination, string source)
     {
@@ -425,8 +418,22 @@ public sealed class ModelInstaller
         }
     }
 
-    /// Shares one progress callback between the transport and the installer, and limits it to about
-    /// ten calls per second unless forced.
+    /// Creation and cleanup both go through here so they cannot drift apart.
+    private static class StagingLayout
+    {
+        public const string DownloadDirectory = "models.download";
+        public const string PartSuffix = ".part";
+        public const string BackupPrefix = "models.old-";
+        public const string PartPattern = "*" + PartSuffix;
+        public const string BackupPattern = BackupPrefix + "*";
+
+        public static string Download(string parent) => Path.Combine(parent, DownloadDirectory);
+
+        public static string Part(string stagingDirectory, string name) => Path.Combine(stagingDirectory, name + PartSuffix);
+
+        public static string NewBackup(string parent) => Path.Combine(parent, BackupPrefix + Guid.NewGuid());
+    }
+
     private sealed class ProgressThrottle(long total, Action<Progress> callback)
     {
         private readonly object gate = new();

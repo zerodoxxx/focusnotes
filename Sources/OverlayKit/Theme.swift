@@ -6,22 +6,23 @@ import QuartzCore
 public enum OverlayTheme {
     public static let material: NSVisualEffectView.Material = .popover
     public static let blending: NSVisualEffectView.BlendingMode = .behindWindow
+    /// Dynamic colour providers run off the main actor, so this helper must not inherit isolation.
+    nonisolated static func isDark(_ appearance: NSAppearance) -> Bool { appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
     public static let effectState: NSVisualEffectView.State = .active
     public static let panelRadius: CGFloat = 14
     public static let quickPanelRadius: CGFloat = 16
     public static let toastRadius: CGFloat = 12
     public static let borderWidth: CGFloat = 0.5
     public static let surfaceTint = NSColor(name: NSColor.Name("OverlayKit.surfaceTint"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(srgbRed: dark ? 0.086 : 0.984, green: dark ? 0.086 : 0.984, blue: dark ? 0.086 : 0.984, alpha: 0.97)
     })
     public static let surfaceBorder = NSColor(name: NSColor.Name("OverlayKit.surfaceBorder"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: dark ? 0.12 : 0.10)
     })
-    public static let borderColor = NSColor.separatorColor
     public static let brandAccent = NSColor(name: NSColor.Name("OverlayKit.brandAccent"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return dark ? NSColor(srgbRed: 1.0, green: 0.420, blue: 0.373, alpha: 1)
                     : NSColor(srgbRed: 0.898, green: 0.282, blue: 0.235, alpha: 1)
     })
@@ -76,11 +77,11 @@ public enum OverlayTheme {
     public static let quickClusterRadius: CGFloat = 14
     public static let quickClusterPadding: CGFloat = 1
     public static let quickClusterFill = NSColor(name: NSColor.Name("OverlayKit.quickClusterFill"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: dark ? 0.06 : 0.04)
     })
     public static let quickClusterBorder = NSColor(name: NSColor.Name("OverlayKit.quickClusterBorder"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: 0.08)
     })
     public static let quickTitlePinSize: CGFloat = 10
@@ -118,7 +119,7 @@ public enum OverlayTheme {
     public static let editorCheckboxCheckPoints = [NSPoint(x: 0.25, y: 0.5), NSPoint(x: 0.43, y: 0.7), NSPoint(x: 0.76, y: 0.3)]
     public static let editorTextInset = NSSize.zero
     public static let codeBackground = NSColor(name: NSColor.Name("OverlayKit.codeBackground"), dynamicProvider: { appearance in
-        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = OverlayTheme.isDark(appearance)
         return NSColor(white: dark ? 1 : 0, alpha: dark ? 0.09 : 0.05)
     })
     public static let codeBlockRadius: CGFloat = 4

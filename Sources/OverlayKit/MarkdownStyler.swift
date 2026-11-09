@@ -33,6 +33,65 @@ public enum MarkdownStyler {
     public static let rawParagraph = NSAttributedString.Key("OverlayKit.rawParagraph")
     public static let previewParagraph = NSAttributedString.Key("OverlayKit.previewParagraph")
 
+    /// Paragraph-style variants that must stay in sync (body, raw syntax, hidden-syntax preview).
+    static let paragraphKeys: [NSAttributedString.Key] = [.paragraphStyle, rawParagraph, previewParagraph]
+    /// Every attribute the styler writes.
+    @_spi(Checks) public static let styledKeys: [NSAttributedString.Key] = [
+        .font, .foregroundColor, .strikethroughStyle,
+        syntax, element, bullet, task, taskIndent, quote,
+        fencedCodeBlock, inlineCode, fenceStateAfter
+    ] + paragraphKeys
+
+    /// A `task` attribute value: whether the task box is checked.
+    static func taskState(_ value: Any?) -> Bool? { value as? Bool }
+
+    /// Literal Markdown patterns, compiled once; patterns are fixed, so failure is a programmer error.
+    enum Syntax {
+        static let heading = compile("^#+ ")
+        static let listMarker = compile(#"^([ \t]*)([-*+] (?:\[[ xX]\] )?|[0-9]+\. )"#)
+        static let quote = compile("^> ")
+        static let inlineCode = compile(#"(`+)([^`\r\n]+)\1"#)
+        static let link = compile(#"\[([^\]\r\n]+)\]\(([^)\r\n]+)\)|https?://[^\s<>]+"#)
+        static let strong = compile(#"(\*\*|__)(?=\S)(.+?\S|\S)\1"#)
+        static let italic = compile(#"(?<![\w*_])(\*|_)(?=\S)([^*_\r\n]+?\S|[^\s*_])\1(?![\w*_])"#)
+        static let strike = compile(#"(~~)(?=\S)(.+?\S|\S)\1"#)
+        /// Single-line editor patterns.
+        static let emptyTaskBox = compile(#"^([ \t]*)([-*+]) \[\]$"#, options: [])
+        static let taskBox = compile(#"^([ \t]*)([-*+] )\[[ xX]\] "#, options: [])
+        /// Length of the "[x] " box that taskBox matches after the bullet.
+        static let taskBoxLength = 4
+        static let listLine = compile(#"^([ \t]*)([-*+] (?:\[[ xX]\] )?|([0-9]+)\. )(.*)$"#, options: [])
+
+        static func isBulletCharacter(_ c: unichar) -> Bool { c == 45 || c == 42 || c == 43 }
+
+        private static func compile(_ pattern: String, options: NSRegularExpression.Options = .anchorsMatchLines) -> NSRegularExpression {
+            try! NSRegularExpression(pattern: pattern, options: options)
+        }
+    }
+
+    /// Feeds one logical line (without its newline) through the fence state.
+    /// Returns whether the line is itself an opening or closing fence.
+    static func advanceFence(_ fence: inout FenceState, line: NSString) -> Bool {
+        var indent = 0
+        while indent < line.length, line.character(at: indent) == 32 { indent += 1 }
+        var run = 0
+        let first: unichar = indent < line.length ? line.character(at: indent) : 0
+        if indent <= 3, first == 96 || first == 126 {
+            while indent + run < line.length, line.character(at: indent + run) == first { run += 1 }
+        }
+        let rest = line.substring(from: min(line.length, indent + run))
+        if fence.isOpen {
+            if first == fence.character, run >= fence.length,
+               rest.trimmingCharacters(in: .whitespaces).isEmpty { fence = .outside; return true }
+        } else if run >= 3, first != 96 || !rest.contains("`") {
+            fence = FenceState(character: first, length: run); return true
+        }
+        return false
+    }
+
+    /// Levels past four share the smallest heading font.
+    private static func headingFont(level: Int) -> NSFont { OverlayTheme.editorHeadingFonts[min(level, 4) - 1] }
+
     public enum ElementKind: Hashable {
         case blockMarker
         case headingLine
@@ -86,27 +145,58 @@ public enum MarkdownStyler {
                 .paragraphStyle: paragraph]
     }
 
-    /// Large documents restrict attribute generation to edited paragraphs. Fence
-    /// context is scanned as plain lines, without running inline expressions there.
-    public static func styles(_ text: String, in requested: NSRange? = nil) -> [Span] {
-        scanCore(text, outputRange: requested, from: 0, startingFence: .outside, stopAfterLine: nil).spans
+    /// The paragraph containing `edit`, clamped to `source`.
+    @_spi(Checks) public static func paragraphRange(around edit: NSRange, in source: NSString) -> NSRange {
+        let safe = NSIntersectionRange(edit, NSRange(location: 0, length: source.length))
+        let probe = min(safe.location, max(0, source.length - 1))
+        return source.paragraphRange(for: NSRange(location: probe, length: min(max(1, safe.length), source.length - probe)))
+    }
+
+    /// The editor's restyle: rewrites the paragraph around `editedRange` plus any suffix whose
+    /// fence state changed (the whole document when nil). `adjust` runs inside the same editing
+    /// batch. Returns the rewritten line range.
+    @_spi(Checks) @discardableResult
+    public static func restyle(_ storage: NSMutableAttributedString, editedRange: NSRange?,
+                               baseAttributes: [NSAttributedString.Key: Any],
+                               adjust: (NSRange) -> Void = { _ in }) -> NSRange {
+        let text = storage.string
+        let source = text as NSString
+        let scan: ScanResult
+        if let editedRange {
+            let safeEdit = NSIntersectionRange(editedRange, NSRange(location: 0, length: source.length))
+            let paragraph = paragraphRange(around: editedRange, in: source)
+            let start = paragraph.location
+            let incomingFence = start > 0
+                ? storage.attribute(fenceStateAfter, at: start - 1, effectiveRange: nil) as? FenceState ?? .outside
+                : .outside
+            let minimumEnd = max(NSMaxRange(paragraph), NSMaxRange(safeEdit))
+            scan = Self.scan(text, from: start, startingFence: incomingFence) { line, state in
+                guard NSMaxRange(line) >= minimumEnd, line.location < source.length,
+                      let previousState = storage.attribute(fenceStateAfter, at: line.location,
+                                                            effectiveRange: nil) as? FenceState else { return false }
+                return state == previousState
+            }
+        } else {
+            scan = Self.scan(text, from: 0, startingFence: .outside)
+        }
+        storage.beginEditing()
+        storage.setAttributes(baseAttributes, range: scan.processedRange)
+        for span in scan.spans { storage.addAttributes(span.attributes, range: span.range) }
+        adjust(scan.processedRange)
+        storage.endEditing()
+        return scan.processedRange
     }
 
     /// Restyle from an already-known fence boundary. The caller can stop once the new
     /// outgoing fence state matches the cached state for an unchanged suffix line.
-    public static func scan(_ text: String, from location: Int, startingFence: FenceState,
+    /// Fence context is scanned as plain lines, without running inline expressions there.
+    public static func scan(_ text: String, from requestedStart: Int, startingFence initialFence: FenceState,
                             stopAfterLine: ((NSRange, FenceState) -> Bool)? = nil) -> ScanResult {
-        scanCore(text, outputRange: nil, from: location, startingFence: startingFence, stopAfterLine: stopAfterLine)
-    }
-
-    private static func scanCore(_ text: String, outputRange requested: NSRange?, from requestedStart: Int,
-                                 startingFence initialFence: FenceState,
-                                 stopAfterLine: ((NSRange, FenceState) -> Bool)?) -> ScanResult {
         let source = text as NSString
         guard source.length > 0 else { return ScanResult(spans: [], processedRange: .init(location: 0, length: 0)) }
         let startProbe = min(max(0, requestedStart), source.length - 1)
         let start = source.lineRange(for: NSRange(location: startProbe, length: 0)).location
-        let target = requested ?? NSRange(location: start, length: source.length - start)
+        let target = NSRange(location: start, length: source.length - start)
         var spans: [Span] = []
         var fence: FenceState = initialFence
         var processedEnd = start
@@ -114,36 +204,15 @@ public enum MarkdownStyler {
             let intersection = NSIntersectionRange(range, target)
             if intersection.length > 0 { spans.append((intersection, attributes)) }
         }
-        var expressions: [String: NSRegularExpression] = [:]
-        func matches(_ pattern: String, _ range: NSRange) -> [NSTextCheckingResult] {
-            let regex: NSRegularExpression
-            if let cached = expressions[pattern] { regex = cached }
-            else {
-                guard let compiled = try? NSRegularExpression(pattern: pattern, options: .anchorsMatchLines) else { return [] }
-                expressions[pattern] = compiled; regex = compiled
-            }
-            return regex.matches(in: text, range: range)
+        func matches(_ regex: NSRegularExpression, _ range: NSRange) -> [NSTextCheckingResult] {
+            regex.matches(in: text, range: range)
         }
         var offset = start
         while offset < source.length {
             let line = source.lineRange(for: NSRange(location: offset, length: 0))
             let value = source.substring(with: line) as NSString
             let trimmed = value.trimmingCharacters(in: .newlines) as NSString
-            var indent = 0
-            while indent < trimmed.length, trimmed.character(at: indent) == 32 { indent += 1 }
-            var run = 0
-            let first: unichar = indent < trimmed.length ? trimmed.character(at: indent) : 0
-            if indent <= 3, first == 96 || first == 126 {
-                while indent + run < trimmed.length, trimmed.character(at: indent + run) == first { run += 1 }
-            }
-            let rest = trimmed.substring(from: min(trimmed.length, indent + run))
-            var fenceLine = false
-            if fence.isOpen {
-                if first == fence.character, run >= fence.length,
-                   rest.trimmingCharacters(in: .whitespaces).isEmpty { fence = .outside; fenceLine = true }
-            } else if run >= 3, first != 96 || !rest.contains("`") {
-                fence = FenceState(character: first, length: run); fenceLine = true
-            }
+            let fenceLine = advanceFence(&fence, line: trimmed)
             let outgoingFence = fence
             add(line, [fenceStateAfter: outgoingFence])
             if fence.isOpen || fenceLine {
@@ -159,22 +228,15 @@ public enum MarkdownStyler {
                 if stopAfterLine?(line, outgoingFence) == true { break }
                 continue
             }
-            guard NSIntersectionRange(line, target).length > 0 else {
-                processedEnd = NSMaxRange(line)
-                offset = processedEnd
-                if stopAfterLine?(line, outgoingFence) == true { break }
-                continue
-            }
             var lineFont = OverlayTheme.editorFont
-            if let heading = matches("^#+ ", line).first {
-                let level = heading.range.length - 1
-                lineFont = OverlayTheme.editorHeadingFonts[min(level, 4) - 1]
+            if let heading = matches(Syntax.heading, line).first {
+                lineFont = headingFont(level: heading.range.length - 1)
                 add(line, [.font: lineFont, .foregroundColor: OverlayTheme.editorHeadingColor])
                 let contentLength = (trimmed as NSString).length
                 let element = Element(range: NSRange(location: line.location, length: contentLength), kind: .headingLine)
                 add(heading.range, [.foregroundColor: OverlayTheme.tertiaryColor, syntax: true, Self.element: element])
             }
-            if let list = matches(#"^([ \t]*)([-*+] (?:\[[ xX]\] )?|[0-9]+\. )"#, line).first {
+            if let list = matches(Syntax.listMarker, line).first {
                 let marker = NSRange(location: line.location, length: list.range.length)
                 let itemMarker = list.range(at: 2)
                 let blockElement = Element(range: itemMarker, kind: .blockMarker)
@@ -182,13 +244,13 @@ public enum MarkdownStyler {
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.lineHeightMultiple = OverlayTheme.editorLineHeightMultiple
                 var displayedMarker = source.substring(with: marker)
-                let first = source.character(at: itemMarker.location)
-                if first == 45 || first == 42 || first == 43 {
+                let isBullet = Syntax.isBulletCharacter(source.character(at: itemMarker.location))
+                if isBullet {
                     add(NSRange(location: itemMarker.location, length: 1), [bullet: true, .font: OverlayTheme.editorBulletFont])
                     displayedMarker = (displayedMarker as NSString).replacingCharacters(in: NSRange(location: itemMarker.location - marker.location, length: 1), with: OverlayTheme.editorBullet)
                 }
                 paragraph.headIndent = (displayedMarker as NSString).size(withAttributes: [.font: OverlayTheme.editorFont]).width
-                if first == 45 || first == 42 || first == 43 {
+                if isBullet {
                     let bullet = OverlayTheme.editorBullet as NSString
                     paragraph.headIndent += bullet.size(withAttributes: [.font: OverlayTheme.editorBulletFont]).width - bullet.size(withAttributes: [.font: OverlayTheme.editorFont]).width
                 }
@@ -211,7 +273,7 @@ public enum MarkdownStyler {
                     add(NSRange(location: NSMaxRange(marker), length: NSMaxRange(line) - NSMaxRange(marker)),
                         [.foregroundColor: OverlayTheme.secondaryColor, .strikethroughStyle: NSUnderlineStyle.single.rawValue])
                 }
-            } else if let quote = matches("^> ", line).first {
+            } else if let quote = matches(Syntax.quote, line).first {
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.lineHeightMultiple = OverlayTheme.editorLineHeightMultiple
                 paragraph.headIndent = OverlayTheme.editorQuoteIndent
@@ -225,10 +287,10 @@ public enum MarkdownStyler {
 
             // Mask inline code and links before emphasis, so punctuation in a URL
             // or a code sample never becomes an emphasis delimiter.
-            let codes = matches(#"(`+)([^`\r\n]+)\1"#, line)
-            let links = matches(#"\[([^\]\r\n]+)\]\(([^)\r\n]+)\)|https?://[^\s<>]+"#, line)
+            let codes = matches(Syntax.inlineCode, line)
+            let links = matches(Syntax.link, line)
             let protected = codes.map(\.range) + links.map(\.range)
-            func emphasis(_ pattern: String, _ attrs: [NSAttributedString.Key: Any]) {
+            func emphasis(_ pattern: NSRegularExpression, _ attrs: [NSAttributedString.Key: Any]) {
                 for match in matches(pattern, line) where !protected.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) {
                     add(match.range(at: 2), attrs)
                     let element = Element(range: match.range, kind: .inlineSpan)
@@ -238,10 +300,10 @@ public enum MarkdownStyler {
                         [.foregroundColor: OverlayTheme.tertiaryColor, syntax: true, Self.element: element])
                 }
             }
-            emphasis(#"(\*\*|__)(?=\S)(.+?\S|\S)\1"#, [.font: NSFont.systemFont(ofSize: lineFont.pointSize, weight: .semibold)])
+            emphasis(Syntax.strong, [.font: NSFont.systemFont(ofSize: lineFont.pointSize, weight: .semibold)])
             let italic = NSFont(descriptor: lineFont.fontDescriptor.withSymbolicTraits(lineFont.fontDescriptor.symbolicTraits.union(.italic)), size: lineFont.pointSize) ?? lineFont
-            emphasis(#"(?<![\w*_])(\*|_)(?=\S)([^*_\r\n]+?\S|[^\s*_])\1(?![\w*_])"#, [.font: italic])
-            emphasis(#"(~~)(?=\S)(.+?\S|\S)\1"#, [.strikethroughStyle: NSUnderlineStyle.single.rawValue])
+            emphasis(Syntax.italic, [.font: italic])
+            emphasis(Syntax.strike, [.strikethroughStyle: NSUnderlineStyle.single.rawValue])
             for code in codes {
                 add(code.range, [.font: OverlayTheme.editorCodeFont, inlineCode: true])
                 let element = Element(range: code.range, kind: .inlineSpan)

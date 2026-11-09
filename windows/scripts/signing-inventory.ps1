@@ -33,8 +33,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envFile = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDirectory)) 'Config/app.env'
-$appName = [regex]::Match((Get-Content -Raw -Path $envFile), '(?m)^APPNAME=([^\r\n]+)').Groups[1].Value
-if (-not $appName) { throw 'APPNAME is missing from Config/app.env' }
+. (Join-Path $PSScriptRoot 'app-env.ps1')
+$appName = Get-AppEnv $envFile 'APPNAME'
 
 $allowlist = @{}
 foreach ($entry in (Get-Content -Raw -Path (Join-Path $scriptDirectory 'upstream-allowlist.json') | ConvertFrom-Json).entries) {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace CaptureApp.Platform.Hotkeys;
@@ -5,12 +6,15 @@ namespace CaptureApp.Platform.Hotkeys;
 /// <summary>Detects Ctrl+Alt+Shift+letter combinations that type a character via installed AltGr layouts.</summary>
 public static class AltGrGuard
 {
-    // Stable Alt+Shift fallback priority after the default letters Q, G, F, A, W, H, E.
+    // Stable Alt+Shift fallback priority; must not reuse a default Alt+Shift letter (checked at type init).
     public const string FallbackOrder = "DJKLNPRTUVXYZBCIOSM";
 
     private const uint MapVirtualKeyToScanCode = 0;
     private const uint ToUnicodeNoStateChange = 0x0004;
     private const uint LoadKeyboardLayoutNoShell = 0x00000080;
+    private const int OutputLength = 4;
+
+    static AltGrGuard() => Debug.Assert(!HotkeyDefaults.All.Values.Any(chord => chord.Modifiers == HotkeyDefaults.Modifiers && FallbackOrder.Contains((char)chord.VirtualKey)), "AltGrGuard.FallbackOrder overlaps a default shortcut letter.");
 
     public static IReadOnlyList<IntPtr> GetInstalledLayouts()
     {
@@ -101,7 +105,7 @@ public static class AltGrGuard
         }
 
         var keyboardState = Marshal.AllocHGlobal(256);
-        var output = Marshal.AllocHGlobal(sizeof(short) * 4);
+        var output = Marshal.AllocHGlobal(sizeof(short) * OutputLength);
         try
         {
             Marshal.Copy(new byte[256], 0, keyboardState, 256);
@@ -109,14 +113,14 @@ public static class AltGrGuard
             Marshal.WriteByte(keyboardState, 0x11, 0x80); // VK_CONTROL
             Marshal.WriteByte(keyboardState, 0x12, 0x80); // VK_MENU (AltGr is Ctrl+Alt)
             Marshal.WriteByte(keyboardState, virtualKey, 0x80);
-            for (var index = 0; index < 4; index++)
+            for (var index = 0; index < OutputLength; index++)
             {
                 Marshal.WriteInt16(output, index * sizeof(short), 0);
             }
 
             // Flag 0x4 asks Windows not to mutate the keyboard dead-key state.
             var translatedCount = AltGrNativeMethods.ToUnicodeEx((uint)virtualKey, scanCode, keyboardState,
-                output, 4, ToUnicodeNoStateChange, layout);
+                output, OutputLength, ToUnicodeNoStateChange, layout);
             return translatedCount != 0 && Marshal.ReadInt16(output) != 0;
         }
         finally

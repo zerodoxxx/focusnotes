@@ -7,7 +7,7 @@ private final class BrowseRowView: NoteCardRowView {
     let title: NSTextField
     let detail: NSTextField
     let pin: NSImageView?
-    var isSelected = false { didSet { needsLayout = true; setAccessibilityValue(isSelected ? "Selected" : "") } }
+    var isSelected = false { didSet { needsLayout = true; setAccessibilitySelectedValue(isSelected) } }
     var onClick: (() -> Void)?
 
     init(item: BrowseItem) {
@@ -33,8 +33,7 @@ private final class BrowseRowView: NoteCardRowView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = isSelected ? OverlayTheme.menuSelectedFill.cgColor : nil
         }
-        // The row sits menuRowInset inside the card; content insets are measured from the card's edges.
-        let inset = OverlayTheme.menuContentInset - OverlayTheme.menuRowInset
+        let inset = OverlayTheme.menuRowContentInset
         let iconSize = OverlayTheme.browseIconSize
         icon.frame = NSRect(x: inset, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize)
         var trailing = bounds.width - inset
@@ -121,19 +120,19 @@ final class NoteBrowseView: NoteCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func handle(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 125, 126:
+        guard let command = OverlayKeyCommand(event) else { return false }
+        switch command {
+        case .moveDown, .moveUp:
             guard !shown.isEmpty else { return true }
-            select(min(shown.count - 1, max(0, (selection ?? (event.keyCode == 125 ? -1 : shown.count)) + (event.keyCode == 125 ? 1 : -1))))
+            select(min(shown.count - 1, max(0, (selection ?? (command == .moveDown ? -1 : shown.count)) + (command == .moveDown ? 1 : -1))))
             return true
-        case 36, 76:
+        case .submit:
             guard let selection, shown.indices.contains(selection) else { return true }
             let flags = event.shortcutFlags
             choose(selection, flags.contains(.command) ? .open : (flags.contains(.option) ? .reveal : .write))
             return true
-        case 53: onBack?(); return true
-        case 35 where event.shortcutFlags == .command: onBack?(); return true
-        default: return false
+        case .cancel, .toggleBrowse: onBack?(); return true
+        case .complete, .toggleActions: return false
         }
     }
 
@@ -161,7 +160,6 @@ final class NoteBrowseView: NoteCardView {
                 recent.append(item)
             }
         }
-        // Stable pinned-first order with bounded storage and at most browseMaxRows visible rows.
         shown = Array((pinned + recent).prefix(OverlayTheme.browseMaxRows))
         let pinnedCount = shown.prefix { $0.isPinned }.count, recentCount = shown.count - pinnedCount
         rows.forEach { $0.removeFromSuperview() }

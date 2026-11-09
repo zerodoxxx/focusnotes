@@ -45,9 +45,11 @@ public sealed class QuickNoteState
         Destination = outsideSession ? null : destination;
         Folder = folder;
         LaunchedOutside = outsideSession;
-        OutsideSession = folder is not null || outsideSession;
+        OutsideSession = DefaultOutsideSession;
         PinOnSave = Destination is null && pinOnSave;
     }
+
+    private bool DefaultOutsideSession => Folder is not null || LaunchedOutside;
 
     public bool TogglePinOnSave(NoteDraftStore drafts)
     {
@@ -66,12 +68,14 @@ public sealed class QuickNoteState
     {
         if (sessionDestination is null) return;
         OutsideSession = !OutsideSession;
-        Destination = OutsideSession ? null : sessionDestination;
+        FollowSession(sessionDestination);
     }
 
     public void ReturnToSession(Destination? sessionDestination)
     {
-        OutsideSession = Folder is not null || LaunchedOutside;
-        Destination = OutsideSession ? null : sessionDestination;
+        OutsideSession = DefaultOutsideSession;
+        FollowSession(sessionDestination);
     }
+
+    private void FollowSession(Destination? sessionDestination) => Destination = OutsideSession ? null : sessionDestination;
 }

@@ -12,6 +12,16 @@ public struct Destination: Codable, Sendable, Equatable {
     }
 }
 
+extension Destination {
+    static func inbox(in vault: Vault) -> Destination {
+        Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+    }
+
+    static func isInboxTitle(_ title: String) -> Bool {
+        NoteTitle.matchKey(title) == NoteTitle.matchKey(Vault.inboxTitle)
+    }
+}
+
 public enum RouterError: Error, Sendable, LocalizedError {
     case ambiguous([Destination])
 
@@ -41,7 +51,7 @@ public enum Router {
             let qualifiedPath = pathName.scope == .home || pathName.components.count > 1
             if qualifiedPath {
                 let location = try vault.resolveNoteName(pathName)
-                let leafTitle = String(cleaned.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+                let leafTitle = NoteTitle.leafName(of: cleaned)
                 return Destination(url: location.url, title: NoteTitle.cleanTitle(leafTitle), kind: .note)
             }
 
@@ -52,20 +62,14 @@ public enum Router {
                     && NoteTitle.matchKey($0.title) == key
             }
             if !rootNotes.isEmpty {
-                let candidates = rootNotes.map { Destination(url: $0.url, title: $0.title, kind: .note) }
-                    .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
-                guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
-                return candidates[0]
+                return try uniqueDestination(among: rootNotes, kind: .note)
             }
             let sessions = notes.filter { $0.kind == .session && NoteTitle.matchKey($0.title) == key }
             if !sessions.isEmpty {
-                let candidates = sessions.map { Destination(url: $0.url, title: $0.title, kind: .session) }
-                    .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
-                guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
-                return candidates[0]
+                return try uniqueDestination(among: sessions, kind: .session)
             }
-            if key == NoteTitle.matchKey(Vault.inboxTitle) {
-                return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+            if Destination.isInboxTitle(cleaned) {
+                return .inbox(in: vault)
             }
             let location = try vault.resolveNoteName(pathName)
             return Destination(url: location.url, title: cleaned, kind: .note)
@@ -79,6 +83,13 @@ public enum Router {
             )
         }
 
-        return Destination(url: vault.inboxURL, title: Vault.inboxTitle, kind: .inbox)
+        return .inbox(in: vault)
+    }
+
+    private static func uniqueDestination(among notes: [NoteRef], kind: NoteKind) throws -> Destination {
+        let candidates = notes.map { Destination(url: $0.url, title: $0.title, kind: kind) }
+            .sorted { $0.url.standardizedFileURL.path < $1.url.standardizedFileURL.path }
+        guard candidates.count == 1 else { throw RouterError.ambiguous(candidates) }
+        return candidates[0]
     }
 }

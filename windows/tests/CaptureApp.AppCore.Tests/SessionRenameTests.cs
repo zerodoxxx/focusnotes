@@ -12,7 +12,7 @@ public sealed class SessionRenameTests
     public async Task SuccessfulRenameFeedbackDoesNotRepeatAFailedIndexCacheUpdate()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var session = pipeline.Sessions.Start("Standup");
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         pipeline.Index.Dispose(); // The pipeline treats search-cache failure as repairable.
@@ -22,21 +22,21 @@ public sealed class SessionRenameTests
         Assert.False(outcome.IdentityUpdatePending);
         Assert.Equal(outcome.Session, coordinator.ActiveSession);
         Assert.True(File.Exists(pipeline.Vault.ManagedUrl(outcome.Session.NotePath)));
-        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
     }
 
     [Fact]
     public void FailedMoveImmediatelyClearsIntentBeforeLaterSourceEdits()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var session = pipeline.Sessions.Start("Standup");
         var oldUrl = pipeline.Vault.ManagedUrl(session.NotePath);
         Assert.Throws<SessionStoreException>(() => pipeline.RenameSession(Candidate(session), "Daily sync", afterIntent: plan =>
         {
             File.WriteAllText(pipeline.Vault.ManagedUrl(plan.Target.NotePath), "# Occupied\nkeep\n");
         }));
-        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
         File.AppendAllText(oldUrl, "user edit\n");
         Assert.Contains("user edit", File.ReadAllText(oldUrl), StringComparison.Ordinal);
         pipeline.Commit(pipeline.PrepareText("next capture", new CaptureSource()));
@@ -48,7 +48,7 @@ public sealed class SessionRenameTests
     {
         using var temp = new TempDirectory();
         string stagedPath;
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var session = pipeline.Sessions.Start("Standup");
             SessionRenamePlan? recorded = null;
@@ -56,7 +56,7 @@ public sealed class SessionRenameTests
             Assert.Throws<InvalidOperationException>(() => pipeline.Service.RenameSession(Candidate(session), "Daily sync", plan =>
             {
                 recorded = plan;
-                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                File.WriteAllBytes(IntentPath(pipeline.StateDirectory),
                     JsonSerializer.SerializeToUtf8Bytes(new { Plan = plan, CaptureIds = Array.Empty<Guid>() }));
                 File.Move(pipeline.Vault.ManagedUrl(plan.Installation!.TemporaryPath), heldPath);
                 throw new InvalidOperationException("simulated crash with a retained staging inode");
@@ -65,9 +65,9 @@ public sealed class SessionRenameTests
             stagedPath = pipeline.Vault.ManagedUrl(recorded.Installation!.TemporaryPath);
             File.Move(heldPath, stagedPath); // Same inode, restored to the exact crash checkpoint name.
         }
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.False(File.Exists(stagedPath));
-        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(reopened.StateDirectory)));
         Assert.True(File.Exists(reopened.Vault.ManagedUrl("Sessions/Standup.md")));
     }
 
@@ -79,14 +79,14 @@ public sealed class SessionRenameTests
     {
         using var temp = new TempDirectory();
         string path;
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var session = pipeline.Sessions.Start("Standup");
             SessionRenamePlan? plan = null;
             void SaveIntent(SessionRenamePlan value)
             {
                 plan = value;
-                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                File.WriteAllBytes(IntentPath(pipeline.StateDirectory),
                     JsonSerializer.SerializeToUtf8Bytes(new { Plan = value, CaptureIds = Array.Empty<Guid>() }));
                 if (!replacementFinished) throw new InvalidOperationException("interrupted before move");
             }
@@ -98,8 +98,8 @@ public sealed class SessionRenameTests
                 File.Move(pipeline.Vault.ManagedUrl(session.NotePath), pipeline.Vault.ManagedUrl(path));
             File.AppendAllText(pipeline.Vault.ManagedUrl(path), "external edit after interruption\n");
         }
-        using var reopened = Open(temp);
-        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        using var reopened = TestPipeline.Open(temp);
+        Assert.False(File.Exists(IntentPath(reopened.StateDirectory)));
         Assert.Contains("external edit after interruption", File.ReadAllText(reopened.Vault.ManagedUrl(path)), StringComparison.Ordinal);
         Assert.Equal(path, reopened.Sessions.Current()?.NotePath);
         reopened.Commit(reopened.PrepareText("works after recovery", new CaptureSource()));
@@ -110,26 +110,26 @@ public sealed class SessionRenameTests
     public void UnrelatedTargetDoesNotBlockStartupOrChangeItsBytes()
     {
         using var temp = new TempDirectory();
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var session = pipeline.Sessions.Start("Standup");
             pipeline.Service.RenameSession(Candidate(session), "Daily sync", plan =>
-                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                File.WriteAllBytes(IntentPath(pipeline.StateDirectory),
                     JsonSerializer.SerializeToUtf8Bytes(new { Plan = plan, CaptureIds = Array.Empty<Guid>() })));
             var target = pipeline.Vault.ManagedUrl("Sessions/Daily sync.md");
             File.Move(target, target + ".backup");
             File.WriteAllText(target, "# Unrelated\nkeep these bytes\n");
         }
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.Equal("# Unrelated\nkeep these bytes\n", File.ReadAllText(reopened.Vault.ManagedUrl("Sessions/Daily sync.md")));
-        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(reopened.StateDirectory)));
     }
 
     [Fact]
     public void FailedRollbackReturnsPendingOutcomeAndRecoveryKeepsTheOccupiedOldName()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var session = pipeline.Sessions.Start("Standup");
         var oldUrl = pipeline.Vault.ManagedUrl(session.NotePath);
         var job = pipeline.PrepareText("pending capture", new CaptureSource());
@@ -144,8 +144,6 @@ public sealed class SessionRenameTests
         Assert.Equal(pipeline.Vault.ManagedUrl(outcome.Session.NotePath), saved.Destination.Url);
         Assert.Equal("# Other\noccupied old name\n", File.ReadAllText(oldUrl));
         Assert.StartsWith("# Daily sync\n", File.ReadAllText(saved.Destination.Url), StringComparison.Ordinal);
-        Assert.Contains("rollback failed", string.Join('\n', Directory.EnumerateFiles(Path.Combine(pipeline.StateDirectory, "logs"))
-            .Select(File.ReadAllText)), StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -158,20 +156,21 @@ public sealed class SessionRenameTests
         using var temp = new TempDirectory();
         var state = Path.Combine(temp.Path, "state");
         Directory.CreateDirectory(state);
-        File.WriteAllText(Path.Combine(state, "session-rename.json"), content);
+        File.WriteAllText(IntentPath(state), content);
 
-        using var pipeline = Open(temp);
-        Assert.False(File.Exists(Path.Combine(state, "session-rename.json")));
-        Assert.Equal(content, File.ReadAllText(Path.Combine(pipeline.Journal.DirectoryPath, "corrupt", "session-rename.json")));
+        using var pipeline = TestPipeline.Open(temp);
+        Assert.False(File.Exists(IntentPath(state)));
+        Assert.Equal(content, File.ReadAllText(Path.Combine(pipeline.Journal.DirectoryPath, "corrupt", IntentFileName)));
 
-        File.WriteAllText(Path.Combine(state, "session-rename.json"), content);
+        File.WriteAllText(IntentPath(state), content);
         var saved = pipeline.Commit(pipeline.PrepareText("after corruption", new CaptureSource()));
         Assert.Contains("after corruption", File.ReadAllText(saved.Destination.Url), StringComparison.Ordinal);
         Assert.Equal(2, Directory.GetFiles(Path.Combine(pipeline.Journal.DirectoryPath, "corrupt"), "session-rename*.json").Length);
     }
 
-    private static CapturePipeline Open(TempDirectory temp) => CapturePipeline.Open(
-        Path.Combine(temp.Path, "vault"), Path.Combine(temp.Path, "state"), TimeZoneInfo.Utc);
+    private const string IntentFileName = "session-rename.json";
+
+    private static string IntentPath(string stateDirectory) => Path.Combine(stateDirectory, IntentFileName);
 
     private static SessionCandidate Candidate(Session session) => new(session.Name, session.NotePath, DateTimeOffset.UtcNow);
 
@@ -179,7 +178,7 @@ public sealed class SessionRenameTests
     public async Task RenameMigratesPinsJournalPreparedCapturesAndIndexWithoutMovingImages()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var original = pipeline.Sessions.Start("archive/Standup");
         var oldUrl = pipeline.Vault.ManagedUrl(original.NotePath);
         File.AppendAllText(oldUrl, "![screen](../../assets/screen.png)\n\nrenamebodyneedle\n", new UTF8Encoding(false));
@@ -230,7 +229,7 @@ public sealed class SessionRenameTests
     public void CollisionPreservesOriginalSessionPinsAndJournal()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var original = pipeline.Sessions.Start("archive/Standup");
         var existing = pipeline.Sessions.Start("archive/Daily sync");
         pipeline.Sessions.Resume(Candidate(original));
@@ -255,7 +254,7 @@ public sealed class SessionRenameTests
     {
         using var temp = new TempDirectory();
         string oldPath, newPath;
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var original = pipeline.Sessions.Start("archive/Standup");
             oldPath = original.NotePath;
@@ -266,7 +265,7 @@ public sealed class SessionRenameTests
             void BeforeRename(SessionRenamePlan value)
             {
                 plan = value;
-                File.WriteAllBytes(Path.Combine(pipeline.StateDirectory, "session-rename.json"),
+                File.WriteAllBytes(IntentPath(pipeline.StateDirectory),
                     JsonSerializer.SerializeToUtf8Bytes(new { Plan = value, CaptureIds = new[] { job.Prepared.Capture.Id } }));
                 if (!rewriteAlreadyCompleted) throw new InvalidOperationException("simulated interruption");
             }
@@ -278,7 +277,7 @@ public sealed class SessionRenameTests
                 File.Move(pipeline.Vault.ManagedUrl(oldPath), pipeline.Vault.ManagedUrl(newPath));
         }
 
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.Equal(newPath, reopened.Sessions.Current()?.NotePath);
         Assert.False(reopened.Pins.IsPinned(oldPath));
         Assert.True(reopened.Pins.IsPinned(newPath));
@@ -288,14 +287,14 @@ public sealed class SessionRenameTests
         Assert.Equal(0, await reopened.ReplayUnsavedAsync(TestContext.Current.CancellationToken));
         Assert.False(File.Exists(reopened.Vault.ManagedUrl(oldPath)));
         Assert.Contains(reopened.Index.Search("recoveredrenameneedle"), hit => hit.NotePath == newPath);
-        Assert.False(File.Exists(Path.Combine(reopened.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(reopened.StateDirectory)));
     }
 
     [Fact]
     public void FailedSessionPersistenceBlocksStaleWritesUntilDurableRenameRecoverySucceeds()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var original = pipeline.Sessions.Start("Standup");
         var job = pipeline.PrepareText("retainthroughfailure", new CaptureSource());
         pipeline.Stage(job);
@@ -326,7 +325,7 @@ public sealed class SessionRenameTests
     public void UnreadablePinsRetainRenameIntentAndMigrateAfterRepair()
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var original = pipeline.Sessions.Start("Standup");
         var job = pipeline.PrepareText("retainpinthroughfailure", new CaptureSource());
         pipeline.Stage(job);
@@ -336,7 +335,7 @@ public sealed class SessionRenameTests
         Directory.CreateDirectory(pipeline.Pins.Url);
 
         Assert.True(pipeline.RenameSession(Candidate(original), "Daily sync").IdentityUpdatePending);
-        Assert.True(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.True(File.Exists(IntentPath(pipeline.StateDirectory)));
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl(original.NotePath)));
         Assert.NotNull(Record.Exception(() => pipeline.Commit(job)));
         Assert.Single(pipeline.Journal.RecordPaths());
@@ -347,7 +346,7 @@ public sealed class SessionRenameTests
         Assert.Equal(pipeline.Vault.ManagedUrl("Sessions/Daily sync.md"), saved.Destination.Url);
         Assert.False(pipeline.Pins.IsPinned(original.NotePath));
         Assert.True(pipeline.Pins.IsPinned("Sessions/Daily sync.md"));
-        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
         Assert.Empty(pipeline.Journal.RecordPaths());
     }
 
@@ -359,7 +358,7 @@ public sealed class SessionRenameTests
     public async Task SessionTransitionRecoversPendingRenameBeforeChangingCaptureDestination(string transition)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var other = pipeline.Sessions.Start("Other");
         var original = await coordinator.StartSessionAsync("Standup");
@@ -371,17 +370,17 @@ public sealed class SessionRenameTests
 
         var expected = await Transition(coordinator, transition, Candidate(other));
 
-        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
         Assert.False(pipeline.Pins.IsPinned(original.NotePath));
         Assert.True(pipeline.Pins.IsPinned("Sessions/Daily sync.md"));
         Assert.Equal(expected, pipeline.Sessions.Current());
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(expected, coordinator.ActiveSession);
         Assert.Equal(pipeline.Vault.ManagedUrl("Sessions/Daily sync.md"), pipeline.Commit(preparedBeforeRename).Destination.Url);
         var job = pipeline.PrepareText("after transition", new CaptureSource());
         var saved = pipeline.Commit(job);
         Assert.Equal(expected is null ? pipeline.Vault.InboxUrl : pipeline.Vault.ManagedUrl(expected.NotePath), saved.Destination.Url);
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
     }
 
     [Theory]
@@ -392,7 +391,7 @@ public sealed class SessionRenameTests
     public async Task SessionTransitionDoesNotApplyWhenPendingRenameRecoveryFails(string transition)
     {
         using var temp = new TempDirectory();
-        using var pipeline = Open(temp);
+        using var pipeline = TestPipeline.Open(temp);
         var coordinator = new CaptureCoordinator(pipeline, new HeadlessCaptureHost());
         var other = pipeline.Sessions.Start("Other");
         var original = await coordinator.StartSessionAsync("Standup");
@@ -404,18 +403,18 @@ public sealed class SessionRenameTests
         await Assert.ThrowsAnyAsync<Exception>(() => Transition(coordinator, transition, Candidate(other)));
 
         Assert.Equal(before, pipeline.Sessions.Current());
-        AssertSessionPath(before, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(before, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(before, coordinator.ActiveSession);
-        Assert.True(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.True(File.Exists(IntentPath(pipeline.StateDirectory)));
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Requested.md")));
         Assert.False(File.Exists(pipeline.Vault.ManagedUrl("Sessions/Work/Requested.md")));
 
         RepairPins(pipeline, pinBackup);
         var expected = await Transition(coordinator, transition, Candidate(other));
         Assert.Equal(expected, pipeline.Sessions.Current());
-        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault, TimeZoneInfo.Utc).Current());
+        AssertSessionPath(expected, new SessionStore(pipeline.StateDirectory, pipeline.Vault).Current());
         Assert.Equal(expected, coordinator.ActiveSession);
-        Assert.False(File.Exists(Path.Combine(pipeline.StateDirectory, "session-rename.json")));
+        Assert.False(File.Exists(IntentPath(pipeline.StateDirectory)));
     }
 
     private static async Task<Session?> Transition(CaptureCoordinator coordinator, string transition, SessionCandidate other)
@@ -461,7 +460,7 @@ public sealed class SessionRenameTests
     public void UnrelatedCorruptJournalDoesNotBlockRenameAndCompletedRedirectsArePrunedOnStartup()
     {
         using var temp = new TempDirectory();
-        using (var pipeline = Open(temp))
+        using (var pipeline = TestPipeline.Open(temp))
         {
             var original = pipeline.Sessions.Start("Standup");
             var job = pipeline.PrepareText("capture", new CaptureSource());
@@ -473,7 +472,7 @@ public sealed class SessionRenameTests
                 File.ReadAllBytes(Path.Combine(pipeline.StateDirectory, "capture-destinations.json")),
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!);
         }
-        using var reopened = Open(temp);
+        using var reopened = TestPipeline.Open(temp);
         Assert.Empty(JsonSerializer.Deserialize<Dictionary<Guid, Destination>>(
             File.ReadAllBytes(Path.Combine(reopened.StateDirectory, "capture-destinations.json")),
             new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!);

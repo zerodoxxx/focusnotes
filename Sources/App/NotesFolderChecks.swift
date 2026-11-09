@@ -47,12 +47,12 @@ func checkNotesFolder() async throws {
     let otherJobs = try await otherPipeline.selfCheck.journal.recordURLs()
     let otherHits = try await otherPipeline.index.titleSuggestions(prefix: "", limit: 20)
     guard otherState != originalState, otherSession == nil, otherJobs.isEmpty, otherHits.isEmpty,
-          try otherPipeline.drafts.load().isEmpty, otherPipeline.pins.paths().isEmpty,
+          try otherPipeline.drafts.loadSnapshot().text.isEmpty, otherPipeline.pins.paths().isEmpty,
           try NotesFolder.stateDirectory(for: other, base: base) == otherState else {
         throw SelfTestFailure("Changing notes folders leaked state from the original folder")
     }
     guard await pipeline.selfCheck.sessions.current() == session,
-          try pipeline.drafts.load() == "Original draft",
+          try pipeline.drafts.loadSnapshot().text == "Original draft",
           pipeline.pins.isPinned(session.notePath),
           try await pipeline.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Changing notes folders altered the running pipeline")
@@ -64,7 +64,7 @@ func checkNotesFolder() async throws {
     let restoredSession = await restored.selfCheck.sessions.current()
     guard restoredState == base, restoredSession?.name == session.name, restoredSession?.notePath == session.notePath,
           abs(restoredSession?.startedAt.timeIntervalSince(session.startedAt) ?? .infinity) < 1,
-          try restored.drafts.load() == "Original draft", restored.pins.isPinned(session.notePath),
+          try restored.drafts.loadSnapshot().text == "Original draft", restored.pins.isPinned(session.notePath),
           try await restored.selfCheck.journal.recordURLs().count == 1 else {
         throw SelfTestFailure("Returning to a notes folder did not preserve its state")
     }
@@ -84,23 +84,34 @@ func checkNotesFolder() async throws {
         throw SelfTestFailure("Restoring the original folder did not restore its state")
     }
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: original.path)
-    guard !leftovers.contains(where: { $0.hasPrefix(".focusnotes-write-test-") }) else {
+    guard !leftovers.contains(where: { $0.hasPrefix(NotesFolder.writeTestPrefix) }) else {
         throw SelfTestFailure("Notes folder validation left its probe behind")
     }
     defaults.removePersistentDomain(forName: suite)
     guard try NotesFolder.stateDirectory(for: other, base: base) == otherState else {
         throw SelfTestFailure("Resetting preferences reassigned existing vault state")
     }
-    let marker = base.appendingPathComponent("legacy-vault-root.json")
-    for contents in ["{ invalid", "null", "\"\"", "{\"configuredPath\":\"relative\"}"] {
+    let marker = base.appendingPathComponent(NotesFolder.legacyVaultRootMarkerName)
+    for contents in ["{ invalid", "null", "\"\""] {
         try Data(contents.utf8).write(to: marker)
-        do {
+        try await expectRejection(DecodingError.self, "Invalid state mapping was accepted", matching: { error in
+            switch error {
+            case .dataCorrupted, .valueNotFound, .typeMismatch: return true
+            default: return false
+            }
+        }) {
             _ = try NotesFolder.stateDirectory(for: other, base: base)
-            throw SelfTestFailure("Invalid state mapping was accepted")
-        } catch is SelfTestFailure { throw SelfTestFailure("Invalid state mapping was accepted") }
-        catch {}
+        }
         guard try String(contentsOf: marker, encoding: .utf8) == contents else {
             throw SelfTestFailure("Invalid state mapping was overwritten")
         }
+    }
+    let relative = "{\"configuredPath\":\"relative\"}"
+    try Data(relative.utf8).write(to: marker)
+    try await expectRejection(CocoaError.self, "Invalid state mapping was accepted", matching: { $0.code == .fileReadCorruptFile }) {
+        _ = try NotesFolder.stateDirectory(for: other, base: base)
+    }
+    guard try String(contentsOf: marker, encoding: .utf8) == relative else {
+        throw SelfTestFailure("Invalid state mapping was overwritten")
     }
 }

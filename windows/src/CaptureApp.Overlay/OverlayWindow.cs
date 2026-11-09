@@ -16,6 +16,9 @@ public interface ITypingSurface { IInputElement FocusTarget { get; } }
 
 public enum DismissReason { Explicit, ClickAway, DesktopSwitch, Handoff, OpenExternal, Quit, Expired, Replaced }
 
+/// <summary>Result of an Escape cancel handler. Suppress keeps the window open, for when an inner overlay consumed the key.</summary>
+public enum CancelResult { Close, Suppress }
+
 /// <summary>UI-only window shell. Geometry always describes the visible surface, excluding shadow.</summary>
 public class OverlayWindow : Window
 {
@@ -33,12 +36,12 @@ public class OverlayWindow : Window
     public bool IsSticky { get; set; }
     public bool IsMovable { get; set; }
     public IPanelPositionStore? PositionStore { get; set; }
-    public string PositionKey { get; set; } = PanelGeometry.NotePositionKey;
-    public Rect VisibleRect => new(Left + Tokens.ShadowMargin, Top + Tokens.ShadowMargin, Math.Max(Tokens.Zero, Width - Tokens.ShadowMargin * 2), Math.Max(Tokens.Zero, Height - Tokens.ShadowMargin * 2));
+    public string PositionKey { get; set; } = PanelGeometry.SharedPositionKey;
+    public Rect VisibleRect => PanelGeometry.VisibleRect(new Rect(Left, Top, Width, Height));
     public event Action<DismissReason>? Dismissed;
     public event Action? Resigned;
     public Func<bool>? ShouldDismiss { get; set; }
-    public Func<bool>? CancelHandler { get; set; }
+    public Func<CancelResult>? CancelHandler { get; set; }
     public OverlayWindow(OverlaySurface surface, bool interactive = true, FocusReturnTracker? focusTracker = null)
     {
         this.interactive = interactive;
@@ -55,11 +58,12 @@ public class OverlayWindow : Window
         var transforms = new TransformGroup(); transforms.Children.Add(scale); transforms.Children.Add(travel);
         frame.RenderTransform = transforms;
         Content = frame;
-        Width = surface.Width + Tokens.ShadowMargin * 2;
-        Height = surface.Height + Tokens.ShadowMargin * 2;
+        var windowSize = PanelGeometry.WindowSize(new Size(surface.Width, surface.Height));
+        Width = windowSize.Width;
+        Height = windowSize.Height;
         desktopTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Tokens.DesktopCheckMilliseconds) };
         desktopTimer.Tick += CheckDesktop;
-        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape && CancelHandler?.Invoke() != true) { Dismiss(); e.Handled = true; } };
+        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape && CancelHandler?.Invoke() != CancelResult.Suppress) { Dismiss(); e.Handled = true; } };
     }
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -81,14 +85,14 @@ public class OverlayWindow : Window
             activePanel = this;
         }
         var monitor = MonitorGeometry.UnderPointer(); workArea = monitor.WorkArea;
-        var size = new Size(Width - Tokens.ShadowMargin * 2, Height - Tokens.ShadowMargin * 2);
+        var size = VisibleRect.Size;
         var stored = IsMovable ? PositionStore?.Load(PositionKey) : null;
         var visible = stored is { IsFinite: true } position ? PanelGeometry.FromPosition(position, size, workArea) : PanelGeometry.Default(size, workArea, interactive);
-        ApplyRect(PanelGeometry.WindowRect(visible));
+        var rect = PanelGeometry.WindowRect(visible);
+        ApplyRect(rect);
         Opacity = SystemParameters.ClientAreaAnimation ? Tokens.Zero : Tokens.One;
         Show();
         // Place in physical pixels using the pointer monitor's DPI, including negative monitor origins.
-        var rect = PanelGeometry.WindowRect(visible);
         NativeMethods.SetWindowPos(handle, 0, (int)Math.Round(rect.X * monitor.Scale), (int)Math.Round(rect.Y * monitor.Scale), (int)Math.Round(rect.Width * monitor.Scale), (int)Math.Round(rect.Height * monitor.Scale), NativeMethods.SwpNoActivate | NativeMethods.SwpNoZOrder);
         if (interactive)
         {
@@ -100,13 +104,14 @@ public class OverlayWindow : Window
     public void ActivateForTyping(IInputElement? field = null)
     {
         if (!interactive || closing) return;
-        returnTarget = focus.BeforeActivation();
+        CaptureReturnTarget();
         Activate(); // Synchronous activation/focus before returning from a hotkey handler.
         if (field is not null) Keyboard.Focus(field);
     }
+    private void CaptureReturnTarget() => returnTarget = focus.BeforeActivation();
     protected override void OnActivated(EventArgs e)
     {
-        if (interactive && !closing) returnTarget = focus.BeforeActivation();
+        if (interactive && !closing) CaptureReturnTarget();
         base.OnActivated(e);
     }
     protected override void OnDeactivated(EventArgs e)
@@ -152,8 +157,8 @@ public class OverlayWindow : Window
             NativeMethods.GetCursorPos(out var pointer);
             var hit = InputHitTest(PointFromScreen(new Point(pointer.X, pointer.Y))) as DependencyObject;
             while (hit is not null && hit is not TextBoxBase && hit is not ITypingSurface) hit = VisualTreeHelper.GetParent(hit);
-            if (hit is TextBoxBase text) { returnTarget = focus.BeforeActivation(); ActivateForTyping(text); }
-            else if (hit is ITypingSurface surface) { returnTarget = focus.BeforeActivation(); ActivateForTyping(surface.FocusTarget); }
+            if (hit is TextBoxBase text) { CaptureReturnTarget(); ActivateForTyping(text); }
+            else if (hit is ITypingSurface surface) { CaptureReturnTarget(); ActivateForTyping(surface.FocusTarget); }
             else { handled = true; return NativeMethods.MaNoActivate; }
         }
         if (message == NativeMethods.WmDpiChanged)

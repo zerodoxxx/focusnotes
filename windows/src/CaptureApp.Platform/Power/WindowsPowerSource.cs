@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using CaptureApp.Platform.Interop;
 
 namespace CaptureApp.Platform.Power;
 
@@ -23,14 +24,13 @@ public sealed class WindowsPowerSource : IPowerSource
     private readonly object _sync = new();
     private readonly ManualResetEventSlim _ready = new();
     private readonly Thread _thread;
-    private readonly PowerNativeMethods.WindowProcedure _windowProcedure;
+    private readonly WindowNativeMethods.WindowProcedure _windowProcedure;
     private readonly string _className = $"PlatformPowerMonitorWindow.{Guid.NewGuid():N}";
     private IntPtr _windowHandle;
     private IntPtr _acNotification;
     private IntPtr _batterySaverNotification;
     private Exception? _startupFailure;
-    private bool _isOnAc;
-    private bool _isBatterySaverOn = true;
+    private PowerSnapshot _power = new(IsOnAc: false, IsBatterySaverOn: true);
     private bool _disposed;
 
     public WindowsPowerSource()
@@ -54,12 +54,12 @@ public sealed class WindowsPowerSource : IPowerSource
 
     public bool IsOnAC
     {
-        get { lock (_sync) return _isOnAc; }
+        get { lock (_sync) return _power.IsOnAc; }
     }
 
     public bool IsBatterySaverOn
     {
-        get { lock (_sync) return _isBatterySaverOn; }
+        get { lock (_sync) return _power.IsBatterySaverOn; }
     }
 
     public event EventHandler? Changed;
@@ -72,18 +72,18 @@ public sealed class WindowsPowerSource : IPowerSource
     {
         try
         {
-            var instance = PowerNativeMethods.GetModuleHandle(null);
+            var instance = WindowNativeMethods.GetModuleHandle(null);
             var classNamePointer = Marshal.StringToHGlobalUni(_className);
             try
             {
-                var windowClass = new PowerNativeMethods.WindowClassEx
+                var windowClass = new WindowNativeMethods.WindowClassEx
                 {
-                    Size = (uint)Marshal.SizeOf<PowerNativeMethods.WindowClassEx>(),
+                    Size = (uint)Marshal.SizeOf<WindowNativeMethods.WindowClassEx>(),
                     WindowProcedure = Marshal.GetFunctionPointerForDelegate(_windowProcedure),
                     Instance = instance,
                     ClassName = classNamePointer
                 };
-                if (PowerNativeMethods.RegisterClassEx(ref windowClass) == 0)
+                if (WindowNativeMethods.RegisterClassEx(ref windowClass) == 0)
                 {
                     throw new Win32Exception(Marshal.GetLastPInvokeError(), "RegisterClassEx failed for the power monitor.");
                 }
@@ -93,7 +93,7 @@ public sealed class WindowsPowerSource : IPowerSource
                 Marshal.FreeHGlobal(classNamePointer);
             }
 
-            _windowHandle = PowerNativeMethods.CreateWindowEx(0, _className, null, 0, 0, 0, 0, 0,
+            _windowHandle = WindowNativeMethods.CreateWindowEx(0, _className, null, 0, 0, 0, 0, 0,
                 IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
             if (_windowHandle == IntPtr.Zero)
             {
@@ -113,19 +113,19 @@ public sealed class WindowsPowerSource : IPowerSource
         _ready.Set();
         while (true)
         {
-            var result = PowerNativeMethods.GetMessage(out var message, IntPtr.Zero, 0, 0);
+            var result = WindowNativeMethods.GetMessage(out var message, IntPtr.Zero, 0, 0);
             if (result <= 0)
             {
                 break;
             }
 
-            PowerNativeMethods.TranslateMessage(ref message);
-            PowerNativeMethods.DispatchMessage(ref message);
+            WindowNativeMethods.TranslateMessage(ref message);
+            WindowNativeMethods.DispatchMessage(ref message);
         }
 
         if (_acNotification != IntPtr.Zero) PowerNativeMethods.UnregisterPowerSettingNotification(_acNotification);
         if (_batterySaverNotification != IntPtr.Zero) PowerNativeMethods.UnregisterPowerSettingNotification(_batterySaverNotification);
-        PowerNativeMethods.UnregisterClass(_className, PowerNativeMethods.GetModuleHandle(null));
+        WindowNativeMethods.UnregisterClass(_className, WindowNativeMethods.GetModuleHandle(null));
     }
 
     private IntPtr RegisterSetting(Guid setting)
@@ -174,13 +174,13 @@ public sealed class WindowsPowerSource : IPowerSource
 
         if (message == WmClose)
         {
-            PowerNativeMethods.DestroyWindow(window);
+            WindowNativeMethods.DestroyWindow(window);
             return IntPtr.Zero;
         }
 
         if (message == WmDestroy)
         {
-            PowerNativeMethods.PostQuitMessage(0);
+            WindowNativeMethods.PostQuitMessage(0);
             return IntPtr.Zero;
         }
 
@@ -189,7 +189,7 @@ public sealed class WindowsPowerSource : IPowerSource
             _windowHandle = IntPtr.Zero;
         }
 
-        return PowerNativeMethods.DefWindowProc(window, message, wParam, lParam);
+        return WindowNativeMethods.DefWindowProc(window, message, wParam, lParam);
     }
 
     private void Refresh()
@@ -201,9 +201,9 @@ public sealed class WindowsPowerSource : IPowerSource
         var changed = false;
         lock (_sync)
         {
-            changed = _isOnAc != isOnAc || _isBatterySaverOn != isBatterySaverOn;
-            _isOnAc = isOnAc;
-            _isBatterySaverOn = isBatterySaverOn;
+            var next = new PowerSnapshot(isOnAc, isBatterySaverOn);
+            changed = _power != next;
+            _power = next;
         }
 
         if (changed)
@@ -222,7 +222,7 @@ public sealed class WindowsPowerSource : IPowerSource
         _disposed = true;
         if (_windowHandle != IntPtr.Zero)
         {
-            PowerNativeMethods.PostMessage(_windowHandle, WmClose, 0, 0);
+            WindowNativeMethods.PostMessage(_windowHandle, WmClose, 0, 0);
             _thread.Join();
         }
 
@@ -233,39 +233,6 @@ public sealed class WindowsPowerSource : IPowerSource
 
 internal static partial class PowerNativeMethods
 {
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    internal delegate IntPtr WindowProcedure(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct WindowClassEx
-    {
-        public uint Size;
-        public uint Style;
-        public IntPtr WindowProcedure;
-        public int ClassExtra;
-        public int WindowExtra;
-        public IntPtr Instance;
-        public IntPtr Icon;
-        public IntPtr Cursor;
-        public IntPtr Background;
-        public IntPtr MenuName;
-        public IntPtr ClassName;
-        public IntPtr SmallIcon;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Message
-    {
-        public IntPtr Window;
-        public uint Id;
-        public nuint WParam;
-        public nint LParam;
-        public uint Time;
-        public int PointX;
-        public int PointY;
-        public uint Private;
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct SystemPowerStatus
     {
@@ -284,34 +251,6 @@ internal static partial class PowerNativeMethods
         public uint DataLength;
     }
 
-    [LibraryImport("user32.dll", EntryPoint = "RegisterClassExW", SetLastError = true)]
-    internal static partial ushort RegisterClassEx(ref WindowClassEx windowClass);
-
-    [LibraryImport("user32.dll", EntryPoint = "CreateWindowExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    internal static partial IntPtr CreateWindowEx(uint extendedStyle, string className, string? windowName, uint style,
-        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
-
-    [LibraryImport("user32.dll", EntryPoint = "DefWindowProcW")]
-    internal static partial IntPtr DefWindowProc(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [LibraryImport("user32.dll", EntryPoint = "GetMessageW", SetLastError = true)]
-    internal static partial int GetMessage(out Message message, IntPtr window, uint minimum, uint maximum);
-
-    [LibraryImport("user32.dll", EntryPoint = "TranslateMessage")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool TranslateMessage(ref Message message);
-
-    [LibraryImport("user32.dll", EntryPoint = "DispatchMessageW")]
-    internal static partial IntPtr DispatchMessage(ref Message message);
-
-    [LibraryImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool PostMessage(IntPtr window, uint message, nuint wParam, nint lParam);
-
-    [LibraryImport("user32.dll", EntryPoint = "DestroyWindow", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DestroyWindow(IntPtr window);
-
     [LibraryImport("user32.dll", EntryPoint = "RegisterPowerSettingNotification", SetLastError = true)]
     internal static partial IntPtr RegisterPowerSettingNotification(IntPtr recipient, ref Guid setting, uint flags);
 
@@ -319,17 +258,7 @@ internal static partial class PowerNativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool UnregisterPowerSettingNotification(IntPtr notification);
 
-    [LibraryImport("user32.dll", EntryPoint = "UnregisterClassW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UnregisterClass(string className, IntPtr instance);
-
-    [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial IntPtr GetModuleHandle(string? moduleName);
-
     [LibraryImport("kernel32.dll", EntryPoint = "GetSystemPowerStatus", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetSystemPowerStatus(out SystemPowerStatus status);
-
-    [LibraryImport("user32.dll", EntryPoint = "PostQuitMessage")]
-    internal static partial void PostQuitMessage(int exitCode);
 }

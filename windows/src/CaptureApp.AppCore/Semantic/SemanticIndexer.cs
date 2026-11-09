@@ -14,6 +14,7 @@ public sealed class SemanticIndexer
     public static readonly TimeSpan Debounce = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan SearchDeadline = TimeSpan.FromMilliseconds(350);
     public const int BatchSize = 16;
+    private const string OcrKeySuffix = "#ocr";
 
     private readonly ISemanticSource source;
     private readonly Func<IEmbedService> clientFactory;
@@ -33,6 +34,9 @@ public sealed class SemanticIndexer
     private CancellationTokenSource? debounce;
     private CancellationTokenSource? retry;
     private CancellationTokenSource? jobCancellation;
+
+    // Lets tests pause between the caller's decision to use resources and the enabled check.
+    internal Action? BeforeAcquiringResources { get; set; }
     private Task? job;
 
     /// <param name="enabled">Whether the models are installed. Toggle later with <see cref="SetEnabled"/>.</param>
@@ -85,8 +89,14 @@ public sealed class SemanticIndexer
 
         if (idle is not null)
         {
-            _ = idle.ShutdownAsync();
+            _ = ShutdownIdleAsync(idle);
         }
+    }
+
+    private async Task ShutdownIdleAsync(IEmbedService idle)
+    {
+        try { await idle.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception error) when (error is not OutOfMemoryException) { log?.Error($"Helper shutdown failed: {error.Message}"); }
     }
 
     /// Wire to PowerMonitor.ImageEmbeddingAllowedChanged: a false-to-true change resumes image embedding.
@@ -186,14 +196,14 @@ public sealed class SemanticIndexer
 
     public async Task WarmAsync()
     {
-        if (!IsEnabled)
-        {
-            return;
-        }
-
         try
         {
-            await Resources().Client.PingAsync().ConfigureAwait(false);
+            if (ActiveResources(CancellationToken.None) is not { } resources)
+            {
+                return;
+            }
+
+            await resources.Client.PingAsync().ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
@@ -380,27 +390,20 @@ public sealed class SemanticIndexer
         source = null;
     }
 
-    private (IEmbedService Client, IVectorStore Store) Resources()
-    {
-        lock (gate)
-        {
-            client ??= clientFactory();
-            store ??= storeFactory();
-            return (client, store);
-        }
-    }
-
     private (IEmbedService Client, IVectorStore Store)? ActiveResources(CancellationToken cancellationToken)
     {
+        BeforeAcquiringResources?.Invoke();
         lock (gate)
         {
             if (!enabled || stopped || cancellationToken.IsCancellationRequested)
             {
                 return null;
             }
-        }
 
-        return Resources();
+            client ??= clientFactory();
+            store ??= storeFactory();
+            return (client, store);
+        }
     }
 
     private bool IsActive()
@@ -429,7 +432,7 @@ public sealed class SemanticIndexer
         var expected = new HashSet<string>(blocks.Select(block => block.Key), StringComparer.Ordinal);
         foreach (var block in blocks.Where(block => block.Kind == BlockKind.Image && block.OcrText.Trim().Length > 0))
         {
-            expected.Add(block.Key + "#ocr");
+            expected.Add(OcrKey(block.Key));
         }
 
         store.Remove([.. existing.Except(expected)]);
@@ -463,9 +466,9 @@ public sealed class SemanticIndexer
                 }
 
                 if (block.OcrText.Trim().Length > 0
-                    && !IsCurrent(fingerprints, block.Key + "#ocr", EmbeddingFingerprint.Document(block.OcrText, block.NoteTitle)))
+                    && !IsCurrent(fingerprints, OcrKey(block.Key), EmbeddingFingerprint.Document(block.OcrText, block.NoteTitle)))
                 {
-                    await AddAsync(block.Key + "#ocr", block.OcrText, block.NoteTitle).ConfigureAwait(false);
+                    await AddAsync(OcrKey(block.Key), block.OcrText, block.NoteTitle).ConfigureAwait(false);
                 }
             }
             else if (!IsCurrent(fingerprints, block.Key, EmbeddingFingerprint.Document(block.Body, block.NoteTitle)))
@@ -532,6 +535,11 @@ public sealed class SemanticIndexer
     private static bool IsCurrent(IReadOnlyDictionary<string, string> fingerprints, string key, string fingerprint) =>
         fingerprints.TryGetValue(key, out var stored) && stored == fingerprint;
 
+    internal static string OcrKey(string blockKey) => blockKey + OcrKeySuffix;
+
+    internal static string BlockKey(string vectorKey) =>
+        vectorKey.EndsWith(OcrKeySuffix, StringComparison.Ordinal) ? vectorKey[..^OcrKeySuffix.Length] : vectorKey;
+
     private static async Task EmbedBatchAsync(List<PendingEmbedding> batch, IEmbedService client, IVectorStore store, CancellationToken cancellationToken)
     {
         if (batch.Count == 0)
@@ -564,7 +572,7 @@ public sealed class SemanticIndexer
             var scores = new Dictionary<string, float>(StringComparer.Ordinal);
             foreach (var (key, score) in nearest)
             {
-                var block = key.EndsWith("#ocr", StringComparison.Ordinal) ? key[..^4] : key;
+                var block = BlockKey(key);
                 scores[block] = scores.TryGetValue(block, out var best) ? Math.Max(best, score) : score;
             }
 

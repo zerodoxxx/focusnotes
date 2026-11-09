@@ -43,6 +43,7 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          source scripts/lib/app-env.sh
 
           [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] || {
             echo "Run this workflow from the default branch ($DEFAULT_BRANCH)." >&2
@@ -62,16 +63,8 @@ jobs:
             exit 1
           }
 
-          current_version=""
-          current_build=""
-          while IFS= read -r line; do
-            key="${line%%=*}"
-            value="${line#*=}"
-            case "$key" in
-              VERSION) current_version="$value" ;;
-              BUILD) current_build="$value" ;;
-            esac
-          done < Config/app.env
+          current_version="$(app_env_get Config/app.env VERSION)"
+          current_build="$(app_env_get Config/app.env BUILD)"
           [[ "$current_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
             echo "VERSION in Config/app.env is not a stable major.minor.patch version." >&2
             exit 1
@@ -278,7 +271,8 @@ jobs:
           # For the template to reference by name (for example %SIGNPATH_API_TOKEN%), never inline.
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
-          $version = (Select-String -Path Config/app.env -Pattern '^VERSION=(.+)$').Matches[0].Groups[1].Value
+          . ./windows/scripts/app-env.ps1
+          $version = Get-AppEnv Config/app.env 'VERSION'
           ./windows/scripts/pack.ps1 -Arch '${{ matrix.arch }}' -Version $version -OutDir "$env:RUNNER_TEMP/pack"
 
       - name: Signing inventory (enforced when Authenticode is configured)
@@ -286,7 +280,8 @@ jobs:
         env:
           WINDOWS_SIGNER_THUMBPRINTS: ${{ vars.WINDOWS_SIGNER_THUMBPRINTS }}
         run: |
-          $appName = (Select-String -Path Config/app.env -Pattern '^APPNAME=(.+)$').Matches[0].Groups[1].Value
+          . ./windows/scripts/app-env.ps1
+          $appName = Get-AppEnv Config/app.env 'APPNAME'
           $packId = "$appName-win-${{ matrix.arch }}"
           $packages = "$env:RUNNER_TEMP/pack/win-${{ matrix.arch }}"
           Start-Process -FilePath (Join-Path $packages "$packId-Setup.exe") -ArgumentList '--silent' -Wait
@@ -329,21 +324,14 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          source scripts/lib/app-env.sh
           [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] || {
             echo "Release builds run only from the default branch ($DEFAULT_BRANCH)." >&2
             exit 1
           }
 
-          version=""
-          build=""
-          while IFS= read -r line; do
-            key="${line%%=*}"
-            value="${line#*=}"
-            case "$key" in
-              VERSION) version="$value" ;;
-              BUILD) build="$value" ;;
-            esac
-          done < Config/app.env
+          version="$(app_env_get Config/app.env VERSION)"
+          build="$(app_env_get Config/app.env BUILD)"
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
             echo "VERSION in Config/app.env must use stable major.minor.patch form." >&2
             exit 1
@@ -407,7 +395,10 @@ jobs:
 
       - name: Resolve models directory
         id: models-dir
-        run: echo "dir=$HOME/Library/Application Support/com.zerodoxxx.focusnotes/models" >> "$GITHUB_OUTPUT"
+        run: |
+          source scripts/lib/app-env.sh
+          bundle_id="$(app_bundle_id "$(app_env_get Config/app.env BUNDLE_PREFIX)" "$(app_env_get Config/app.env APPNAME)")"
+          echo "dir=$HOME/Library/Application Support/$bundle_id/models" >> "$GITHUB_OUTPUT"
 
       - name: Cache models
         uses: actions/cache@v6
@@ -469,7 +460,8 @@ jobs:
           WINDOWS_UPDATE_ED_KEY_1: ${{ secrets.WINDOWS_UPDATE_ED_KEY_1 }}
         run: |
           set -euo pipefail
-          keys="$(sed -n 's/^WINDOWS_UPDATE_ED_KEYS=//p' Config/app.env | head -n 1)"
+          source scripts/lib/app-env.sh
+          keys="$(app_env_value Config/app.env WINDOWS_UPDATE_ED_KEYS)"
           key_id="$(cut -d, -f1 <<<"$keys" | cut -d: -f1)"
           [[ -n "$key_id" ]] || { echo "WINDOWS_UPDATE_ED_KEYS is empty in Config/app.env; run scripts/make-windows-update-key.sh 1." >&2; exit 1; }
 
@@ -480,6 +472,7 @@ jobs:
 
           dotnet build windows/tools/IndexSigner -c Release --artifacts-path "$RUNNER_TEMP/signer" >/dev/null
           signer="$RUNNER_TEMP/signer/bin/CaptureApp.IndexSigner/release/CaptureApp.IndexSigner.dll"
+          # Index and signature names mirror windows/src/CaptureApp.Updates/FeedNames.cs.
           for index in windows-dist/*/releases.win-*.json; do
             channel="$(basename "$index" .json)"; channel="${channel#releases.}"
             dotnet "$signer" sign --key-env WINDOWS_UPDATE_ED_KEY_1 --key-id "$key_id" --channel "$channel" "$index"
@@ -522,7 +515,8 @@ jobs:
           WINDOWS_ENABLED: ${{ needs.windows-gate.outputs.enabled }}
         run: |
           set -euo pipefail
-          appname="$(sed -n 's/^APPNAME=//p' Config/app.env | head -n 1)"
+          source scripts/lib/app-env.sh
+          appname="$(app_env_value Config/app.env APPNAME)"
           [[ -n "$appname" ]] || { echo "APPNAME is missing in Config/app.env" >&2; exit 1; }
           assets=(dist/*.dmg dist/SHA256SUMS.txt dist/appcast.xml)
           if [[ "$WINDOWS_ENABLED" == "true" ]]; then

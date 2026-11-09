@@ -12,6 +12,11 @@ enum AppErrorLog {
     }
 }
 
+private extension NoteKind {
+    var pickerLabel: String { self == .session ? "Session" : "Note" }
+    var pickerSymbol: String { self == .session ? "record.circle" : "doc.text" }
+}
+
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var controller: AppController?
@@ -80,7 +85,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             String(ProcessInfo.processInfo.processIdentifier),
             Bundle.main.bundlePath,
         ]
-        try? process.run()
+        do { try process.run() } catch {
+            Logger(subsystem: AppInfo.bundleIdentifier, category: "startup")
+                .error("Relaunch helper failed to launch (\(AppErrorLog.summary(error), privacy: .public))")
+        }
     }
 }
 
@@ -156,9 +164,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var folderShortcutsPanel: FolderShortcutsPanel?
     private var folderShortcutsMenu: NSMenu?
     private var recordingShortcut = false
-    private var folderShortcutStore: FolderShortcutStore {
-        FolderShortcutStore(url: pipeline.drafts.url.deletingLastPathComponent().appendingPathComponent("folder-shortcuts.json"))
-    }
+    private var folderShortcutStore: FolderShortcutStore { pipeline.folderShortcuts }
     private var sessionItem: NSMenuItem?
     private var accessibilityItem: NSMenuItem?
     private var screenRecordingItem: NSMenuItem?
@@ -206,7 +212,7 @@ final class AppController: NSObject, NSMenuDelegate {
             registerHotkeys()
             installStatusItem()
             // The guide replaces the system AX prompt, and only the first launch ever shows it.
-            let guideKey = "didShowAccessibilityGuide"
+            let guideKey = OnboardingDefaults.accessibilityGuideShown
             if !CapturePermissions.accessibilityTrusted, !UserDefaults.standard.bool(forKey: guideKey) {
                 UserDefaults.standard.set(true, forKey: guideKey)
                 permissionGuide.show(for: .accessibility)
@@ -321,24 +327,20 @@ final class AppController: NSObject, NSMenuDelegate {
             switch binding.action {
             case .quickNote: openNoteEditor(folder: folder)
             case .startSession:
-                enqueue { controller in
-                    await controller.drainCaptures()
-                    guard await controller.closePanels() else { return }
-                    await controller.waitForCommits()
-                    guard !controller.isTerminating else { return }
+                enqueueAfterPanelsClose { controller in
                     let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                         .filter { Self.sessionPath($0.path, isIn: folder) }
                     guard await controller.waitForAcquisition() else { return }
-                    controller.presentInput(placeholder: "Session name", title: "Start Session",
-                        secondary: "In Sessions/\(folder.rawValue)", suggestions: suggestions,
-                        suggestionValue: { "/" + $0.path },
+                    controller.presentInput(placeholder: Self.sessionNamePlaceholder, title: "Start Session",
+                        secondary: "In \(folder.sessionsRelativePath)", suggestions: suggestions,
+                        suggestionValue: { Self.slashPath($0.path) },
                         onSubmit: { [weak controller] name in
                             guard !NoteTitle.cleanTitle(name).isEmpty else { return }
                             controller?.enqueue(runsDuringQuit: true) { controller in
                                 _ = controller.captures.commitPending()
-                                await controller.waitForCommits()
+                                await controller.captures.waitForCommits()
                                 do {
-                                    if let selected = suggestions.first(where: { "/" + $0.path == name }),
+                                    if let selected = suggestions.first(where: { Self.slashPath($0.path) == name }),
                                        Self.sessionPath(selected.path, isIn: folder) {
                                         _ = try await controller.resumeSession(SessionCandidate(name: selected.title,
                                             notePath: selected.path, modifiedAt: selected.modified))
@@ -368,7 +370,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     static func sessionPath(_ path: String, isIn folder: NoteFolder) -> Bool {
         let parent = (path as NSString).deletingLastPathComponent
-        return parent.caseInsensitiveCompare("Sessions/\(folder.rawValue)") == .orderedSame
+        return parent.caseInsensitiveCompare(folder.sessionsRelativePath) == .orderedSame
     }
 
     /// UI commands run in order, while their context is snapshotted at hotkey/menu entry.
@@ -387,6 +389,16 @@ final class AppController: NSObject, NSMenuDelegate {
             guard !self.isTerminating || (runsDuringQuit && quitWindowOpen) else { return }
             await action(self)
             if self.actionGeneration == generation { self.actionTail = nil }
+        }
+    }
+
+    private func enqueueAfterPanelsClose(_ body: @escaping @MainActor (AppController) async -> Void) {
+        enqueue { controller in
+            await controller.drainCaptures()
+            guard await controller.closePanels() else { return }
+            await controller.captures.waitForCommits()
+            guard !controller.isTerminating else { return }
+            await body(controller)
         }
     }
 
@@ -419,7 +431,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     switch try await RegionCapturer.capture(context: context) {
                     case .captured(let capture):
                         let fallback = PendingCapture(trigger: .region, content: .image(png: capture.pngData, ocr: nil),
-                                                      source: CapturePipeline.source(capture.context), subtitle: "Image")
+                                                      source: CapturePipeline.source(capture.context), subtitle: CapturePipeline.imageSubtitle())
                         recordAcquiredImage(fallback)
                         return fallback
                     case .cancelled: break
@@ -429,7 +441,7 @@ final class AppController: NSObject, NSMenuDelegate {
                             permissionGuide.show(for: .screenCapture)
                         }
                         showToast(Toast(style: .warning, title: "Allow Screen Recording to capture areas",
-                                                   subtitle: "Open the menu bar icon → Permissions"))
+                                                   subtitle: Self.permissionsHint))
                     }
                 } catch {
                     report(error, title: "Couldn't capture area")
@@ -477,13 +489,11 @@ final class AppController: NSObject, NSMenuDelegate {
         case .secureInput:
             warning = Toast(style: .warning, title: "Can't capture from secure fields")
         case .accessibilityNotTrusted:
-            warning = Toast(style: .warning, title: "Allow Accessibility to capture text", subtitle: "Open the menu bar icon → Permissions")
+            warning = Toast(style: .warning, title: "Allow Accessibility to capture text", subtitle: Self.permissionsHint)
         case .ownApp: return
         }
         showToast(warning)
     }
-
-    private func waitForCommits() async { await captures.waitForCommits() }
 
     /// A selection capture can send ⌘C after closing panels, and a panel shown meanwhile would
     /// take it. Queued UI calls this after its last other await, right before presenting.
@@ -501,8 +511,11 @@ final class AppController: NSObject, NSMenuDelegate {
         await captures.drain()
     }
 
+    /// Quit waits at most this long for pending saves.
+    static let quitDrainBudget: Duration = .seconds(5)
+
     /// Keep the main actor running while acquisitions and journaled writes drain.
-    func beginTermination(timeout: Duration = .seconds(5)) -> Task<Bool, Never> {
+    func beginTermination(timeout: Duration = AppController.quitDrainBudget) -> Task<Bool, Never> {
         if let shutdownTask { return shutdownTask }
         // A failed final draft write must leave the app and its services usable for retry.
         editor?.dismiss()
@@ -562,14 +575,14 @@ final class AppController: NSObject, NSMenuDelegate {
         toast.dismiss(expire: false)
         enqueue { controller in
             guard await controller.closePanels() else { controller.settleBlockedPicker(id); return }
-            guard controller.captures.pending?.id == id else { return }
+            guard controller.captures.isPending(id) else { return }
             let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
-            guard await controller.waitForAcquisition(), controller.captures.pending?.id == id else { return }
+            guard await controller.waitForAcquisition(), controller.captures.isPending(id) else { return }
             // A picked suggestion names one exact note. Title routing only matches root notes, so a nested
             // or HOME note must be saved by destination, not by its title.
             controller.presentInput(placeholder: "Add to note…", suggestions: suggestions, suggestionValue: { $0.path },
                                     onAccept: { [weak controller] text in
-                guard let controller, controller.captures.pending?.id == id else { return }
+                guard let controller, controller.captures.isPending(id) else { return }
                 guard let picked = suggestions.first(where: { $0.path == text }) else {
                     _ = controller.captures.commitPending(noteTitle: text, announce: true)
                     return
@@ -586,7 +599,7 @@ final class AppController: NSObject, NSMenuDelegate {
     /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
     /// any other capture saves to its default destination.
     private func settleUnchosenCapture(_ id: UUID, announce: Bool, retryTitle: String = "Choose where to save") {
-        guard captures.pending?.id == id else { return }
+        guard captures.isPending(id) else { return }
         if captures.needsRetryChoice, let capture = captures.pending {
             showRetryChoice(capture: capture, title: retryTitle)
         } else {
@@ -602,16 +615,24 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private static let draftKeptOpenTitle = "Couldn't keep draft; editor stays open"
+    private static let draftKeptFailureTitle = "Couldn't add note; draft kept"
+    private static let sessionNamePlaceholder = "Session name"
+    private static let permissionsHint = "Open the menu bar icon → Permissions"
+    private static let longDatePattern = "MMM d, yyyy"
+
+    private static func slashPath(_ path: String) -> String { "/" + path }
+
+    static func stillActive(_ name: String) -> String { "\(name) still active" }
 
     private func showAmbiguousDestinationPicker(_ candidates: [Destination], capture: PendingCapture) {
         enqueue { controller in
             guard await controller.closePanels() else { controller.settleBlockedPicker(capture.id); return }
-            guard await controller.waitForAcquisition(), controller.captures.pending?.id == capture.id else { return }
+            guard await controller.waitForAcquisition(), controller.captures.isPending(capture.id) else { return }
             let suggestions = candidates.map { candidate in
                 let path = controller.pipeline.vault.relativePath(of: candidate.url) ?? candidate.url.path
                 return Suggestion(title: candidate.title,
-                                  secondary: "\(candidate.kind == .session ? "Session" : "Note") · \(path)",
-                                  symbolName: candidate.kind == .session ? "record.circle" : "doc.text",
+                                  secondary: "\(candidate.kind.pickerLabel) · \(path)",
+                                  symbolName: candidate.kind.pickerSymbol,
                                   value: candidate.url.absoluteString)
             }
             let panel = InputPanelController()
@@ -627,18 +648,18 @@ final class AppController: NSObject, NSMenuDelegate {
             }, onSubmit: { [weak controller] urlString in
                 guard let controller else { return }
                 controller.inputClosed()
-                guard controller.captures.pending?.id == capture.id,
+                guard controller.captures.isPending(capture.id),
                       let candidate = candidates.first(where: { $0.url.absoluteString == urlString }) else { return }
                 controller.enqueue { controller in
                     // An explicit choice saves even if the editor can't close; the save shows no panel.
                     await controller.closePanels()
-                    guard controller.captures.pending?.id == capture.id else { return }
+                    guard controller.captures.isPending(capture.id) else { return }
                     _ = controller.captures.commitPending(pick: controller.pipeline.pick(for: candidate), announce: true)
                 }
             }, onCancel: { [weak controller] in
                 guard let controller else { return }
                 controller.inputClosed()
-                guard controller.captures.pending?.id == capture.id else { return }
+                guard controller.captures.isPending(capture.id) else { return }
                 controller.showRetryChoice(capture: capture, title: "Choose where to save")
             })
         }
@@ -669,12 +690,12 @@ final class AppController: NSObject, NSMenuDelegate {
             let key = NoteTitle.matchKey(prefix)
             return suggestions.filter { key.isEmpty || NoteTitle.matchKey($0.title).hasPrefix(key) }.prefix(8).map {
                 let session = $0.kind == .session
-                let date = Self.stamp($0.modified, pattern: "MMM d, yyyy", calendar: calendar)
-                let detail = "\(session ? "Session" : "Note") · \(date)"
+                let date = Self.stamp($0.modified, pattern: Self.longDatePattern, calendar: calendar)
+                let detail = "\($0.kind.pickerLabel) · \(date)"
                 let pathDetail = session ? "\(detail) · \($0.path)" : detail
                 return Suggestion(title: $0.title,
                                   secondary: pathDetail,
-                                  symbolName: session ? "record.circle" : "doc.text",
+                                  symbolName: $0.kind.pickerSymbol,
                                   value: suggestionValue?($0))
             }
         }, onAccept: onAccept, onSubmit: { [weak self] text in
@@ -716,21 +737,17 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func toggleSession() {
-        enqueue { controller in
-            await controller.drainCaptures()
-            guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
-            guard !controller.isTerminating else { return }
+        enqueueAfterPanelsClose { controller in
             if let session = await controller.pipeline.currentSession() {
                 do { _ = try await controller.endSession(session) }
                 catch { controller.report(error, title: "Couldn't end session") }
             } else {
                 let suggestions = await controller.suggestionSnapshot(sessionsOnly: true)
                 guard await controller.waitForAcquisition() else { return }
-                controller.presentInput(placeholder: "Session name", suggestions: suggestions, onSubmit: { [weak controller] name in
+                controller.presentInput(placeholder: Self.sessionNamePlaceholder, suggestions: suggestions, onSubmit: { [weak controller] name in
                     controller?.enqueue(runsDuringQuit: true) { controller in
                         _ = controller.captures.commitPending()
-                        await controller.waitForCommits()
+                        await controller.captures.waitForCommits()
                         do { _ = try await controller.startSession(name: name) }
                         catch SessionStoreError.ambiguous(let candidates) {
                             if controller.isTerminating { controller.logger.warning("Session name was ambiguous during quit; not started") }
@@ -788,8 +805,8 @@ final class AppController: NSObject, NSMenuDelegate {
         let calendar = pipeline.calendar
         let choices = candidates.map {
             Suggestion(title: $0.name,
-                       secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: "MMM d, yyyy", calendar: calendar)) · \($0.notePath)",
-                       symbolName: "record.circle",
+                       secondary: "Modified \(Self.stamp($0.modifiedAt, pattern: Self.longDatePattern, calendar: calendar)) · \($0.notePath)",
+                       symbolName: NoteKind.session.pickerSymbol,
                        value: $0.notePath)
         }
         let panel = InputPanelController()
@@ -811,7 +828,7 @@ final class AppController: NSObject, NSMenuDelegate {
             guard let self, let candidate = candidates.first(where: { $0.notePath == path }) else { return }
             self.enqueue(runsDuringQuit: true) { controller in
                 _ = controller.captures.commitPending()
-                await controller.waitForCommits()
+                await controller.captures.waitForCommits()
                 do { _ = try await controller.resumeSession(candidate) }
                 catch { controller.report(error, title: "Couldn't resume session") }
             }
@@ -895,7 +912,12 @@ final class AppController: NSObject, NSMenuDelegate {
                                            outsideSession: requestedOutside && sessionDestination != nil)
                 let calendar = pipeline.calendar
                 func noteID(_ destination: Destination?) -> String? {
-                    destination.flatMap { try? pipeline.vault.noteID(for: $0.url) }
+                    guard let destination else { return nil }
+                    do { return try pipeline.vault.noteID(for: destination.url) }
+                    catch {
+                        controller.logger.error("Note ID lookup failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                        return nil
+                    }
                 }
                 @MainActor func save(_ text: String, controller: AppController, newNote: Bool = false) async throws -> SavedCapture? {
                     return try await controller.addNote(text, destination: state.destination, pinOnSave: state.pinOnSave, newNote: newNote, outsideSession: state.outsideSession, folder: state.folder)
@@ -906,21 +928,21 @@ final class AppController: NSObject, NSMenuDelegate {
                 // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
                 editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
                     onDraft: { [weak editor] text in
-                        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder)
+                        let blank = CaptureFormat.isBlank(text)
+                        try pipeline.drafts.flushScheduledStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder)
                         if blank {
-                            state.pinOnSave = false
+                            state.dropPinOnSaveForBlankDraft()
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
                     onSubmit: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller) }
-                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onNew: { [weak controller, weak editor] text in
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if CaptureFormat.isBlank(text) {
                             do { try state.restoreSessionDestination(sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
@@ -930,13 +952,13 @@ final class AppController: NSObject, NSMenuDelegate {
                             do {
                                 _ = try await save(text, controller: controller)
                                 controller.openNoteEditor(folder: state.folder, outsideSession: requestedOutside)
-                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onOpenAsNote: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do {
-                                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                if !CaptureFormat.isBlank(text) {
                                     if let saved = try await save(text, controller: controller) {
                                         if !controller.isTerminating { controller.openNote(saved.destination.url) }
                                         return
@@ -946,17 +968,15 @@ final class AppController: NSObject, NSMenuDelegate {
                                     return
                                 }
                                 controller.showToast(Toast(style: .warning, title: "Nothing to open yet", subtitle: "Write something first"))
-                            } catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            } catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     browseItems: {
                         let pinned = pipeline.pins.paths()
                         return state.suggestions.sorted { $0.modified > $1.modified }.map {
-                            let session = $0.kind == .session
-                            let symbol = session ? "record.circle" : "doc.text"
                             return BrowseItem(id: $0.path, title: $0.title,
-                                              detail: "\(session ? "Session" : "Note") · \(Self.stamp($0.modified, pattern: "MMM d", calendar: calendar))",
-                                              symbolName: symbol, isPinned: pinned.contains($0.path))
+                                              detail: "\($0.kind.pickerLabel) · \(Self.stamp($0.modified, pattern: "MMM d", calendar: calendar))",
+                                              symbolName: $0.kind.pickerSymbol, isPinned: pinned.contains($0.path))
                         }
                     },
                     onBrowse: { [weak controller, weak editor] item, choice in
@@ -992,12 +1012,12 @@ final class AppController: NSObject, NSMenuDelegate {
                     onError: { [weak controller] error in controller?.report(error, title: AppController.draftKeptOpenTitle) },
                     titleForText: { TypedNote(markdown: $0, createdAt: Date(), calendar: calendar).title },
                     onScheduleDraft: { [weak controller, weak editor] text in
-                        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        pipeline.drafts.scheduleStore(text, pinOnSave: blank ? false : state.pinOnSave, folder: state.folder) { [weak controller] error in
+                        let blank = CaptureFormat.isBlank(text)
+                        pipeline.drafts.scheduleStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder) { [weak controller] error in
                             Task { @MainActor in controller?.report(error, title: AppController.draftKeptOpenTitle) }
                         }
                         if blank {
-                            state.pinOnSave = false
+                            state.dropPinOnSaveForBlankDraft()
                             editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
                         }
                     },
@@ -1007,7 +1027,7 @@ final class AppController: NSObject, NSMenuDelegate {
                     onSaveAsNew: { [weak controller] text in
                         controller?.enqueue(runsDuringQuit: true) { controller in
                             do { _ = try await save(text, controller: controller, newNote: true) }
-                            catch { controller.reportUserSaveFailure(error, title: "Couldn't add note; draft kept") }
+                            catch { controller.reportUserSaveFailure(error, title: AppController.draftKeptFailureTitle) }
                         }
                     },
                     onWriteOutsideSession: sessionDestination.map { sessionDestination in
@@ -1045,11 +1065,7 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func openSubheading() {
-        enqueue { controller in
-            await controller.drainCaptures()
-            guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
-            guard !controller.isTerminating else { return }
+        enqueueAfterPanelsClose { controller in
             let destination: Destination
             do {
                 try await controller.pipeline.recoverSessionIdentity()
@@ -1081,7 +1097,7 @@ final class AppController: NSObject, NSMenuDelegate {
         enqueue { controller in
             await controller.drainCaptures()
             guard await controller.closePanels() else { return }
-            await controller.waitForCommits()
+            await controller.captures.waitForCommits()
             guard await controller.waitForAcquisition() else { return }
             let pipeline = controller.pipeline
             if !pipeline.monitor.isRunning {
@@ -1094,7 +1110,7 @@ final class AppController: NSObject, NSMenuDelegate {
             panel.present(query: { [weak controller] query in
                 guard let controller else { return [] }
                 do {
-                    let empty = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let empty = CaptureFormat.isBlank(query)
                     let hits: [SearchHit]
                     if empty {
                         hits = try await pipeline.index.recent(limit: 20)
@@ -1133,11 +1149,11 @@ final class AppController: NSObject, NSMenuDelegate {
                 switch action {
                 case .primary: return { [weak controller] in controller?.copy(hit) }
                 case .open: return { [weak controller] in
-                    do { _ = NSWorkspace.shared.open(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
+                    do { controller?.openNote(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
                     catch { controller?.report(error, title: "Couldn't open note") }
                 }
                 case .reveal: return { [weak controller] in
-                    do { NSWorkspace.shared.activateFileViewerSelecting([try pipeline.vault.noteLocation(forID: hit.notePath).url]) }
+                    do { controller?.revealNote(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
                     catch { controller?.report(error, title: "Couldn't reveal note") }
                 }
                 }
@@ -1164,7 +1180,11 @@ final class AppController: NSObject, NSMenuDelegate {
                     let data = try await self.pipeline.assetData(assetPath)
                     guard let image = await AppMedia.thumbnail(pngData: data), !Task.isCancelled else { return nil }
                     return NSImage(cgImage: image, size: .zero)
-                } catch { return nil }
+                } catch {
+                    if error is CancellationError { return nil }
+                    self.logger.error("Search thumbnail failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                    return nil
+                }
             }
         } else { loader = nil }
         return SearchRow(id: id, title: hit.title, snippet: hit.snippet,
@@ -1206,7 +1226,7 @@ final class AppController: NSObject, NSMenuDelegate {
         if pinFailed {
             showToast(Toast(style: .warning, title: "Note saved, but not pinned", subtitle: saved.destination.title))
         } else if let outsideSessionName {
-            showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(outsideSessionName) still active"))
+            showToast(Toast(style: .success, title: "Saved to \(saved.destination.title) · \(Self.stillActive(outsideSessionName))"))
         } else if let created {
             let appended = !created && saved.destination.kind == .session
             showToast(Toast(style: .success, title: created ? "Note created" : appended ? "Saved to \(saved.destination.title)" : "Note added",
@@ -1219,6 +1239,10 @@ final class AppController: NSObject, NSMenuDelegate {
         retryWarningShown = false
         pendingToastID = nil
         onToast?(value)
+        presentToast(value)
+    }
+
+    private func presentToast(_ value: Toast) {
         if presentsUI, !isTerminating { toast.show(value) }
     }
 
@@ -1245,20 +1269,20 @@ final class AppController: NSObject, NSMenuDelegate {
                             hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
         onToast?(warning)
         retryWarningShown = true
-        if presentsUI, !isTerminating { toast.show(warning) }
+        presentToast(warning)
     }
 
     private func showPreviousCaptureNotice(_ text: String) {
         let notice = Toast(style: .success, title: text)
         onToast?(notice)
-        if presentsUI, !isTerminating { toast.show(notice) }
+        presentToast(notice)
     }
 
     private func showPreviousCaptureRecoveryNotice(destination: Destination?) {
         let location = destination.map { "Recovery will retry: \($0.title)." } ?? "Recovery will retry the staged capture."
         let warning = Toast(style: .warning, title: "Couldn't save the previous capture", subtitle: location)
         onToast?(warning)
-        if presentsUI, !isTerminating { toast.show(warning) }
+        presentToast(warning)
     }
 
     private func reportExternalRegistryProblem(_ error: Error, forSave: Bool) {
@@ -1411,8 +1435,7 @@ final class AppController: NSObject, NSMenuDelegate {
         guard let menu = folderShortcutsMenu else { return }
         menu.removeAllItems()
         for binding in folderShortcuts {
-            let folder = binding.action == .startSession ? "Sessions/\(binding.folder)" : binding.folder
-            let item = menuItem("\(binding.action.title) → \(folder)", action: #selector(menuUseFolderShortcut(_:)))
+            let item = menuItem(binding.menuTitle, action: #selector(menuUseFolderShortcut(_:)))
             item.representedObject = binding.id
             setMenuTitle(item, title: item.title, hotkey: binding.hotkey)
             menu.addItem(item)
@@ -1473,25 +1496,26 @@ final class AppController: NSObject, NSMenuDelegate {
         else { DispatchQueue.main.async(execute: action) }
     }
 
-    @objc private func menuCaptureSelection() {
+    private func captureFromMenu(_ start: @escaping @MainActor (AppController, FrontmostContext) -> Void) {
         guard !isTerminating, !acquisitionInProgress else { return }
         let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.selection, fromHotkey: false, context: context) }
+        afterMenu { [weak self] in
+            guard let self else { return }
+            start(self, context)
+        }
+    }
+
+    @objc private func menuCaptureSelection() {
+        captureFromMenu { controller, context in controller.capture(.selection, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureRegion() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.region, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.region, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureSelectionOutsideSession() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.selection, outsideSession: true, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.selection, outsideSession: true, fromHotkey: false, context: context) }
     }
     @objc private func menuCaptureRegionOutsideSession() {
-        guard !isTerminating, !acquisitionInProgress else { return }
-        let context = FrontmostContext.capture()
-        afterMenu { [weak self] in self?.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
+        captureFromMenu { controller, context in controller.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
     }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }
@@ -1547,7 +1571,7 @@ final class AppController: NSObject, NSMenuDelegate {
 extension AppController: CaptureQueueHost {
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async {
         let session = await pipeline.currentSession()
-        guard presentsUI, captures.pending?.id == capture.id, !isTerminating else { return }
+        guard presentsUI, captures.isPending(capture.id), !isTerminating else { return }
         if outsideSession {
             showTitlePicker(for: capture.id)
             if let previousNotice { showPreviousCaptureNotice(previousNotice) }
@@ -1572,7 +1596,7 @@ extension AppController: CaptureQueueHost {
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
         let session = outsideSession ? await pipeline.currentSession() : nil
         let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
-            + (session.map { " · \($0.name) still active" } ?? "")
+            + (session.map { " · " + Self.stillActive($0.name) } ?? "")
         if captures.pending == nil { showToast(Toast(style: .success, title: title, duration: 1.6)) }
     }
 

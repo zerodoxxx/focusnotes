@@ -8,16 +8,6 @@ public static partial class NoteFile
     public static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     private static readonly ConcurrentDictionary<string, object> Gates = new(StringComparer.Ordinal);
     internal static object Gate(string path) => Gates.GetOrAdd(path, _ => new());
-    public static string[] PathComponents(string path)
-    {
-        var parts = path.Split('/');
-        if (path.Length == 0 || Path.IsPathRooted(path) || path.Contains('\\') || NoteTitle.ContainsControlCharacters(path) || parts.Any(p => p is "" or "." or ".."))
-        {
-            throw new VaultFileException(VaultFileError.PermissionDenied);
-        }
-
-        return parts;
-    }
 
     public static string ResolveSelectedRoot(string path)
     {
@@ -38,7 +28,7 @@ public static partial class NoteFile
 
     public static string SafePath(string root, string relativePath, bool createParents = false)
     {
-        var parts = PathComponents(relativePath);
+        var parts = Vault.PathComponents(relativePath);
         var current = root;
         ValidateDirectory(current, createParents);
         for (var i = 0; i < parts.Length; i++)
@@ -98,14 +88,13 @@ public static partial class NoteFile
     }
 
     private static readonly ConcurrentDictionary<string, bool> SweptRoots = new(StringComparer.Ordinal);
-    private static readonly System.Text.RegularExpressions.Regex PendingName = new(@"^\.pending-[0-9a-f]{32}$");
 
     // Best effort: remove ".pending-<guid>" files that a crashed write left behind. Skips dot-directories,
     // links and cloud placeholders (same attributes WatchSnapshot treats as online-only).
     internal static void SweepStaleTemporaries(string root, TimeSpan? olderThan = null)
     {
         var cutoff = DateTime.UtcNow - (olderThan ?? TimeSpan.FromHours(1));
-        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x400000 | 0x40000);
+        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | CloudRecall.Mask;
         var options = new EnumerationOptions { AttributesToSkip = skip };
         var pending = new Stack<string>();
         pending.Push(root);
@@ -119,7 +108,7 @@ public static partial class NoteFile
                     try
                     {
                         if (Directory.Exists(path)) { if (!name.StartsWith('.')) { pending.Push(path); } }
-                        else if (PendingName.IsMatch(name) && File.GetLastWriteTimeUtc(path) < cutoff) { File.Delete(path); }
+                        else if (TempNames.IsPending(name) && File.GetLastWriteTimeUtc(path) < cutoff) { File.Delete(path); }
                         else if (RecoveredTarget(name) is { } targetName) { RestoreRecovered(root, Path.Combine(directory, targetName)); }
                     }
                     catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
@@ -134,9 +123,13 @@ public static partial class NoteFile
 
     // Test seams: replace/move used by ReplaceFile instead of the real calls, scoped to the calling flow.
     internal static readonly AsyncLocal<Action<string, string>?> ReplaceHook = new();
+    // Intercepts every NoteFile.Move call, so it sees state-file (DurableFile) moves as well as note moves.
     internal static readonly AsyncLocal<Action<string, string>?> MoveHook = new();
     // Test seam: replaces the note append's write (handle, offset, data), so a test can write some bytes and then fail.
     internal static readonly AsyncLocal<Action<Microsoft.Win32.SafeHandles.SafeFileHandle, long, byte[]>?> AppendWriteHook = new();
+
+    // Windows overwrites through ReplaceFile; elsewhere only a test hook needs that path.
+    private static bool UsesReplaceFile => OperatingSystem.IsWindows() || ReplaceHook.Value is not null;
 
     internal static void Report(string message)
     {
@@ -145,13 +138,16 @@ public static partial class NoteFile
         catch (Exception) { }
     }
 
-    private static readonly System.Text.RegularExpressions.Regex RecoveredPattern =
-        new(@"^\.recovered-(?<id>[0-9a-f]{32})-(?<target>[0-9a-f]{2,200})\z");
+    internal static void Move(string source, string destination, bool overwrite)
+    {
+        if (MoveHook.Value is { } move) { move(source, destination); return; }
+        File.Move(source, destination, overwrite);
+    }
 
     // Decodes the target name from an on-disk ".recovered-" name; null unless it is a plain, valid file name.
     private static string? RecoveredTarget(string name)
     {
-        var match = RecoveredPattern.Match(name);
+        var match = TempNames.RecoveredPattern.Match(name);
         if (!match.Success) { return null; }
         string target;
         try { target = Utf8.GetString(Convert.FromHexString(match.Groups["target"].Value)); }
@@ -177,7 +173,7 @@ public static partial class NoteFile
         var targetName = Path.GetFileName(target);
         var directory = Path.GetDirectoryName(target)!;
         string safe;
-        try { safe = SafePath(root, Path.GetRelativePath(root, target).Replace(Path.DirectorySeparatorChar, '/')); }
+        try { safe = SafePath(root, CaptureFormat.RelativePath(root, target)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; }
         if (!string.Equals(safe, target, StringComparison.Ordinal) || !ValidTargetName(targetName)) { return true; }
         lock (Gate(safe))
@@ -186,7 +182,7 @@ public static partial class NoteFile
             var candidates = RecoveredCandidates(directory, targetName);
             if (candidates is null || candidates.Count == 0) { return true; }
             // Only the newest copy is ever restored; if that move fails, keep everything for a later attempt.
-            try { (MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(candidates[0], safe); }
+            try { Move(candidates[0], safe, false); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 Report($"Could not restore {targetName} from {candidates[0]}: {error}");
@@ -203,11 +199,11 @@ public static partial class NoteFile
     // Restorable copies for a target, newest first; links, placeholders and non-files are skipped like the sweep does.
     private static List<string>? RecoveredCandidates(string directory, string targetName)
     {
-        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | (FileAttributes)(0x400000 | 0x40000);
+        const FileAttributes skip = FileAttributes.ReparsePoint | FileAttributes.Offline | CloudRecall.Mask;
         var suffix = "-" + Convert.ToHexStringLower(Utf8.GetBytes(targetName));
         try
         {
-            return Directory.GetFiles(directory, ".recovered-*" + suffix)
+            return Directory.GetFiles(directory, TempNames.RecoveredPrefix + "*" + suffix)
                 .Where(path => RecoveredTarget(Path.GetFileName(path)) == targetName
                     && FileMetadata.At(path) is { IsLink: false } && (File.GetAttributes(path) & (skip | FileAttributes.Directory)) == 0)
                 .OrderByDescending(File.GetLastWriteTimeUtc).ThenByDescending(path => path, StringComparer.Ordinal).ToList();
@@ -220,7 +216,7 @@ public static partial class NoteFile
     {
         foreach (var copy in copies)
         {
-            try { File.Move(copy, Path.Combine(directory, RecoveredName(".pending-" + RecoveredPattern.Match(Path.GetFileName(copy)).Groups["id"].Value, null)), false); }
+            try { File.Move(copy, Path.Combine(directory, RecoveredName(TempNames.PendingPrefix + TempNames.RecoveredPattern.Match(Path.GetFileName(copy)).Groups["id"].Value, null)), false); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
@@ -245,7 +241,7 @@ public static partial class NoteFile
 
     internal static FileStream OpenExclusive(string path, FileMode mode, FileAccess access)
     {
-        var until = Environment.TickCount64 + 10000;
+        var until = Environment.TickCount64 + FileRetry.LockedRetryBudgetMs;
         while (true)
         {
             var metadata = FileMetadata.At(path);
@@ -282,9 +278,9 @@ public static partial class NoteFile
                     throw;
                 }
             }
-            catch (IOException error) when (error is not VaultFileException && Environment.TickCount64 < until && ((error.HResult & 0xFFFF) is 11 or 32 or 33))
+            catch (IOException error) when (error is not VaultFileException && Environment.TickCount64 < until && FileErrors.IsSharingViolation(error))
             {
-                Thread.Sleep(2);
+                Thread.Sleep(FileRetry.LockedRetryPollMs);
             }
         }
     }
@@ -416,7 +412,7 @@ public static partial class NoteFile
         var target = SafePath(root, relativePath, true);
         var existing = FileMetadata.At(target);
         existing?.Validate();
-        var temporary = Path.Combine(Path.GetDirectoryName(target)!, ".pending-" + Guid.NewGuid().ToString("N"));
+        var temporary = Path.Combine(Path.GetDirectoryName(target)!, TempNames.PendingPrefix + Guid.NewGuid().ToString("N"));
         FileMetadata? replaced = null;
         var targetLost = false;
         try
@@ -435,7 +431,7 @@ public static partial class NoteFile
             }
 
             current?.Validate();
-            if (overwrite && current is not null && (OperatingSystem.IsWindows() || ReplaceHook.Value is not null))
+            if (overwrite && current is not null && UsesReplaceFile)
             {
                 replaced = current;
                 ReplaceFile(temporary, target, current, ref targetLost);
@@ -460,14 +456,13 @@ public static partial class NoteFile
     // A failed replace can remove the target, leaving the temporary as the only copy. Keep it under a
     // ".recovered-" name that the stale-temporary sweep ignores; otherwise delete it. `replaced` is the
     // target's identity before an attempted replace; the temporary is deleted only while that file is intact.
-    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost,
-        Action<string, string>? keep = null)
+    internal static void CleanupTemporary(string temporary, string target, FileMetadata? replaced, bool targetLost)
     {
         if (!File.Exists(temporary)) { return; }
         if (!targetLost && (replaced is null || TargetIntact(target, replaced))) { File.Delete(temporary); return; }
         var name = Path.GetFileName(temporary);
         var kept = Path.Combine(Path.GetDirectoryName(temporary)!, RecoveredName(name, targetLost ? Path.GetFileName(target) : null));
-        try { (keep ?? ((t, d) => File.Move(t, d, false)))(temporary, kept); }
+        try { Move(temporary, kept, false); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // The lock that failed the replace (sync client, antivirus) often blocks this rename too, and a
@@ -494,31 +489,30 @@ public static partial class NoteFile
     internal static string RecoveredName(string pendingName, string? restorableTarget)
     {
         var bytes = restorableTarget is null ? [] : Utf8.GetBytes(restorableTarget);
-        return ".recovered-" + pendingName[".pending-".Length..] + (bytes.Length is > 0 and <= 100 ? "-" + Convert.ToHexStringLower(bytes) : "");
+        return TempNames.RecoveredPrefix + pendingName[TempNames.PendingPrefix.Length..] + (bytes.Length is > 0 and <= TempNames.MaxRestorableNameBytes ? "-" + Convert.ToHexStringLower(bytes) : "");
     }
 
     // File.Replace can fail after removing the target (ERROR_UNABLE_TO_MOVE_REPLACEMENT 1176/1177); move the temporary into place then.
     // targetLost is set before the fallback so a racing target creation can't make cleanup delete the lone copy.
     // `expected` is the target's identity before the replace; a delete-pending or different file there counts as lost.
-    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost,
-        Action<string, string>? replace = null, Action<string, string>? move = null)
+    internal static void ReplaceFile(string temporary, string target, FileMetadata expected, ref bool targetLost)
     {
-        try { (replace ?? ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
+        try { (ReplaceHook.Value ?? ((t, d) => File.Replace(t, d, null)))(temporary, target); }
         catch (IOException original) when ((original.HResult & 0xFFFF) is 1176 or 1177 && !TargetIntact(target, expected) && File.Exists(temporary))
         {
             targetLost = true;
-            const int attempts = 3;
+            const int attempts = FileRetry.MoveFallbackAttempts;
             for (var attempt = 1; ; attempt++)
             {
-                try { (move ?? MoveHook.Value ?? ((t, d) => File.Move(t, d, false)))(temporary, target); return; }
+                try { Move(temporary, target, false); return; }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < attempts && !File.Exists(target))
                 {
-                    System.Diagnostics.Trace.TraceError($"Move fallback attempt {attempt} failed: {error}");
-                    Thread.Sleep(75);
+                    Report($"Move fallback attempt {attempt} failed: {error}");
+                    Thread.Sleep(FileRetry.MoveFallbackDelayMs);
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    System.Diagnostics.Trace.TraceError($"Move fallback failed: {error}");
+                    Report($"Move fallback failed: {error}");
                     System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(original).Throw();
                 }
             }
@@ -527,10 +521,10 @@ public static partial class NoteFile
 
     public static bool CreateAsset(byte[] data, string root, string relativePath)
     {
-        var components = PathComponents(relativePath);
+        var components = Vault.PathComponents(relativePath);
         var parent = string.Join('/', components.SkipLast(1));
         _ = SafePath(root, parent.Length == 0 ? ".asset-check" : parent + "/.asset-check", true);
-        var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Vault.UrlUnder(root, relativePath);
         lock (Gate(path))
         {
             if (FileMetadata.At(path) is not null)

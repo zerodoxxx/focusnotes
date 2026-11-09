@@ -48,7 +48,6 @@ public static class Tokens
     public const int QuickMaxHeight = 680;
     public const double QuickMaxHeightFraction = 0.60;
     public const int QuickIndentAllowance = 24;
-    public const int QuickMeasuredParagraphs = 300;
     public const int EditorQuoteIndent = 8;
     public const int EditorQuoteBarWidth = 3;
     public const int EditorQuoteBarInset = 2;
@@ -143,7 +142,6 @@ public static class Tokens
     public const int EditorMeasuredLines = 300;
     public static readonly double[] EditorHeadingSizes = [22, 19, 17, 15];
     public static readonly System.Windows.Point[] EditorCheckboxCheckPoints = [new(0.25, 0.5), new(0.43, 0.7), new(0.76, 0.3)];
-    public static readonly System.Windows.Size EditorTextInset = new(0, 0);
     public static readonly System.Windows.Vector MenuShadowOffset = new(0, -4);
     public const string QuickEmptyTitle = "New note", EditorBullet = "•";
 }

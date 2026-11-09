@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -14,6 +15,10 @@ internal sealed class ClipboardGuard
     private static readonly Lazy<ClipboardListener> Listener = new(() => new());
     private readonly ClipboardListener listener = Listener.Value;
     internal long SignalVersion => listener.SignalVersion;
+    internal const uint CfText = 1, CfOemText = 7, CfUnicodeText = 13;
+
+    /// <summary>A copy the target owns whose sequence moved past the snapshot: the only kind cleanup may overwrite.</summary>
+    internal static bool NeedsRestore([NotNullWhen(true)] ClipboardCopy? copy, ClipboardSnapshot snapshot) => copy is { TargetOwned: true } && copy.Sequence != snapshot.Sequence;
 
     internal async Task<SnapshotResult> SnapshotAsync(CancellationToken cancellationToken)
     {
@@ -46,7 +51,7 @@ internal sealed class ClipboardGuard
                     // cleanup is conditional on that copy's sequence, so it cannot overwrite a later copy.
                     try
                     {
-                        if (late is { TargetOwned: true } && late.Sequence != snapshot.Sequence) _ = Restore(snapshot, late.Sequence);
+                        if (NeedsRestore(late, snapshot)) _ = Restore(snapshot, late.Sequence);
                     }
                     finally { snapshot.Dispose(); }
                 }).ConfigureAwait(false);
@@ -71,7 +76,7 @@ internal sealed class ClipboardGuard
                     var copy = await ReadCopyAsync(targetPid, TimeSpan.FromMilliseconds(300), snapshot).ConfigureAwait(false);
                     if (copy is { NotOpened: false })
                     {
-                        if (copy.TargetOwned && copy.Sequence != snapshot.Sequence) _ = Restore(snapshot, copy.Sequence);
+                        if (NeedsRestore(copy, snapshot)) _ = Restore(snapshot, copy.Sequence);
                         return; // Foreign or unchanged: never overwrite.
                     }
                     await Task.Delay(50).ConfigureAwait(false);
@@ -89,7 +94,7 @@ internal sealed class ClipboardGuard
         {
             _ = NativeMethods.GetWindowThreadProcessId(NativeMethods.GetClipboardOwner(), out var ownerPid);
             if (ownerPid != targetPid) return new(null, NativeMethods.GetClipboardSequenceNumber(), false);
-            var handle = NativeMethods.GetClipboardData(13); // Listener also wakes us for a delayed-render copy.
+            var handle = NativeMethods.GetClipboardData(CfUnicodeText); // Listener also wakes us for a delayed-render copy.
             var sequence = NativeMethods.GetClipboardSequenceNumber();
             if (handle == 0) return new(null, sequence, true);
             var size = NativeMethods.GlobalSize(handle);

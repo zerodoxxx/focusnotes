@@ -18,7 +18,7 @@ func runHelper() throws {
     defer { parentExit.cancel() }
     // Close the race between capturing the parent and installing the source.
     if getppid() != parentPID { _exit(0) }
-    var directory: URL?, idle: Double = 60
+    var directory: URL?, idle: Double = EmbedProtocol.defaultIdleSeconds
     var arguments = CommandLine.arguments.dropFirst().makeIterator()
     while let argument = arguments.next() {
         switch argument {
@@ -27,7 +27,7 @@ func runHelper() throws {
             directory = URL(fileURLWithPath: path, isDirectory: true)
         case "--idle-seconds":
             guard let text = arguments.next(), let seconds = Double(text), seconds.isFinite,
-                  seconds > 0, seconds <= 86_400 else { throw EmbeddingError.invalid("Invalid idle timeout") }
+                  seconds > 0, seconds <= EmbedProtocol.maxIdleSeconds else { throw EmbeddingError.invalid("Invalid idle timeout") }
             idle = seconds
         default: throw EmbeddingError.invalid("Unknown argument: \(argument)")
         }
@@ -45,7 +45,7 @@ func runHelper() throws {
             do {
                 let decoded = try JSONDecoder().decode(EmbedRequest.self, from: line)
                 request = decoded
-                guard [128, 256, 512, 768].contains(decoded.dimensions) else { throw EmbeddingError.invalid("Unsupported dimensions") }
+                guard EmbedProtocol.supportedDimensions.contains(decoded.dimensions) else { throw EmbeddingError.invalid("Unsupported dimensions") }
                 let embedder: Embedder
                 if let existing = embedders[decoded.dimensions] { embedder = existing }
                 else {
@@ -69,7 +69,7 @@ func runHelper() throws {
                 response = try EmbedResponse(id: decoded.id, dimensions: decoded.dimensions, vectors: vectors,
                                              processID: getpid(), visionLoaded: embedder.visionLoaded)
             } catch {
-                response = try EmbedResponse(id: request?.id ?? "", dimensions: request?.dimensions ?? 256,
+                response = try EmbedResponse(id: request?.id ?? "", dimensions: request?.dimensions ?? EmbedProtocol.defaultDimensions,
                                              error: String(describing: error), processID: getpid(),
                                              visionLoaded: embedders.values.contains { $0.visionLoaded })
             }
@@ -93,7 +93,7 @@ func runHelper() throws {
         if count < 0 && errno == EINTR { continue }
         if count <= 0 { return }
         pending.append(contentsOf: bytes.prefix(count))
-        guard pending.count <= 64 * 1024 * 1024 else { throw EmbeddingError.invalid("Request exceeds 64 MiB") }
+        guard pending.count <= EmbedProtocol.maxMessageBytes else { throw EmbeddingError.invalid("Request exceeds 64 MiB") }
     }
 }
 

@@ -12,8 +12,4 @@ enum AppInfo {
     static var bundleIdentifier: String {
         infoDictionary["CFBundleIdentifier"] as? String ?? "dev"
     }
-
-    static var version: String {
-        infoDictionary["CFBundleShortVersionString"] as? String ?? "0.0.0"
-    }
 }

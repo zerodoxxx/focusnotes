@@ -20,7 +20,6 @@ public actor ModelInstaller {
 
     private static let extractionHeadroom: Int64 = 300_000_000
     private static let maxNetworkRetries = 3
-    private static let extractDirectoryName = ".runtime-extract"
 
     private let modelsDirectory: URL
     private let bundledResources: URL
@@ -32,6 +31,7 @@ public actor ModelInstaller {
     /// True for the whole of `install()`, so `remove()` and a second install cannot touch the same files.
     private var installing = false
 
+    /// Heals an interrupted commit before anything reads the models directory.
     public init(modelsDirectory: URL, bundledResources: URL, manifest: ModelManifest = .current,
                 transport: any ModelTransport = URLSessionTransport(),
                 freeSpace: @escaping @Sendable (URL) throws -> Int64 = ModelInstaller.volumeFreeSpace,
@@ -42,11 +42,12 @@ public actor ModelInstaller {
         self.transport = transport
         self.freeSpace = freeSpace
         self.tarExecutable = tarExecutable
+        removeStaleBackups(in: modelsDirectory.deletingLastPathComponent())
     }
 
     /// Sibling of the models directory where downloads accumulate until they verify.
     public nonisolated var stagingDirectory: URL {
-        modelsDirectory.deletingLastPathComponent().appendingPathComponent("models.download", isDirectory: true)
+        modelsDirectory.deletingLastPathComponent().appendingPathComponent(StagingLayout.downloadDirectoryName, isDirectory: true)
     }
 
     /// True when an earlier download left files behind that the next `install` call can resume.
@@ -105,11 +106,9 @@ public actor ModelInstaller {
         let parent = modelsDirectory.deletingLastPathComponent()
         let total = manifest.totalDownloadBytes
 
-        // Step 1: staging directory (also creates the parent) and cleanup of backups left by a crash.
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         removeStaleBackups(in: parent)
 
-        // Fail before any download when a bundled license is missing from the app.
         for license in manifest.licenses {
             let source = bundledResources.appendingPathComponent(license.resourceName)
             guard fm.fileExists(atPath: source.path) else {
@@ -117,7 +116,6 @@ public actor ModelInstaller {
             }
         }
 
-        // Step 2: work list. Files that already verify are reused and count as completed.
         var downloads: [Download] = []
         var completed: Int64 = 0
         // .part files of files that no longer need downloading. Removed only after the space check passes.
@@ -140,11 +138,7 @@ public actor ModelInstaller {
         }
 
         let runtime = manifest.runtime
-        let runtimeFiles = [
-            (manifest.dylibName, runtime.dylibSHA256),
-            (manifest.runtimeLicenseName, runtime.licenseSHA256),
-            (manifest.runtimeNoticesName, runtime.noticesSHA256),
-        ]
+        let runtimeFiles = runtimeMembers.map { ($0.installedName, $0.digest) }
         var runtimeInstalled = true
         for (name, digest) in runtimeFiles {
             if try !hashMatches(staging.appendingPathComponent(name), digest) {
@@ -152,20 +146,19 @@ public actor ModelInstaller {
                 break
             }
         }
-        let archive = staging.appendingPathComponent("runtime.tgz")
+        let archive = staging.appendingPathComponent(StagingLayout.runtimeArchiveName)
         if runtimeInstalled {
-            stalePartNames.append("runtime.tgz")
+            stalePartNames.append(StagingLayout.runtimeArchiveName)
             try? fm.removeItem(at: archive)
-            try? fm.removeItem(at: staging.appendingPathComponent(Self.extractDirectoryName, isDirectory: true))
+            try? fm.removeItem(at: staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true))
             completed += runtime.size
         } else if try hashMatches(archive, runtime.sha256) {
-            stalePartNames.append("runtime.tgz")
+            stalePartNames.append(StagingLayout.runtimeArchiveName)
             completed += runtime.size
         } else {
-            downloads.append(Download(name: "runtime.tgz", url: runtime.url, sha256: runtime.sha256, size: runtime.size))
+            downloads.append(Download(name: StagingLayout.runtimeArchiveName, url: runtime.url, sha256: runtime.sha256, size: runtime.size))
         }
 
-        // Step 3: disk pre-flight, counting bytes already present in .part files as downloaded.
         // Read-only: nothing is deleted until the space check has passed.
         var remainingBytes: Int64 = 0
         for item in downloads {
@@ -185,7 +178,6 @@ public actor ModelInstaller {
         let throttle = ProgressThrottle(total: total, callback: progress)
         throttle.report(completed, force: true)
 
-        // Step 4: downloads in manifest order, with the runtime archive last.
         for item in downloads {
             try checkCancellation()
             let base = completed
@@ -199,13 +191,11 @@ public actor ModelInstaller {
             completed += item.size
         }
 
-        // Step 5: unpack the runtime archive and verify each member before it is installed.
         if !runtimeInstalled {
             try checkCancellation()
             try extractRuntime(archive: archive, staging: staging)
         }
 
-        // Step 6: bundled license files, verified before they are copied in.
         for license in manifest.licenses {
             try checkCancellation()
             let source = bundledResources.appendingPathComponent(license.resourceName)
@@ -217,7 +207,6 @@ public actor ModelInstaller {
             try checkCancellation()
         }
 
-        // Step 7: everything the app needs is present, and nothing is half-written.
         let requiredNames = manifest.requiredFiles
             + [manifest.runtimeLicenseName, manifest.runtimeNoticesName]
             + manifest.licenses.map(\.installedName)
@@ -232,7 +221,7 @@ public actor ModelInstaller {
             throw ModelInstallError.io("an incomplete download is still present")
         }
 
-        // Step 8: atomic commit. The old directory is kept until the new one is in place.
+        // The old directory is kept until the new one is in place.
         guard fm.fileExists(atPath: staging.path) else {
             throw ModelInstallError.io("the staging folder was removed during the install")
         }
@@ -242,7 +231,6 @@ public actor ModelInstaller {
         try commit(staging: staging)
         logger.info("Model install complete: \(requiredNames.count, privacy: .public) files")
 
-        // Step 9: final progress.
         throttle.report(total, force: true)
     }
 
@@ -289,21 +277,34 @@ public actor ModelInstaller {
         }
     }
 
-    /// Extracts the three runtime members with the system tar and verifies each against its pinned hash.
-    private func extractRuntime(archive: URL, staging: URL) throws {
-        try checkCancellation()
-        let fm = FileManager.default
+    /// Shared by the staged-file check and the tar extraction so both name the same three files.
+    private var runtimeMembers: [(member: String, digest: String, installedName: String)] {
         let runtime = manifest.runtime
-        let extractDirectory = staging.appendingPathComponent(Self.extractDirectoryName, isDirectory: true)
-        try? fm.removeItem(at: extractDirectory)
-        try fm.createDirectory(at: extractDirectory, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: extractDirectory) }
-
-        let members: [(member: String, digest: String, installedName: String)] = [
+        return [
             (runtime.dylibMember, runtime.dylibSHA256, manifest.dylibName),
             (runtime.licenseMember, runtime.licenseSHA256, manifest.runtimeLicenseName),
             (runtime.noticesMember, runtime.noticesSHA256, manifest.runtimeNoticesName),
         ]
+    }
+
+    /// Extracts the three runtime members with the system tar and verifies each against its pinned hash.
+    private func extractRuntime(archive: URL, staging: URL) throws {
+        try checkCancellation()
+        let fm = FileManager.default
+        let extractDirectory = staging.appendingPathComponent(StagingLayout.extractDirectoryName, isDirectory: true)
+        try? fm.removeItem(at: extractDirectory)
+        try fm.createDirectory(at: extractDirectory, withIntermediateDirectories: true)
+        defer {
+            do {
+                try fm.removeItem(at: extractDirectory)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+                // Failure paths below already removed it.
+            } catch {
+                logger.notice("Could not remove \(extractDirectory.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        let members = runtimeMembers
 
         let process = Process()
         let stderr = Pipe()
@@ -337,7 +338,11 @@ public actor ModelInstaller {
             }
             guard try FileDigest.sha256Hex(of: extracted) == entry.digest else {
                 try? fm.removeItem(at: extractDirectory)
-                try? fm.removeItem(at: archive)
+                do {
+                    try fm.removeItem(at: archive)
+                } catch {
+                    logger.notice("Could not remove \(archive.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
                 throw ModelInstallError.checksumMismatch(file: entry.member)
             }
             try checkCancellation()
@@ -357,7 +362,7 @@ public actor ModelInstaller {
         var backup: URL?
         if fm.fileExists(atPath: modelsDirectory.path) {
             try checkCancellation()
-            let old = parent.appendingPathComponent("models.old-\(UUID().uuidString)", isDirectory: true)
+            let old = parent.appendingPathComponent(StagingLayout.newBackupName(), isDirectory: true)
             try fm.moveItem(at: modelsDirectory, to: old)
             backup = old
         }
@@ -366,18 +371,21 @@ public actor ModelInstaller {
             try fm.moveItem(at: staging, to: modelsDirectory)
         } catch {
             if let backup {
-                try? fm.moveItem(at: backup, to: modelsDirectory)
+                do {
+                    try fm.moveItem(at: backup, to: modelsDirectory)
+                } catch {
+                    logger.error("Could not restore \(backup.path, privacy: .public) after a failed commit: \(error.localizedDescription, privacy: .public)")
+                }
             }
             throw error
         }
         if let backup {
-            try? fm.removeItem(at: backup)
+            do {
+                try fm.removeItem(at: backup)
+            } catch {
+                logger.error("Could not remove \(backup.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
-    }
-
-    /// Heals an interrupted commit. Safe to call on every launch, before anything reads the models directory.
-    public nonisolated func recoverInterruptedCommit() {
-        removeStaleBackups(in: modelsDirectory.deletingLastPathComponent())
     }
 
     /// Removes `models.old-*` directories left behind by an interrupted commit. Only this installer creates them.
@@ -386,7 +394,7 @@ public actor ModelInstaller {
     private nonisolated func removeStaleBackups(in parent: URL) {
         let fm = FileManager.default
         let names = (try? fm.contentsOfDirectory(atPath: parent.path)) ?? []
-        var backups: [(url: URL, created: Date)] = names.filter { $0.hasPrefix("models.old-") }.map { name in
+        var backups: [(url: URL, created: Date)] = names.filter { StagingLayout.isBackup($0) }.map { name in
             let url = parent.appendingPathComponent(name, isDirectory: true)
             let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             return (url, created)
@@ -441,7 +449,7 @@ public actor ModelInstaller {
     }
 
     private func partURL(_ name: String) -> URL {
-        stagingDirectory.appendingPathComponent(name + ".part")
+        stagingDirectory.appendingPathComponent(StagingLayout.partName(for: name))
     }
 
     private func discardPartialFile(for name: String) {
@@ -468,6 +476,32 @@ public actor ModelInstaller {
             try fm.removeItem(at: destination)
         }
         try fm.moveItem(at: source, to: destination)
+    }
+}
+
+/// Names the installer writes beside the models directory. They are persisted on disk, so a rename
+/// would leave an interrupted download or commit that the new code can no longer find.
+private enum StagingLayout {
+    static let downloadDirectoryName = "models.download"
+    static let extractDirectoryName = ".runtime-extract"
+    static let runtimeArchiveName = "runtime.tgz"
+    static let backupPrefix = "models.old-"
+    static let partExtension = "part"
+
+    static func newBackupName() -> String {
+        backupPrefix + UUID().uuidString
+    }
+
+    static func isBackup(_ name: String) -> Bool {
+        name.hasPrefix(backupPrefix)
+    }
+
+    static func partName(for name: String) -> String {
+        name + "." + partExtension
+    }
+
+    static func isPart(_ url: URL) -> Bool {
+        url.pathExtension == partExtension
     }
 }
 
@@ -502,7 +536,7 @@ private func containsPartialFiles(in root: URL) -> Bool {
     guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
         return false
     }
-    for case let url as URL in enumerator where url.pathExtension == "part" {
+    for case let url as URL in enumerator where StagingLayout.isPart(url) {
         return true
     }
     return false

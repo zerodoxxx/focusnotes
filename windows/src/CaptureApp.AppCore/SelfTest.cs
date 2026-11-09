@@ -9,6 +9,9 @@ public sealed record SelfTestContext(string RunDirectory, string? ModelsDirector
 /// Headless checks for AppCore. Platform, controller, and visual checks are added when those layers are connected.
 public static class SelfTest
 {
+    // Matches CaptureClassifier.MinimumTextCoverage; Platform is Windows-only so AppCore can't reference it.
+    internal const double SelfTestTextCoverage = 0.12;
+
     public static async Task RunAsync(string directory, string? modelsDirectory = null, TextWriter? output = null,
         CancellationToken cancellationToken = default, Func<SelfTestContext, Task>? extension = null)
     {
@@ -29,12 +32,12 @@ public static class SelfTest
 
         try
         {
-            pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, modelsDirectory, 0.12,
+            pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, modelsDirectory, SelfTestTextCoverage,
                 homeDirectory: homeDirectory);
             await WritePass(output, "pipeline opened").ConfigureAwait(false);
 
             var session = pipeline.StartSession("Self-Test Session");
-            var restoredSession = new SessionStore(stateDirectory, pipeline.Vault, zone).Current();
+            var restoredSession = new SessionStore(stateDirectory, pipeline.Vault).Current();
             var externalPath = Path.Combine(pipeline.Vault.HomeRoot, "External.md");
             Directory.CreateDirectory(pipeline.Vault.HomeRoot);
             await File.WriteAllTextAsync(externalPath, "# External\n", new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
@@ -87,11 +90,11 @@ public static class SelfTest
             var recoveryId = recovery.Prepared.Capture.Id;
             var recoveryPath = recovery.Prepared.Destination.Url;
             pipeline.Dispose();
-            pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, modelsDirectory, 0.12,
+            pipeline = CapturePipeline.Open(vaultDirectory, stateDirectory, zone, modelsDirectory, SelfTestTextCoverage,
                 homeDirectory: homeDirectory);
             var restored = await pipeline.ReplayUnsavedAsync(cancellationToken).ConfigureAwait(false);
             var replayedAgain = await pipeline.ReplayUnsavedAsync(cancellationToken).ConfigureAwait(false);
-            var recoveredBlockCount = CountOccurrences(File.ReadAllBytes(recoveryPath), Encoding.UTF8.GetBytes("<!-- capture:" + recoveryId.ToString("D")));
+            var recoveredBlockCount = CountOccurrences(File.ReadAllBytes(recoveryPath), Encoding.UTF8.GetBytes(CaptureFormat.MarkerPrefix + recoveryId.ToString("D")));
             if (restored != 1 || replayedAgain != 0 || recoveredBlockCount != 1 || pipeline.Index.Capture(recoveryId) is null)
             {
                 throw new InvalidOperationException("Journal replay did not restore a capture exactly once.");

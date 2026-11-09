@@ -92,12 +92,19 @@ internal sealed partial class AppController
         if (updates?.Snapshot.InstallerUrl is { } url) { OpenUrl(url); }
     }
 
-    private void ApplyUpdateOnExitIfReady()
+    /// Applies a downloaded update at exit; ApplyAndRestart ends this process itself.
+    private void ApplyReadyUpdate(bool restart, string failureMessage)
     {
+        var update = updates;
         try
         {
-            if (updates?.Snapshot.Status == UpdateStatus.ReadyToRestart) { updates.ApplyOnExit(); }
+            if (update?.Snapshot.Status == UpdateStatus.ReadyToRestart)
+            {
+                if (restart) { update.ApplyAndRestart(); }
+                else { update.ApplyOnExit(); }
+            }
         }
-        catch (Exception error) { log.Error($"Applying the update at sign-out failed ({error.GetType().Name}): {error.Message}"); }
+        // The ledger normally still holds the pending apply, so the next launch counts it as a failed attempt.
+        catch (Exception error) { log.Error($"{failureMessage} ({error.GetType().Name}): {error.Message}"); }
     }
 }

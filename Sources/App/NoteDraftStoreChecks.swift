@@ -32,7 +32,6 @@ func checkNoteDraftStoreScheduling() async throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    // Several rapid edits result in one delayed write containing the latest text and pin.
     let coalescedProbe = ScheduledDraftWriteProbe()
     let coalesced = NoteDraftStore(stateDirectory: root.appendingPathComponent("Coalesced"),
                                    debounceInterval: .milliseconds(300), maxCoalescingInterval: .seconds(1),
@@ -43,9 +42,8 @@ func checkNoteDraftStoreScheduling() async throws {
     guard !FileManager.default.fileExists(atPath: coalesced.url.path) else {
         throw SelfTestFailure("Draft keystrokes must not synchronously write on the caller thread")
     }
-    let coalescingDeadline = ContinuousClock.now.advanced(by: .seconds(2))
-    while !FileManager.default.fileExists(atPath: coalesced.url.path), ContinuousClock.now < coalescingDeadline {
-        try await Task.sleep(for: .milliseconds(10))
+    try await waitUntil("the coalesced draft write", timeout: .seconds(2)) {
+        FileManager.default.fileExists(atPath: coalesced.url.path)
     }
     let coalescedSnapshot = try diskDraft(at: coalesced.url)
     guard coalescedSnapshot.text == "latest editor text", !coalescedSnapshot.pinOnSave,
@@ -74,9 +72,8 @@ func checkNoteDraftStoreScheduling() async throws {
     guard persistedBeforeProducerFinished else {
         throw SelfTestFailure("Continuous editor changes exceeded the maximum draft persistence interval")
     }
-    let boundedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
-    while (try? diskDraft(at: bounded.url).text) != "continuous edit 23", ContinuousClock.now < boundedDeadline {
-        try await Task.sleep(for: .milliseconds(10))
+    try await waitUntil("the bounded draft final edit", timeout: .seconds(2)) {
+        (try? diskDraft(at: bounded.url).text) == "continuous edit 23"
     }
     guard try diskDraft(at: bounded.url).text == "continuous edit 23" else {
         throw SelfTestFailure("The bounded draft writer did not persist the final edit")
@@ -92,7 +89,6 @@ func checkNoteDraftStoreScheduling() async throws {
         throw SelfTestFailure("A delayed text write overwrote a newer pin-on-save intent")
     }
 
-    // A flush waits behind an already-running stale write, then leaves the newer snapshot last.
     let enteredWrite = DispatchSemaphore(value: 0)
     let releaseWrite = DispatchSemaphore(value: 0)
     let inFlight = NoteDraftStore(stateDirectory: root.appendingPathComponent("InFlight"),
@@ -129,7 +125,6 @@ func checkNoteDraftStoreScheduling() async throws {
         throw SelfTestFailure("A stale in-flight write landed after the latest synchronous flush")
     }
 
-    // Conditional clear and successful commit invalidate every queued debounce.
     let clearStore = NoteDraftStore(stateDirectory: root.appendingPathComponent("Clear"),
                                     debounceInterval: .milliseconds(100), maxCoalescingInterval: .milliseconds(300))
     clearStore.scheduleStore("draft to clear", pinOnSave: true)
@@ -145,7 +140,6 @@ func checkNoteDraftStoreScheduling() async throws {
         throw SelfTestFailure("A stale scheduled write resurrected a committed draft")
     }
 
-    // A background failure keeps its latest snapshot pending so the final flush can retry it.
     let failed = NoteDraftStore(stateDirectory: root.appendingPathComponent("Failure"),
                                 debounceInterval: .milliseconds(25), maxCoalescingInterval: .milliseconds(100))
     try failed.store("older durable text")
@@ -157,10 +151,9 @@ func checkNoteDraftStoreScheduling() async throws {
         waitForSignal(failureObserved, timeout: .seconds(2))
     }.value
     guard asyncFailureReported else { throw SelfTestFailure("A failed background draft write was not reported") }
-    var finalFlushFailed = false
-    do { try failed.flushScheduledStore("latest text after failure", pinOnSave: true) }
-    catch { finalFlushFailed = true }
-    guard finalFlushFailed else { throw SelfTestFailure("The test storage fault did not fail the synchronous flush") }
+    try await expectRejection(CocoaError.self, "The test storage fault did not fail the synchronous flush") {
+        try failed.flushScheduledStore("latest text after failure", pinOnSave: true)
+    }
     try FileManager.default.removeItem(at: failed.url)
     try failed.flushScheduledStore("latest text after failure", pinOnSave: true)
     let recovered = try failed.loadSnapshot()
@@ -177,7 +170,6 @@ private func checkDraftCompletionFolderIdentity() throws {
     let original = try NoteFolder(rawValue: "Projects/Original")
     let newer = try NoteFolder(rawValue: "Projects/Newer")
     let text = "Same title\nSame body"
-    // A newer scheduled draft must survive replay of identical text for another folder.
     store.scheduleStore(text, pinOnSave: true, folder: newer)
     var appliedPin: Bool?
     try store.completeSave(matching: text, pinOnSave: nil, folder: original) { appliedPin = $0 }
@@ -185,7 +177,6 @@ private func checkDraftCompletionFolderIdentity() throws {
     guard retained.text == text, retained.folder == newer, retained.pinOnSave, appliedPin == false else {
         throw SelfTestFailure("Recovery consumed another folder's same-text draft or inherited its pin intent")
     }
-    // A legacy journal without folder context also cannot consume a scoped draft.
     appliedPin = nil
     try store.completeSave(matching: text, pinOnSave: nil) { appliedPin = $0 }
     guard try store.loadSnapshot().folder == newer, appliedPin == false else {

@@ -54,7 +54,7 @@ public sealed class FolderShortcutStoreTests
         Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate([first, first with { Id = Guid.NewGuid() }]));
         Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate([first with { Id = Guid.Empty }]));
         Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate([first with { Action = (FolderShortcutAction)99 }]));
-        Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate(Enumerable.Range(0, 21).Select(_ => Binding()).ToArray()));
+        Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate(Enumerable.Range(0, FolderShortcutStore.MaximumBindings + 1).Select(_ => Binding()).ToArray()));
         var builtinChord = HotkeyDefaults.For(HotkeyAction.WriteNote);
         var collision = first with { Shortcut = builtinChord };
         Assert.Throws<InvalidDataException>(() => FolderShortcutStore.Validate([collision], HotkeyDefaults.All));

@@ -1,5 +1,15 @@
 import Foundation
 
+/// Shared by the client and helper so a dimension change is made in one place.
+public enum EmbedProtocol {
+    public static let supportedDimensions: [Int] = [128, 256, 512, 768]
+    public static let defaultDimensions = 256
+    public static let maxDimensions = supportedDimensions.max()!
+    public static let maxMessageBytes = 64 * 1024 * 1024
+    public static let defaultIdleSeconds: Double = 60
+    public static let maxIdleSeconds: Double = 86_400
+}
+
 /// One JSON object per line. All requests and responses carry the same ID.
 public struct EmbedRequest: Codable, Sendable {
     public let id: String
@@ -11,7 +21,7 @@ public struct EmbedRequest: Codable, Sendable {
     public var dimensions: Int
 
     public init(id: String = UUID().uuidString, operation: String, text: String? = nil,
-                texts: [String]? = nil, title: String? = nil, imagePNG: String? = nil, dimensions: Int = 256) {
+                texts: [String]? = nil, title: String? = nil, imagePNG: String? = nil, dimensions: Int = EmbedProtocol.defaultDimensions) {
         self.id = id; self.operation = operation; self.text = text; self.texts = texts
         self.title = title; self.imagePNG = imagePNG; self.dimensions = dimensions
     }

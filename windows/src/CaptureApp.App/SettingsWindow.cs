@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using CaptureApp.AppCore.Shell;
 using CaptureApp.Core;
+using CaptureApp.Updates;
 
 namespace CaptureApp.App;
 
@@ -100,15 +101,12 @@ internal sealed class SettingsWindow : Window
     private StackPanel UpdatesTab()
     {
         var panel = new StackPanel();
-        var auto = UiKit.Radio("Check for updates automatically (daily)", "settingsUpdates", controller.Settings.UpdatesChoice != UpdatesChoice.Manual);
-        var manual = UiKit.Radio("Only when I ask", "settingsUpdates", controller.Settings.UpdatesChoice == UpdatesChoice.Manual);
+        var (auto, manual) = SettingsActions.UpdatesRadios(controller, "settingsUpdates", autoWhenUnset: true);
         var message = UiKit.Secondary(controller.Settings.UpdatesChoice is null ? "Choose an option in Setup to confirm it." : "Automatic checks take effect on the next launch.");
         void Choose(UpdatesChoice choice)
         {
             if (controller.ApplyUpdatesChoice(choice)) { return; }
-            // Show the value that is actually saved.
-            auto.IsChecked = controller.Settings.UpdatesChoice != UpdatesChoice.Manual;
-            manual.IsChecked = controller.Settings.UpdatesChoice == UpdatesChoice.Manual;
+            SettingsActions.ShowSavedUpdatesChoice(controller, auto, manual);
         }
 
         auto.Click += (_, _) => Choose(UpdatesChoice.Auto);
@@ -123,7 +121,7 @@ internal sealed class SettingsWindow : Window
             message.Text = "Checking… the result appears as a notification.";
         })));
         panel.Children.Add(UiKit.Rule());
-        var channel = "win-" + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        var channel = FeedNames.Channel(RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant());
         panel.Children.Add(UiKit.Text($"Version {AppInfo.Version} · channel {channel}", 13));
         return panel;
     }

@@ -19,13 +19,13 @@ public sealed class DurableFileTests : IDisposable
         var path = Path.Combine(directory, "unsaved", "record.json");
         DurableFile.Write(path, "old"u8.ToArray());
         var attempts = 0;
-        DurableFile.MoveHook.Value = (source, target) =>
+        NoteFile.MoveHook.Value = (source, target) =>
         {
             if (++attempts < 3) { throw new IOException("Held open by a scanner.", SharingViolation); }
             File.Move(source, target, true);
         };
         try { DurableFile.Write(path, "new"u8.ToArray()); }
-        finally { DurableFile.MoveHook.Value = null; }
+        finally { NoteFile.MoveHook.Value = null; }
 
         Assert.Equal(3, attempts);
         Assert.Equal("new", File.ReadAllText(path));
@@ -37,13 +37,13 @@ public sealed class DurableFileTests : IDisposable
     {
         var path = Path.Combine(directory, "state.json");
         var attempts = 0;
-        DurableFile.MoveHook.Value = (_, _) =>
+        NoteFile.MoveHook.Value = (_, _) =>
         {
             attempts++;
             throw new IOException("Disk full.", unchecked((int)0x80070070));
         };
         try { Assert.Throws<IOException>(() => DurableFile.Write(path, "new"u8.ToArray())); }
-        finally { DurableFile.MoveHook.Value = null; }
+        finally { NoteFile.MoveHook.Value = null; }
 
         Assert.Equal(1, attempts);
         Assert.Empty(Directory.GetFiles(directory));

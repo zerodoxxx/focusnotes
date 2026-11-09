@@ -18,8 +18,8 @@ public final class VectorStore: @unchecked Sendable {
 
     /// Pass the text and vision ONNX graph/data files to stamp the store against their identities.
     /// Omitting them retains an existing file-size stamp while still validating model ID and dimensions.
-    public init(url: URL, modelID: String = Embedder.modelID, dimensions: Int = 256, modelFiles: [URL]? = nil) throws {
-        guard [128, 256, 512, 768].contains(dimensions), !modelID.isEmpty, !modelID.contains("\0") else {
+    public init(url: URL, modelID: String = Embedder.modelID, dimensions: Int = EmbedProtocol.defaultDimensions, modelFiles: [URL]? = nil) throws {
+        guard EmbedProtocol.supportedDimensions.contains(dimensions), !modelID.isEmpty, !modelID.contains("\0") else {
             throw EmbeddingError.invalid("Invalid vector store configuration")
         }
         let requestedIdentity = try modelFiles.map { try Self.identity(modelID: modelID, dimensions: dimensions, modelFiles: $0) }

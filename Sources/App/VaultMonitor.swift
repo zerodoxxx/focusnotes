@@ -24,11 +24,6 @@ final class VaultMonitor: @unchecked Sendable {
         }
     }
 
-    /// Compatibility for small watcher checks that only need the two work flags.
-    convenience init(vault: Vault, operation: @escaping @Sendable (Bool, Bool) async -> Void) {
-        self.init(vault: vault) { request in await operation(request.notes, request.assets) }
-    }
-
     var isRunning: Bool { lock.withLock { !stopped && watcher.isRunning } }
 
     func start() {
@@ -66,6 +61,20 @@ final class VaultMonitor: @unchecked Sendable {
             watcher.refreshExternalRoots()
         }
     }
+
+    /// Changes confined to known asset paths recheck only those paths; anything else rehashes every asset.
+    static func needsFullAssetValidation(for change: VaultChange) -> Bool {
+        let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Vault.isAssetPath)
+        return change.needsFullSync || (!change.assetsChanged.isEmpty && !pathsAreKnownAssets)
+    }
+
+    /// Canonicalizes the asset directory spelling so rechecks match the lowercase index keys.
+    static func recheckAssetPaths(for change: VaultChange) -> Set<String> {
+        Set(change.assetsChanged.map { path -> String in
+            guard Vault.isAssetPath(path), let separator = path.firstIndex(of: "/") else { return path }
+            return Vault.assetsDirectoryName + String(path[separator...])
+        })
+    }
 }
 
 private actor VaultRefresh {
@@ -99,19 +108,11 @@ private actor VaultRefresh {
             externalRegistryRecoveryHandler?()
         }
         let notes = change.needsFullSync || !change.notesChanged.isEmpty
-        let pathsAreKnownAssets = change.assetsChanged.allSatisfy(Self.isKnownAssetPath)
-        let fullAssetValidation = change.needsFullSync || (!change.assetsChanged.isEmpty && !pathsAreKnownAssets)
         // A new/edited note can introduce an image reference that also needs OCR.
         enqueue(notes: notes,
                 assets: change.needsFullSync || notes || !change.assetsChanged.isEmpty,
-                fullAssetValidation: fullAssetValidation,
-                changedAssetPaths: change.assetsChanged)
-    }
-
-    private static func isKnownAssetPath(_ path: String) -> Bool {
-        let components = path.split(separator: "/", omittingEmptySubsequences: false)
-        return !path.hasPrefix("/") && components.count >= 2 && components[0] == Vault.assetsDirectoryName
-            && !components.contains(where: { $0 == "." || $0 == ".." || $0.isEmpty })
+                fullAssetValidation: VaultMonitor.needsFullAssetValidation(for: change),
+                changedAssetPaths: VaultMonitor.recheckAssetPaths(for: change))
     }
 
     func run(notes: Bool, assets: Bool, fullAssetValidation: Bool = false) async {
