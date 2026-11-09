@@ -596,6 +596,8 @@ final class AppController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// A retry-pending capture shows its warning again (its hotkey reopens the picker);
+    /// any other capture saves to its default destination.
     private func settleUnchosenCapture(_ id: UUID, announce: Bool, retryTitle: String = "Choose where to save") {
         guard captures.isPending(id) else { return }
         if captures.needsRetryChoice, let capture = captures.pending {
