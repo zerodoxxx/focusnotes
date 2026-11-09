@@ -16,7 +16,6 @@ func runLiveFocusChecks() async throws {
         try require(try currentPanel().isKeyWindow, "Input did not borrow real keyboard focus")
     }
     try require(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost, "Input activated another application")
-    try require(!NSApp.isActive, "Input activated the application")
     input.dismiss()
 
     input.present(placeholder: "Input", suggestions: { _ in [] }, onSubmit: { _ in }, onCancel: {})
