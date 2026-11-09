@@ -166,7 +166,7 @@ public sealed class CaptureJournal
     }
 
     internal static bool SameUrl(string left, string right) => string.Equals(Path.GetFullPath(left).Normalize(),
-        Path.GetFullPath(right).Normalize(), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        Path.GetFullPath(right).Normalize(), PathIdentity.Comparison);
 
     private static string Stem(Guid id) => id.ToString("D").ToLowerInvariant();
 
