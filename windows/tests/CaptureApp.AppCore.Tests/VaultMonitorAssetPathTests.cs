@@ -19,4 +19,16 @@ public sealed class VaultMonitorAssetPathTests
         Assert.False(VaultMonitor.IsKnownAssetPath("assets"));
         Assert.False(VaultMonitor.IsKnownAssetPath("assets/../x.png"));
     }
+
+    [Fact]
+    public void WatcherReportedAssetCasingsCanonicaliseToOneRecheckPath()
+    {
+        var recheck = new HashSet<string>(
+            new[] { "Assets/x.png", "ASSETS/x.png", "assets/x.png" }.Select(VaultMonitor.CanonicalAssetPath),
+            StringComparer.Ordinal);
+
+        Assert.Equal("assets/x.png", Assert.Single(recheck));
+        Assert.Equal("assets/Sub/X.png", VaultMonitor.CanonicalAssetPath("ASSETS/Sub/X.png"));
+        Assert.Equal("notes/Assets.md", VaultMonitor.CanonicalAssetPath("notes/Assets.md"));
+    }
 }

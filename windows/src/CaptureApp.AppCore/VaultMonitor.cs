@@ -111,7 +111,7 @@ public sealed class VaultMonitor : IDisposable
                 }
                 else
                 {
-                    changedAssetPaths.UnionWith(assetPaths);
+                    changedAssetPaths.UnionWith(assetPaths.Select(CanonicalAssetPath));
                 }
             }
 
@@ -171,6 +171,14 @@ public sealed class VaultMonitor : IDisposable
         return !path.StartsWith("/", StringComparison.Ordinal) && components.Length >= 2
             && Vault.IsAssetPath(path)
             && components.All(component => component.Length != 0 && component is not ("." or ".."));
+    }
+
+    // Index keys and lookups are case-sensitive, so watcher casing must not leak into the recheck set.
+    internal static string CanonicalAssetPath(string path)
+    {
+        if (!Vault.IsAssetPath(path)) { return path; }
+        var separator = path.IndexOf('/');
+        return separator < 0 ? Vault.AssetsDirectoryName : Vault.AssetsDirectoryName + path[separator..];
     }
 
     public void Dispose() => StopAsync().GetAwaiter().GetResult();
