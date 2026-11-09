@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-11-07 (previous commit: `a01f453`)
+Last Updated: 2026-11-09 (previous commit: `92a3184`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -63,6 +63,7 @@ All notable changes to focusnotes are recorded here. The format follows
 - macOS: renaming a session now saves the same start time that the rename reports. Before, the saved session could differ from the reported one, so it could show a different start time after a relaunch.
 - macOS: a session rename completed from its saved record after an interruption now rejects an invalid new name with the same checks as a typed rename, instead of applying it.
 - macOS and Windows: an assets folder written in another case, such as `ASSETS/`, is now recognised as assets, so changes there no longer trigger a full asset check.
+- macOS and Windows: asset rechecks now match the watcher's path case-insensitively, so a same-size, same-mtime replacement under a differently cased folder is re-OCR'd.
 
 ## [0.1.0] - Unreleased
 
