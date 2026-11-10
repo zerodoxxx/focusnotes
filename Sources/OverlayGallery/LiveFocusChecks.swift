@@ -42,6 +42,8 @@ func runLiveFocusChecks() async throws {
     editor.present(destination: nil, isPinned: false, draft: initial, handlers: NoteEditorHandlers(
         onDraft: { _ in }, onSubmit: { _ in }, onNew: { _ in }, onOpenAsNote: { _ in }, browseItems: { [] },
         onBrowse: { _, _ in }, onTogglePin: { true }, onClose: {}, onError: { _ in }))
+    // Initial on-screen layout can adjust the clip origin before the first key-loss check.
+    try await settle()
     let stickyPanel = try currentPanel()
     guard let root = stickyPanel.contentView, let text = descendants(root).compactMap({ $0 as? NSTextView }).first(where: { $0.accessibilityLabel() == "Note text" }),
           let scroll = descendants(root).compactMap({ $0 as? NSScrollView }).first(where: { $0.documentView === text }) else {
@@ -69,8 +71,11 @@ func runLiveFocusChecks() async throws {
         editor.focus()
         try await settle()
         try require(stickyPanel.isKeyWindow && stickyPanel.firstResponder === text, "Sticky note did not refocus its text after real key loss")
-        try require(text.string == initial && text.selectedRange() == selection && scroll.contentView.bounds.origin == scrollOrigin,
-                    "Real re-focus must preserve the draft, caret and scroll")
+        try require(text.string == initial, "Real re-focus must preserve the draft")
+        try require(text.selectedRange() == selection,
+                    "Real re-focus must preserve the caret: expected \(selection), got \(text.selectedRange())")
+        try require(scroll.contentView.bounds.origin == scrollOrigin,
+                    "Real re-focus must preserve the scroll: expected \(scrollOrigin), got \(scroll.contentView.bounds.origin)")
     }
     try requireFrontmost("Sticky editor")
     editor.dismiss()
