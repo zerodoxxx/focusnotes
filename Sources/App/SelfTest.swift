@@ -851,7 +851,10 @@ extension AppController {
         let state = base.appendingPathComponent("State")
         let root = base.appendingPathComponent("Vault")
         let original = try await CapturePipeline.open(vaultRoot: root, stateDirectory: state, calendar: pipeline.calendar)
-        let controller = AppController(pipeline: original, presentsUI: false)
+        var saveFailureCount = 0
+        let controller = AppController(pipeline: original, presentsUI: false, onToast: { toast in
+            if toast.title == "Couldn't save capture" { saveFailureCount += 1 }
+        })
         let session = try await controller.startSession(name: "Original destination")
         let note = root.appendingPathComponent(session.notePath)
         let header = try Data(contentsOf: note)
@@ -860,7 +863,7 @@ extension AppController {
         let text = CapturePipeline.selection(text: "journal text recovery", context: context)
         let image = PendingCapture(trigger: .region, content: .image(png: png, ocr: "journal image recovery"),
                                    source: CapturePipeline.source(context), subtitle: "Image")
-        for capture in [text, image] {
+        for (index, capture) in [text, image].enumerated() {
             await controller.captures.stage(capture)
             guard let task = controller.captures.commitPending() else { throw SelfTestFailure("Recovery capture not pending") }
             do {
@@ -868,6 +871,10 @@ extension AppController {
                 throw SelfTestFailure("Injected destination failure unexpectedly succeeded")
             } catch let error as POSIXError where error.code == .EISDIR {
                 // The prepared note was replaced by a directory; other failures are unexpected.
+            }
+            // The failure toast can commit pending work; finish it before staging the next capture.
+            try await waitUntil("recovery capture \(index + 1)'s save-failure feedback") {
+                saveFailureCount == index + 1
             }
         }
         _ = await controller.beginTermination().value

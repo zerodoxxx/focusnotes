@@ -324,10 +324,11 @@ To fetch the semantic models without the in-app download, run
 ## Development
 
 ```bash
-swift build                        # build every target
-swift run CoreChecks               # storage, index and Markdown checks
-swift run OverlayGallery --check   # UI behaviour checks for the panels
-swift run OverlayGallery           # render UI snapshots to build/gallery/
+swift build                                   # build every target
+swift run CoreChecks                          # storage, index and Markdown checks
+swift run OverlayGallery --check              # focus-free UI behaviour checks for the panels
+swift run OverlayGallery --check-live-focus   # takes real keyboard focus; run last
+swift run OverlayGallery                      # render UI snapshots to build/gallery/
 ```
 
 | Target | What it holds |

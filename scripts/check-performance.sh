@@ -13,6 +13,7 @@ export FOCUSNOTES_PERF_GATES=1
 case "$(uname -s)" in
   Darwin)
     swift_args=(run)
+    if [[ -n "${FOCUSNOTES_SWIFT_SCRATCH:-}" ]]; then swift_args+=(--scratch-path "$FOCUSNOTES_SWIFT_SCRATCH"); fi
     if [[ "${FOCUSNOTES_LOCAL_ALREADY_BUILT:-}" == "1" ]]; then swift_args+=(--skip-build); fi
     swift "${swift_args[@]}" CoreChecks --performance-only
     ;;

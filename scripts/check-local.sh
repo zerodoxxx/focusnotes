@@ -4,6 +4,21 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 host="$(uname -s)"
+changed=''
+scratch=''
+cleanup() {
+  # Read the exit status before any command here overwrites $?.
+  local s=$?
+  # A second interrupt must not abort cleanup and leave scratch output behind.
+  trap '' INT TERM
+  if [[ -n "$changed" ]]; then rm -f -- "$changed" || echo "warning: could not remove $changed" >&2; fi
+  # SwiftPM output is disposable; the worktree must not keep a .build directory.
+  if [[ -n "$scratch" ]]; then rm -rf -- "$scratch" || echo "warning: could not remove $scratch" >&2; fi
+  return $s
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 is_host_source() {
   case "$1" in docs/*|.github/ISSUE_TEMPLATE/*) return 1 ;; esac
@@ -58,11 +73,11 @@ assert_pushed_checkout() {
 }
 
 expected_tip=''
+live_focus=0
 case "${1:---all}" in
   --pre-push)
     remote="${2:-origin}"
     changed="$(mktemp "${TMPDIR:-/tmp}/focusnotes-push.XXXXXX")"
-    trap 'rm -f "$changed"' EXIT
     needs_checks=0
     while read -r local_ref local_sha remote_ref remote_sha extra; do
       [[ -n "${local_ref:-}" ]] || continue
@@ -105,7 +120,11 @@ case "${1:---all}" in
     fi
     ;;
   --all) ;;
-  *) echo "Usage: bash scripts/check-local.sh [--all | --pre-push REMOTE URL]" >&2; exit 2 ;;
+  --live-focus)
+    if [[ "$host" != Darwin ]]; then echo "Live-focus checks require macOS." >&2; exit 2; fi
+    live_focus=1
+    ;;
+  *) echo "Usage: bash scripts/check-local.sh [--all | --live-focus | --pre-push REMOTE URL]" >&2; exit 2 ;;
 esac
 
 bash scripts/test-local-hooks-isolation.sh
@@ -122,14 +141,20 @@ if [[ -z "$python_command" ]]; then
   exit 1
 fi
 "$python_command" scripts/test-ci-selection.py
+# Hooks export GIT_DIR and friends; SwiftPM's dependency checkouts would use this repo.
+while IFS= read -r var; do unset "$var"; done < <(git rev-parse --local-env-vars)
+if [[ "$host" == Darwin ]]; then
+  scratch="$(mktemp -d "${TMPDIR:-/tmp}/focusnotes-build.XXXXXX")"
+  export FOCUSNOTES_SWIFT_SCRATCH="$scratch"
+fi
 case "$host" in
   Darwin)
-    swift build
-    FOCUSNOTES_PERF_GATES=0 swift run --skip-build CoreChecks --skip-performance
-    swift run --skip-build CaptureChecks
-    swift run --skip-build ModelInstallChecks
-    swift run --skip-build EmbedChecks
-    swift run --skip-build OverlayGallery --check
+    swift build --scratch-path "$scratch"
+    FOCUSNOTES_PERF_GATES=0 swift run --scratch-path "$scratch" --skip-build CoreChecks --skip-performance
+    swift run --scratch-path "$scratch" --skip-build CaptureChecks
+    swift run --scratch-path "$scratch" --skip-build ModelInstallChecks
+    swift run --scratch-path "$scratch" --skip-build EmbedChecks
+    swift run --scratch-path "$scratch" --skip-build OverlayGallery --check
     bash scripts/test-app-path-safety.sh
     ;;
   MINGW*|MSYS*|CYGWIN*)
@@ -143,4 +168,6 @@ case "$host" in
   *) echo "Local app checks require macOS or Windows." >&2; exit 1 ;;
 esac
 FOCUSNOTES_LOCAL_ALREADY_BUILT=1 bash scripts/check-performance.sh
+# Keyboard-focus checks take focus from the user, so they wait for every other check.
+if [[ "$live_focus" == 1 ]]; then swift run --scratch-path "$scratch" --skip-build OverlayGallery --check-live-focus; fi
 if [[ -n "$expected_tip" ]]; then assert_pushed_checkout "$expected_tip"; fi

@@ -67,6 +67,48 @@ public final class OverlayPanel: NSPanel, NSWindowDelegate {
     public override var canBecomeKey: Bool { interactive && !closing }
     public override var canBecomeMain: Bool { false }
 
+    // MARK: Focus-free check seam
+    /// Checks only: key and visibility are simulated, so no panel is ever ordered on screen or made key.
+    @_spi(Checks) public static var simulatesFocus = false
+    private static weak var simulatedKey: OverlayPanel?
+    private var simulatedVisible = false
+
+    public override var isKeyWindow: Bool { Self.simulatesFocus ? Self.simulatedKey === self : super.isKeyWindow }
+    public override var isVisible: Bool { Self.simulatesFocus ? simulatedVisible : super.isVisible }
+    public override func makeKey() {
+        guard Self.simulatesFocus else { super.makeKey(); return }
+        guard canBecomeKey, Self.simulatedKey !== self else { return }
+        let previous = Self.simulatedKey
+        Self.simulatedKey = self
+        previous?.simulatedResign()
+    }
+    public override func resignKey() {
+        guard Self.simulatesFocus else { super.resignKey(); return }
+        if Self.simulatedKey === self { Self.simulatedKey = nil }
+    }
+    public override func orderFrontRegardless() {
+        guard Self.simulatesFocus else { super.orderFrontRegardless(); return }
+        simulatedVisible = true
+    }
+    public override func orderFront(_ sender: Any?) {
+        guard Self.simulatesFocus else { super.orderFront(sender); return }
+        simulatedVisible = true
+    }
+    public override func makeKeyAndOrderFront(_ sender: Any?) {
+        guard Self.simulatesFocus else { super.makeKeyAndOrderFront(sender); return }
+        simulatedVisible = true
+        makeKey()
+    }
+    public override func orderOut(_ sender: Any?) {
+        guard Self.simulatesFocus else { super.orderOut(sender); return }
+        simulatedVisible = false
+        if Self.simulatedKey === self { Self.simulatedKey = nil; simulatedResign() }
+    }
+    /// Mirrors the OS: a window losing key status gets windowDidResignKey once.
+    private func simulatedResign() {
+        (delegate as? OverlayPanel)?.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: self))
+    }
+
     public func present(content: NSView) {
         guard !closing else { return }
         contentView = content

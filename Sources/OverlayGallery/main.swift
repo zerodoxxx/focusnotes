@@ -1,6 +1,6 @@
 import AppKit
 import Darwin
-import OverlayKit
+@_spi(Checks) import OverlayKit
 
 @MainActor
 func thumbnail() -> NSImage {
@@ -227,6 +227,24 @@ final class LiveGallery: NSObject {
     }
 }
 
+// Serializes check runs for this process's lifetime: they share UserDefaults.standard,
+// and live-focus runs dismiss each other's panels when another process takes key focus.
+func acquireCheckLock() throws {
+    let lock = open(NSTemporaryDirectory() + "overlaygallery-check.lock", O_CREAT | O_RDWR, 0o600)
+    if lock >= 0 {
+        let start = Date()
+        var announced = false
+        while flock(lock, LOCK_EX | LOCK_NB) != 0 {
+            let waited = Date().timeIntervalSince(start)
+            if waited > 120 { throw GalleryError("Timed out after 120s waiting for another OverlayGallery --check run") }
+            if waited > 2, !announced { print("Waiting for another OverlayGallery --check run…"); announced = true }
+            usleep(100_000)
+        }
+    } else {
+        FileHandle.standardError.write(Data("OverlayGallery: could not open the check lock (errno \(errno)); running unserialised\n".utf8))
+    }
+}
+
 NSApplication.shared.setActivationPolicy(.accessory)
 NSApplication.shared.finishLaunching()
 do {
@@ -237,24 +255,25 @@ do {
         try live.start(arguments[1])
         withExtendedLifetime(live) { NSApplication.shared.run() }
     } else if arguments == ["--check"] {
-        // Interactive panels dismiss when another process takes key focus, so concurrent runs
-        // would fail each other. Serialize them on a lock held for this process's lifetime.
-        let lock = open(NSTemporaryDirectory() + "overlaygallery-check.lock", O_CREAT | O_RDWR, 0o600)
-        if lock >= 0 {
-            let start = Date()
-            var announced = false
-            while flock(lock, LOCK_EX | LOCK_NB) != 0 {
-                let waited = Date().timeIntervalSince(start)
-                if waited > 120 { throw GalleryError("Timed out after 120s waiting for another OverlayGallery --check run") }
-                if waited > 2, !announced { print("Waiting for another OverlayGallery --check run…"); announced = true }
-                usleep(100_000)
-            }
-        } else {
-            FileHandle.standardError.write(Data("OverlayGallery: could not open the check lock (errno \(errno)); running unserialised\n".utf8))
-        }
+        try acquireCheckLock()
+        OverlayPanel.simulatesFocus = true
+        let guardian = FocusGuard()
         var failure: Error?
         Task { @MainActor in
-            do { try await runBehaviorChecks() } catch { failure = error }
+            do { try await runBehaviorChecks(); try await settle(); try guardian.verify() } catch { failure = error }
+            NSApp.stop(nil)
+            if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
+                timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+                NSApp.postEvent(wake, atStart: false)
+            }
+        }
+        NSApp.run()
+        if let failure { throw failure }
+    } else if arguments == ["--check-live-focus"] {
+        try acquireCheckLock()
+        var failure: Error?
+        Task { @MainActor in
+            do { try await runLiveFocusChecks() } catch { failure = error }
             NSApp.stop(nil)
             if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
                 timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
@@ -264,7 +283,7 @@ do {
         NSApp.run()
         if let failure { throw failure }
     } else {
-        guard arguments.isEmpty else { throw GalleryError("Usage: OverlayGallery [--live <component>|--check]") }
+        guard arguments.isEmpty else { throw GalleryError("Usage: OverlayGallery [--live <component>|--check|--check-live-focus]") }
         try await generateGallery()
     }
 } catch {
