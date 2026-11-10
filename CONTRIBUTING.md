@@ -1,6 +1,6 @@
 # Contributing
 
-Last Updated: 2026-11-10 (previous commit: `23e1544`)
+Last Updated: 2026-11-10 (previous commit: `d6d7572`)
 
 Thanks for considering a contribution to focusnotes. The macOS edition targets macOS 14 or later and uses Swift 6.4; the Windows edition uses .NET 10. For substantial changes, open a GitHub issue first to agree on scope.
 
@@ -48,6 +48,7 @@ The installer uses the versioned `.githooks` directory and preserves existing cu
 - **Manual checks:** `bash scripts/check-local.sh` runs the host's complete local checks, including speed gates (it clears git hook env vars, then builds in a temporary scratch dir that it removes on exit); `bash scripts/check-performance.sh` runs only the speed gates. `bash scripts/check-local.sh --live-focus` runs the same checks and then the focus-requiring gallery checks last (macOS only). Those take real keyboard focus, so don't touch the keyboard or mouse while they run. Hooks do not download semantic models. Install them explicitly when testing semantic-search changes; missing optional model or desktop capabilities are reported as skips.
 
 The live-focus sticky-note checks wait for initial on-screen layout before recording the caret and scroll baseline, and report draft, caret and scroll failures separately.
+Recovery smoke checks wait for each failed commit's feedback before staging another capture, so asynchronous notifications cannot consume the next fixture.
 
 On macOS, local checks build Swift targets and run core, capture, overlay, model-install and embedding checks, plus path-safety checks. The build uses a temporary SwiftPM `--scratch-path` that is deleted on exit, on failure and on Ctrl-C, so the worktree's `.build` is never created. Every run is a fresh build, but SwiftPM's shared dependency cache is still used. The functional `CoreChecks --skip-performance` invocation leaves the benchmark to the separate performance step. On Windows, they restore locked dependencies, build Release with warnings as errors, and run functional tests serially. The separate performance step reuses that build for the .NET index and bundled OCR workloads. Set `CAPTUREAPP_RUN_INTERACTIVE_TESTS=1` on an interactive desktop to include clipboard hold-time checks.
 
