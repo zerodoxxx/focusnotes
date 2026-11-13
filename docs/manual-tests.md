@@ -425,6 +425,26 @@ Close with esc after testing; the live fixture includes sample Browse rows.
    click-away and Space changes. Opening another focusnotes panel, save, esc/✕, Open as Note and
    app quit still close the note.
 
+# Source links in captures (macOS)
+
+Use a disposable vault and distinctive text for each capture. Use Safari for the
+browser steps and Skim or Preview for the PDF steps.
+
+1. **Browser passage:** In Safari, open a long article and select a distinctive
+   sentence. Press Option–Shift–C, open the new note, and confirm the `Source` link
+   ends with `#:~:text=`. Click the link: Safari must scroll to the passage. Repeat
+   with an area capture of the same page and confirm its link has no `#:~:text=`.
+2. **PDF source:** Open a PDF in Skim (or Preview) so the window title shows a page,
+   such as “Paper.pdf (page 12 of 40)”. Capture a text selection and an area. Confirm
+   each note has `[Source](<file:///…/Paper.pdf>)` followed by ` · page 12`. Click
+   the link: the document opens. The page number is for reference only, because
+   macOS readers do not open a file link at a page. Repeat with a window title that
+   shows no page: the link must have no ` · page` suffix.
+3. **Attach a link later:** Pick a capture from before this change that has only an
+   app or window heading and no Source link. Paste `[Source](<https://example.com/paper>)`
+   as the first line under its `<!-- capture:… -->` marker and save. Confirm search
+   still shows that capture normally.
+
 # Windows release device checks
 
 The published Windows edition includes x64 and arm64 installers. These device checks provide release-grade validation

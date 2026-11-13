@@ -12,6 +12,8 @@ public struct ParsedBlock: Sendable, Equatable {
     public let windowTitle: String?
     public let body: String
     public let assetPath: String?
+    public var sourceURL: String?
+    public var sourcePage: Int?
 }
 
 public struct ParsedNote: Sendable, Equatable {
@@ -51,10 +53,11 @@ public enum NoteParser {
                 continue
             }
             let asset = boundary.isNote ? nil : imagePath(body, notePath: notePath, assetRootURL: assetRootURL)
+            let source = boundary.isNote ? nil : sourceLink(in: lines[bodyStart..<bodyEnd])
             blocks.append(ParsedBlock(
                 captureID: boundary.id, kind: boundary.isNote ? .note : (asset == nil ? .text : .image),
                 createdAt: boundary.date, sourceApp: boundary.app, windowTitle: boundary.window,
-                body: body, assetPath: asset
+                body: body, assetPath: asset, sourceURL: source?.url, sourcePage: source?.page
             ))
         }
         // A failed append may leave an earlier fragment with the same identity.
@@ -231,15 +234,43 @@ public enum NoteParser {
         return (date, app, window)
     }
 
+    /// Only the first non-blank line of a capture can be its source link, as `CaptureFormat.block` writes it.
+    private static func sourceLink(in lines: ArraySlice<String>) -> (url: String, page: Int?)? {
+        guard let line = lines.first(where: { !isBlankLine($0) }), line.hasPrefix(CaptureFormat.sourceLinkPrefix) else { return nil }
+        let afterPrefix = line.dropFirst(CaptureFormat.sourceLinkPrefix.count)
+        guard let close = afterPrefix.range(of: CaptureFormat.sourceLinkSuffix) else { return nil }
+        let url = String(afterPrefix[..<close.lowerBound])
+        guard !url.isEmpty else { return nil }
+        return (url, sourcePage(afterPrefix[close.upperBound...]))
+    }
+
+    private static func sourcePage(_ suffix: Substring) -> Int? {
+        var remainder = suffix
+        while remainder.last?.isWhitespace == true { remainder.removeLast() }
+        let prefix = " \(CaptureFormat.headerSeparator) page "
+        guard remainder.hasPrefix(prefix) else { return nil }
+        // Digits are checked as ASCII bytes because Character ranges would admit combining marks.
+        let digits = remainder.dropFirst(prefix.count)
+        guard (1...6).contains(digits.utf8.count), digits.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              let page = Int(digits), page >= 1 else { return nil }
+        return page
+    }
+
+    private static func isPDFFileURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value), components.scheme?.lowercased() == "file" else { return false }
+        return components.path.lowercased().hasSuffix(".pdf")
+    }
+
     private static func imagePath(_ body: String, notePath: String, assetRootURL: URL?) -> String? {
         var imageBody = body
         let sourcePrefix = CaptureFormat.sourceLinkPrefix
         if body.hasPrefix(sourcePrefix), let separator = body.range(of: "\n\n") {
             let sourceLine = String(body[..<separator.lowerBound])
             let candidate = body[separator.upperBound...]
-            if !sourceLine.contains("\n"), !candidate.contains("\n"), sourceLine.hasSuffix(CaptureFormat.sourceLinkSuffix) {
-                let sourceURL = String(sourceLine.dropFirst(sourcePrefix.count).dropLast(CaptureFormat.sourceLinkSuffix.count))
-                if let canonicalSourceLine = CaptureFormat.sourceLink(for: CaptureSource(url: sourceURL)), canonicalSourceLine == sourceLine {
+            if !sourceLine.contains("\n"), !candidate.contains("\n"), let source = sourceLink(in: [sourceLine][...]) {
+                // The formatter writes file links only for PDF documents, so only those rebuild as document sources.
+                let canonicalSource = isPDFFileURL(source.url) ? CaptureSource(documentURL: source.url, page: source.page) : CaptureSource(url: source.url)
+                if let canonicalSourceLine = CaptureFormat.sourceLink(for: canonicalSource), canonicalSourceLine == sourceLine {
                     imageBody = String(candidate)
                 }
             }

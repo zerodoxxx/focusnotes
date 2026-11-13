@@ -640,6 +640,15 @@ private func checkSourceGrouping(vault: Vault, calendar: Calendar, capture: Capt
     try await writer.appendIfMissing(capture, to: Destination(url: legacyNote, title: "Legacy", kind: .note))
     let legacyAfter = try checkRead(legacyNote)
     try require(legacyAfter == legacy, "upgraded replay must not duplicate a complete legacy capture")
+    let webReplay = Capture(id: UUID(), createdAt: capture.createdAt, content: .text("Replay selected passage"),
+                            source: CaptureSource(appName: "Safari", url: "https://e.com/a"))
+    let webReplayNote = vault.root.appendingPathComponent("Legacy web replay.md")
+    let legacyWebBlock = "### Safari\n\(checkCaptureMarker(webReplay.id)) at=2026-10-13T14:30:00+05:30 app=\"Safari\" -->\n\n[Source](<https://e.com/a>)\n\nReplay selected passage\n"
+    let legacyWebBytes = Data(("# Legacy web replay\n\n" + legacyWebBlock).utf8)
+    try checkWrite(String(decoding: legacyWebBytes, as: UTF8.self), to: webReplayNote)
+    try await writer.appendIfMissing(webReplay, to: Destination(url: webReplayNote, title: "Legacy web replay", kind: .note))
+    let replayedWebBytes = try Data(contentsOf: webReplayNote)
+    try require(replayedWebBytes == legacyWebBytes, "replaying a legacy web text capture must preserve its bytes without duplication")
     let damaged = vault.root.appendingPathComponent("Interrupted metadata.md")
     let metadataFragment = "# Interrupted\n\n### Safari\n" + checkCaptureMarker(capture.id) + " at=2026-10"
     try checkWrite(metadataFragment, to: damaged)

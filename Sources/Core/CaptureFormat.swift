@@ -95,6 +95,19 @@ public enum CaptureFormat {
     /// Angle brackets keep Markdown syntax out of the destination; encoded parentheses
     /// also keep the editor's current link recognizer from ending the destination early.
     static func sourceLink(for source: CaptureSource) -> String? {
+        if let web = webSourceLink(for: source) { return web }
+        guard let value = source.documentURL, !value.isEmpty,
+              value.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) && $0.properties.generalCategory != .control && $0.properties.generalCategory != .format && $0.properties.generalCategory != .lineSeparator && $0.properties.generalCategory != .paragraphSeparator }),
+              value.range(of: #"%(?![0-9A-Fa-f]{2})"#, options: .regularExpression) == nil,
+              let components = URLComponents(string: value), components.scheme?.lowercased() == "file",
+              components.host == nil || components.host == "" || components.host?.lowercased() == "localhost",
+              !components.path.isEmpty, components.path.hasPrefix("/"), let fileURL = components.url else { return nil }
+        let renderedURL = fileURL.absoluteString.replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+        let suffix = (source.page ?? 0) >= 1 ? " \(headerSeparator) page \(source.page!)" : ""
+        return "\(sourceLinkPrefix)\(renderedURL)\(sourceLinkSuffix)\(suffix)"
+    }
+
+    private static func webSourceLink(for source: CaptureSource) -> String? {
         guard let value = source.url, !value.isEmpty else { return nil }
         let scalars = Array(value.unicodeScalars)
         guard scalars.allSatisfy({
@@ -223,6 +236,34 @@ public enum CaptureFormat {
               let host = components.host, !host.isEmpty,
               components.url != nil else { return nil }
         return "\(sourceLinkPrefix)\(normalized)\(sourceLinkSuffix)"
+    }
+
+    public static func passageSourceURL(_ url: String, selectedText: String) -> String {
+        guard let directive = textDirective(selectedText), let parsed = URL(string: url),
+              let scheme = parsed.scheme?.lowercased(), ["http", "https"].contains(scheme), parsed.host != nil else { return url }
+        let base: String
+        if let range = url.range(of: ":~:") { base = String(url[..<range.lowerBound]) }
+        else { base = url }
+        return base + (base.contains("#") ? ":~:" : "#:~:") + directive
+    }
+
+    private static func textDirective(_ text: String) -> String? {
+        let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let words = normalized.split(separator: " ").map(String.init)
+        guard !words.isEmpty, normalized.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains),
+              !words.contains(where: { $0.count > 80 }) else { return nil }
+        let selection: String
+        if words.count <= 8, normalized.count <= 80 { selection = encodeText(words.joined(separator: " ")) }
+        else if words.count > 8 { selection = encodeText(words.prefix(4).joined(separator: " ")) + "," + encodeText(words.suffix(4).joined(separator: " ")) }
+        else { return nil }
+        return "text=" + selection
+    }
+
+    private static func encodeText(_ text: String) -> String {
+        text.utf8.map { byte -> String in
+            if (65...90).contains(byte) || (97...122).contains(byte) || (48...57).contains(byte) || [46, 95, 126].contains(Int(byte)) { return String(UnicodeScalar(byte)) }
+            return String(format: "%%%02X", byte)
+        }.joined()
     }
 
     public static func sourceHeading(_ source: CaptureSource) -> String {
