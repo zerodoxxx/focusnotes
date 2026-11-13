@@ -1,4 +1,5 @@
 @_spi(Checks) import Core
+import Darwin
 import Foundation
 
 func checkThoughts() async throws {
@@ -83,6 +84,7 @@ func checkThoughts() async throws {
     print("PASS thought 10 unknown unchanged, missing read error, append after rewrite")
     try checkThoughtParsing()
     try await checkThoughtSearch()
+    try await checkThoughtFileMetadata()
 }
 
 func checkThoughtParsing() throws {
@@ -135,4 +137,44 @@ func checkThoughtSearch() async throws {
     try require(hits.count == 1 && hits[0].notePath == "Thought.md",
                 "a word found only in a capture's thought must match that capture")
     print("PASS thought search finds thought-only word")
+}
+
+func checkThoughtFileMetadata() async throws {
+    let calendar = checkCalendar()
+    let date = checkDate(2026, 10, 13, 14, 30)
+    let id = UUID(uuidString: "A1B2C3D4-0000-4000-8000-00000000000F")!
+    let marker = "<!-- capture:\(id.uuidString.lowercased()) at=2026-10-13T14:30:00+05:30 app=\"Safari\" -->"
+    let note = "# Thought\n\n\(marker)\n\nHello body\n"
+    let base = try checkMakeDirectory("thought-metadata")
+    defer { checkRemoveDirectory(base) }
+    let vault = Vault(root: base.appendingPathComponent("Vault", isDirectory: true))
+    try vault.prepare()
+    let writer = NoteWriter(vault: vault, calendar: calendar)
+
+    let bomURL = vault.root.appendingPathComponent("Bom.md")
+    try checkWrite("\u{FEFF}" + note, to: bomURL)
+    try await writer.setThought("Bom thought", forCapture: id, inNoteAt: bomURL, at: date)
+    let bomData = try Data(contentsOf: bomURL)
+    try require(bomData.starts(with: [0xEF, 0xBB, 0xBF]), "setThought dropped the leading BOM")
+    let bomText = try checkRead(bomURL)
+    try require(bomText.contains("Bom thought"), "BOM note lost the inserted thought")
+    print("PASS thought metadata keeps BOM")
+
+    let modeURL = vault.root.appendingPathComponent("Mode.md")
+    try checkWrite(note, to: modeURL)
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: modeURL.path)
+    try await writer.setThought("Mode thought", forCapture: id, inNoteAt: modeURL, at: date)
+    let mode = try FileManager.default.attributesOfItem(atPath: modeURL.path)[.posixPermissions] as? NSNumber
+    try require(mode?.intValue == 0o644, "setThought changed the note mode to \(String(describing: mode))")
+
+    let xattrURL = vault.root.appendingPathComponent("Xattr.md")
+    try checkWrite(note, to: xattrURL)
+    let attribute = "com.example.fn90"
+    let payload: [UInt8] = Array("x".utf8)
+    try require(setxattr(xattrURL.path, attribute, payload, payload.count, 0, 0) == 0, "test could not set the xattr")
+    try await writer.setThought("Xattr thought", forCapture: id, inNoteAt: xattrURL, at: date)
+    var stored = [UInt8](repeating: 0, count: 8)
+    let count = getxattr(xattrURL.path, attribute, &stored, stored.count, 0, 0)
+    try require(count == payload.count && Array(stored.prefix(count)) == payload, "xattr lost after setThought")
+    print("PASS thought metadata keeps mode and xattr")
 }

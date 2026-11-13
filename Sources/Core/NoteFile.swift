@@ -647,13 +647,16 @@ enum NoteFile {
                 guard descriptor >= 0 else { throw posixError() }
                 try withLockedDescriptor(descriptor) {
                     guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
-                    _ = try validateManagedFile(descriptor)
+                    let originalMode = try validateManagedFile(descriptor).st_mode & 0o7777
                     let initial = try fingerprint(descriptor)
                     let original = try readAll(descriptor)
-                    guard let contents = String(data: original, encoding: .utf8) else {
+                    // String(data:encoding:) drops a leading BOM, so strip it here and restore it on write.
+                    let hasBOM = original.starts(with: [0xEF, 0xBB, 0xBF])
+                    guard let contents = String(data: original.dropFirst(hasBOM ? 3 : 0), encoding: .utf8) else {
                         throw CocoaError(.fileReadInapplicableStringEncoding)
                     }
-                    let rewritten = Data(try transform(contents).utf8)
+                    var rewritten = hasBOM ? Data([0xEF, 0xBB, 0xBF]) : Data()
+                    rewritten.append(Data(try transform(contents).utf8))
                     guard rewritten != original else { return }
                     let temporaryName = ".note-\(UUID().uuidString).pending"
                     let temporary = FileLocation(directories: location.directories, name: temporaryName)
@@ -664,6 +667,7 @@ enum NoteFile {
                     try withLockedDescriptor(staged) {
                         _ = try validateManagedFile(staged)
                         try writeAll(rewritten, to: staged)
+                        copyMetadata(from: descriptor, mode: originalMode, to: staged)
                         guard fsync(staged) == 0 else { throw posixError() }
                         beforeWrite?(url)
                         _ = try validateManagedFile(descriptor)
@@ -679,6 +683,19 @@ enum NoteFile {
             } catch let error as POSIXError where error.code == .EAGAIN && attempt < attempts {
                 continue
             }
+        }
+    }
+
+    /// Carries the note's permission bits and extended attributes (Finder tags) onto the staged
+    /// replacement. A failure is logged and skipped so the save still lands.
+    private static func copyMetadata(from original: Int32, mode: mode_t, to staged: Int32) {
+        if fchmod(staged, mode) != 0 {
+            let code = errno
+            logger.error("Note mode was not preserved (errno \(code, privacy: .public))")
+        }
+        if fcopyfile(original, staged, nil, copyfile_flags_t(COPYFILE_XATTR)) != 0 {
+            let code = errno
+            logger.error("Note extended attributes were not preserved (errno \(code, privacy: .public))")
         }
     }
 
