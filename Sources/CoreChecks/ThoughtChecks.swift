@@ -21,7 +21,7 @@ func checkThoughts() async throws {
     try exact(CaptureFormat.thoughtBlock(captureID: id, text: text, createdAt: date, calendar: calendar),
               thought + "\n", "1 exact block")
     let body = "# N\n\n### Safari\n" + marker + "\n\nHello é  "
-    let next = "### Next\n<!-- capture:00000000-0000-4000-8000-000000000002 -->\n\nOther\n"
+    let next = "### Next\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:00+05:30 app=\"\" -->\n\nOther\n"
     let middle = body + "\n\n\n" + next
     let inserted = body + "\n\n" + thought + "\n\n\n" + next
     try exact(set(text, middle), inserted, "2 middle heading")

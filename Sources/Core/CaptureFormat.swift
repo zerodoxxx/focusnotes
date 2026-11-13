@@ -246,24 +246,31 @@ public enum CaptureFormat {
         String(text.dropLast(text.reversed().prefix(while: \.isWhitespace).count))
     }
 
+    /// An unclosed fence in the text is closed so it cannot hide the blocks after the thought.
     public static func thoughtBlock(captureID: UUID, text: String, createdAt: Date, calendar: Calendar) -> String {
-        "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar)) -->\n\(thoughtLabel)\n\n\(noteBody(text))\n"
+        let body = noteBody(text)
+        var fence = FenceState()
+        for line in body.components(separatedBy: "\n") { _ = fence.isVisible(line) }
+        let closing = fence.openFence.map { "\n" + $0 } ?? ""
+        return "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar)) -->\n\(thoughtLabel)\n\n\(body)\(closing)\n"
     }
 
     public static func settingThought(_ text: String?, forCapture id: UUID, in contents: String, at date: Date, calendar: Calendar) -> String? {
-        let lines = contents.components(separatedBy: "\n")
-        let capturePrefix = markerPrefix + id.uuidString.lowercased()
-        guard let marker = lines.indices.reversed().first(where: { lines[$0].hasPrefix(capturePrefix) }) else { return nil }
-        let next = ((marker + 1)..<lines.count).first { index in
-            lines[index].hasPrefix(markerPrefix) || lines[index].hasPrefix(noteMarkerPrefix) || lines[index].hasPrefix(subheadingMarkerPrefix)
-        } ?? lines.count
+        // Probe lines drop one trailing CR so CRLF notes match the parser; splicing uses the raw lines.
+        let raw = contents.components(separatedBy: "\n")
+        let lines = raw.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let boundaries = NoteParser.boundaries(in: lines, start: NoteParser.contentStart(lines), calendar: calendar)
+        guard let position = boundaries.lastIndex(where: { $0.id == id && !$0.isNote }) else { return nil }
+        let marker = boundaries[position].marker
+        let following = boundaries.indices.contains(position + 1) ? boundaries[position + 1] : nil
+        let next = following?.line ?? lines.count
         var contentEnd = next
-        if next < lines.count, contentEnd > marker + 1,
-           lines[contentEnd - 1].hasPrefix("### ") || lines[contentEnd - 1].hasPrefix("## ") { contentEnd -= 1 }
         while contentEnd > marker + 1 && lines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty { contentEnd -= 1 }
         let thoughtPrefix = thoughtMarkerPrefix + id.uuidString.lowercased()
         let existing = (marker..<contentEnd).first { lines[$0].hasPrefix(thoughtPrefix) }
-        let cleaned = text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        // Editors may hand back CRLF text; the note's own line ending is applied below.
+        let normalized = text?.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let cleaned = normalized.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         guard cleaned != nil || existing != nil else { return contents }
         var bodyEnd = existing ?? contentEnd
         while bodyEnd > marker + 1 && lines[bodyEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty {
@@ -271,16 +278,28 @@ public enum CaptureFormat {
         }
         // Edit between line endings, leaving the original suffix untouched.
         func endOffset(_ index: Int) -> Int {
-            lines[..<index].reduce(0) { $0 + $1.utf8.count + 1 } - 1
+            raw[..<index].reduce(0) { $0 + $1.utf8.count + 1 } - 1 - (raw[index - 1].hasSuffix("\r") ? 1 : 0)
         }
+        let newline = raw[marker].hasSuffix("\r") ? "\r\n" : "\n"
         let startOffset = endOffset(bodyEnd)
         let endOffset = endOffset(contentEnd)
         let bytes = Array(contents.utf8)
         let replacement = cleaned.map {
-            "\n\n" + thoughtBlock(captureID: id, text: $0, createdAt: date, calendar: calendar).dropLast()
+            newline + newline + thoughtBlock(captureID: id, text: $0, createdAt: date, calendar: calendar).dropLast()
+                .replacingOccurrences(of: "\n", with: newline)
         } ?? ""
-        return String(decoding: bytes[..<startOffset], as: UTF8.self)
-            + replacement + String(decoding: bytes[endOffset...], as: UTF8.self)
+        // A following capture that shares this capture's heading gets it repeated, so the
+        // excerpt stays visibly separate from the thought and keeps its parsed source.
+        var heading = ""
+        var headingOffset = bytes.count
+        if cleaned != nil, let following, following.id != nil, !following.isNote,
+           following.line == following.marker, let source = following.source {
+            heading = (contentEnd < next ? "" : newline) + sourceHeadingPrefix + source + newline
+            headingOffset = raw[..<next].reduce(0) { $0 + $1.utf8.count + 1 }
+        }
+        return String(decoding: bytes[..<startOffset], as: UTF8.self) + replacement
+            + String(decoding: bytes[endOffset..<headingOffset], as: UTF8.self)
+            + heading + String(decoding: bytes[headingOffset...], as: UTF8.self)
     }
 
     public static func cleanSubheading(_ text: String) -> String {
@@ -316,6 +335,9 @@ public enum CaptureFormat {
     /// Shared by full parsing and incremental append source grouping.
     struct FenceState {
         private var fence: (Character, Int)?
+
+        /// The shortest line that closes the open fence, if any.
+        var openFence: String? { fence.map { String(repeating: $0.0, count: $0.1) } }
 
         mutating func isVisible(_ line: String) -> Bool {
             let indentation = line.prefix(while: { $0 == " " }).count

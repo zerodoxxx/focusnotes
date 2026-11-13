@@ -18,7 +18,10 @@ public static class NoteParser
 {
     private const int ChunkLength = 2000;
     private static readonly string NoteMarkerPattern = "^" + Regex.Escape(CaptureFormat.NoteMarkerPrefix) + "([0-9a-fA-F-]{36}) at=(.+)" + Regex.Escape(CaptureFormat.MarkerSuffix) + "$";
-    private sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
+    /// <summary>The first line after the note's <c># </c> title; a leading BOM is ignored.</summary>
+    internal static int ContentStart(string[] lines) => lines[0].TrimStart('\uFEFF').StartsWith("# ", StringComparison.Ordinal) ? 1 : 0;
+    /// <summary>Shared with the thought writer so edits use the parser's block boundaries.</summary>
+    internal sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
     private sealed record Marker(Guid Id, DateTimeOffset? Date, string? App);
     public static ParsedNote Parse(string contents, string notePath, string titleFallback, TimeZoneInfo timeZone, string? assetRootUrl = null)
     {
@@ -85,7 +88,7 @@ public static class NoteParser
         return new(title, filtered);
     }
 
-    private static List<Boundary> Boundaries(string[] lines, int start, TimeZoneInfo zone)
+    internal static List<Boundary> Boundaries(string[] lines, int start, TimeZoneInfo zone)
     {
         var visible = CaptureFormat.UnfencedLines(lines).ToHashSet();
         string? source = null;

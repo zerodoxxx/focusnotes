@@ -194,30 +194,51 @@ public static class CaptureFormat
     }
 
     public static string NoteBody(string text) => text.TrimEnd();
-    public static string ThoughtBlock(Guid captureId, string text, DateTimeOffset createdAt, TimeZoneInfo timeZone) =>
-        $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{NoteBody(text)}\n";
+    /// <summary>An unclosed fence in the text is closed so it cannot hide the blocks after the thought.</summary>
+    public static string ThoughtBlock(Guid captureId, string text, DateTimeOffset createdAt, TimeZoneInfo timeZone)
+    {
+        var body = NoteBody(text);
+        var fence = new FenceState();
+        foreach (var line in body.Split('\n')) fence.Advance(line);
+        var closing = fence.OpenFence is { } open ? "\n" + open : "";
+        return $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{body}{closing}\n";
+    }
 
     public static string? SettingThought(string? text, Guid captureId, string contents, DateTimeOffset at, TimeZoneInfo timeZone)
     {
-        var lines = contents.Split('\n');
-        var marker = Array.FindLastIndex(lines, line => line.StartsWith(MarkerPrefix + captureId.ToString("D"), StringComparison.Ordinal));
-        if (marker < 0) return null;
-        var next = Array.FindIndex(lines, marker + 1, line => line.StartsWith(MarkerPrefix, StringComparison.Ordinal)
-            || line.StartsWith(NoteMarkerPrefix, StringComparison.Ordinal) || line.StartsWith(SubheadingMarkerPrefix, StringComparison.Ordinal));
-        if (next < 0) next = lines.Length;
+        // Probe lines drop one trailing CR so CRLF notes match the parser; splicing uses the raw lines.
+        var raw = contents.Split('\n');
+        var lines = raw.Select(line => line.EndsWith('\r') ? line[..^1] : line).ToArray();
+        var boundaries = Index.NoteParser.Boundaries(lines, Index.NoteParser.ContentStart(lines), timeZone);
+        var position = boundaries.FindLastIndex(b => b.Id == captureId && !b.IsNote);
+        if (position < 0) return null;
+        var marker = boundaries[position].Marker;
+        var following = position + 1 < boundaries.Count ? boundaries[position + 1] : null;
+        var next = following?.Line ?? lines.Length;
         var contentEnd = next;
-        if (next < lines.Length && contentEnd > marker + 1
-            && (lines[contentEnd - 1].StartsWith("### ", StringComparison.Ordinal) || lines[contentEnd - 1].StartsWith("## ", StringComparison.Ordinal))) contentEnd--;
         static bool Blank(string line) => line.All(c => c is '\t' or '\u200b' || char.GetUnicodeCategory(c) == UnicodeCategory.SpaceSeparator);
         while (contentEnd > marker + 1 && Blank(lines[contentEnd - 1])) contentEnd--;
         var existing = Array.FindIndex(lines, marker, contentEnd - marker, line => line.StartsWith(ThoughtMarkerPrefix + captureId.ToString("D"), StringComparison.Ordinal));
+        // Editors (WPF TextBox) hand back CRLF text; the note's own line ending is applied below.
+        text = text?.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var cleaned = text is null || text.All(c => char.IsWhiteSpace(c) || c == '\u200b') ? null : text;
         if (cleaned is null && existing < 0) return contents;
         var bodyEnd = existing < 0 ? contentEnd : existing;
         while (bodyEnd > marker + 1 && Blank(lines[bodyEnd - 1])) bodyEnd--;
-        int EndOffset(int index) => lines.Take(index).Sum(line => line.Length + 1) - 1;
-        var replacement = cleaned is null ? "" : "\n\n" + ThoughtBlock(captureId, cleaned, at, timeZone)[..^1];
-        return contents[..EndOffset(bodyEnd)] + replacement + contents[EndOffset(contentEnd)..];
+        int StartOffset(int index) => raw.Take(index).Sum(line => line.Length + 1);
+        int EndOffset(int index) => StartOffset(index) - 1 - (raw[index - 1].EndsWith('\r') ? 1 : 0);
+        var newline = raw[marker].EndsWith('\r') ? "\r\n" : "\n";
+        var replacement = cleaned is null ? "" : newline + newline + ThoughtBlock(captureId, cleaned, at, timeZone)[..^1].Replace("\n", newline, StringComparison.Ordinal);
+        // A following capture that shares this capture's heading gets it repeated, so the
+        // excerpt stays visibly separate from the thought and keeps its parsed source.
+        var heading = "";
+        var headingOffset = contents.Length;
+        if (cleaned is not null && following is { Id: not null, IsNote: false, Source: { } source } && following.Line == following.Marker)
+        {
+            heading = (contentEnd < next ? "" : newline) + "### " + source + newline;
+            headingOffset = StartOffset(next);
+        }
+        return contents[..EndOffset(bodyEnd)] + replacement + contents[EndOffset(contentEnd)..headingOffset] + heading + contents[headingOffset..];
     }
 
     public static string CleanSubheading(string text) => NoteTitle.CleanTitle(NoteTitle.CleanTitle(text).TrimStart('#', ' ', '\t', '\r', '\n'));
@@ -264,6 +285,8 @@ public static class CaptureFormat
     {
         private char fence;
         private int length;
+        /// <summary>The shortest line that closes the open fence, if any.</summary>
+        public string? OpenFence => length > 0 ? new string(fence, length) : null;
         public FenceState Copy() => new()
         {
             fence = fence,

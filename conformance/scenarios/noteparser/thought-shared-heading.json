@@ -1,0 +1,49 @@
+{
+  "area" : "noteparser",
+  "description" : "A heading repeated after a thought keeps the following capture's source.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "first",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : null,
+            "thought" : "changed",
+            "windowTitle" : "Docs page"
+          },
+          {
+            "assetPath" : null,
+            "body" : "second",
+            "createdAt" : "2026-10-13T09:01:42Z",
+            "id" : "00000000-0000-4000-8000-000000000002",
+            "kind" : "text",
+            "sourceApp" : null,
+            "windowTitle" : "Docs page"
+          }
+        ],
+        "title" : "Note"
+      }
+    ]
+  },
+  "id" : "thought-shared-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Note\n\n### Docs page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\nchanged\n\n### Docs page\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

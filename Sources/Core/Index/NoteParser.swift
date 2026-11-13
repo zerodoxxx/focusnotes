@@ -77,7 +77,14 @@ public enum NoteParser {
         return ParsedNote(title: title, blocks: blocks)
     }
 
-    private struct Boundary {
+    /// The first line after the note's `# ` title; a leading BOM is ignored.
+    static func contentStart(_ lines: [String]) -> Int {
+        let first = lines[0].hasPrefix("\u{FEFF}") ? String(lines[0].dropFirst()) : lines[0]
+        return first.hasPrefix("# ") ? 1 : 0
+    }
+
+    /// Shared with the thought writer so edits use the parser's block boundaries.
+    struct Boundary {
         let line: Int
         let marker: Int
         let id: UUID?
@@ -88,7 +95,7 @@ public enum NoteParser {
         var isNote = false
     }
 
-    private static func boundaries(in lines: [String], start: Int, calendar: Calendar) -> [Boundary] {
+    static func boundaries(in lines: [String], start: Int, calendar: Calendar) -> [Boundary] {
         let visible = Set(CaptureFormat.unfencedLines(lines))
         var source: String?
         var result: [Boundary] = []

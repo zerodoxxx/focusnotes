@@ -8,7 +8,7 @@ public sealed class ThoughtTests
     private static readonly Guid Id = Guid.Parse("a1b2c3d4-0000-4000-8000-00000000000f");
     private const string Marker = "<!-- capture:a1b2c3d4-0000-4000-8000-00000000000f at=2026-10-13T14:30:00+05:30 app=\"Safari\" -->";
     private const string Body = "# N\n\n### Safari\n" + Marker + "\n\nHello é  ";
-    private const string Next = "### Next\n<!-- capture:00000000-0000-4000-8000-000000000002 -->\n\nOther\n";
+    private const string Next = "### Next\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:00+05:30 app=\"\" -->\n\nOther\n";
     private static string? Set(string? text, string contents, Guid? id = null) =>
         CaptureFormat.SettingThought(text, id ?? Id, contents, CheckVault.Now, CheckVault.Zone);
 

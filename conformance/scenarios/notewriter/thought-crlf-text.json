@@ -1,0 +1,28 @@
+{
+  "area" : "notewriter",
+  "description" : "A thought with CRLF line breaks written into a CRLF note keeps only CRLF line endings.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\r\n\r\n### Docs page\r\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\r\n\r\nfirst\r\n\r\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\r\n**My thought**\r\n\r\nfirst\r\nsecond\r\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "thought-crlf-text",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\r\n\r\n### Docs page\r\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\r\n\r\nfirst\r\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "first\r\nsecond"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}
