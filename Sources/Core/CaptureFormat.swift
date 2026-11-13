@@ -255,6 +255,15 @@ public enum CaptureFormat {
         return "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar)) -->\n\(thoughtLabel)\n\n\(body)\(closing)\n"
     }
 
+    static func thoughtMarker(in lines: [String], range: Range<Int>, captureID: UUID) -> Int? {
+        let prefix = thoughtMarkerPrefix + captureID.uuidString.lowercased() + " at="
+        return unfencedLines(Array(lines[..<range.upperBound])).first { index in
+            guard range.contains(index), lines[index].hasPrefix(prefix), lines[index].hasSuffix(markerSuffix) else { return false }
+            let stamp = lines[index].dropFirst(prefix.count).dropLast(markerSuffix.count)
+            return !stamp.isEmpty && !stamp.contains(where: { $0.isWhitespace || $0 == "<" || $0 == ">" })
+        }
+    }
+
     public static func settingThought(_ text: String?, forCapture id: UUID, in contents: String, at date: Date, calendar: Calendar) -> String? {
         // Probe lines drop one trailing CR so CRLF notes match the parser; splicing uses the raw lines.
         let raw = contents.components(separatedBy: "\n")
@@ -266,8 +275,7 @@ public enum CaptureFormat {
         let next = following?.line ?? lines.count
         var contentEnd = next
         while contentEnd > marker + 1 && lines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty { contentEnd -= 1 }
-        let thoughtPrefix = thoughtMarkerPrefix + id.uuidString.lowercased()
-        let existing = (marker..<contentEnd).first { lines[$0].hasPrefix(thoughtPrefix) }
+        let existing = thoughtMarker(in: lines, range: marker..<contentEnd, captureID: id)
         // Editors may hand back CRLF text; the note's own line ending is applied below.
         let normalized = text?.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let cleaned = normalized.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }

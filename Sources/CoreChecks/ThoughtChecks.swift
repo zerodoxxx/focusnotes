@@ -50,6 +50,15 @@ func checkThoughts() async throws {
     try exact(set(text, body + "\n \n" + subheading), body + "\n\n" + thought + "\n \n" + subheading,
               "subheading and whitespace separator")
 
+    for fenced in [false, true] {
+        let example = "<!-- thought:\(id.uuidString.lowercased())" + (fenced ? " at=old -->" : " is an example -->")
+        let excerpt = "start\n" + (fenced ? "```\n" : "") + example + "\nrest" + (fenced ? "\n```" : "")
+        let original = marker + "\n\n" + excerpt + "\n"
+        let parsed = NoteParser.parse(contents: original, notePath: "N.md", titleFallback: "N", calendar: calendar)
+        try require(parsed.blocks.first?.body == excerpt, "marker example must remain capture text")
+        try exact(set(nil, set("reflection", original)!), original, "marker example round trip")
+    }
+
     let base = try checkMakeDirectory("thought")
     defer { checkRemoveDirectory(base) }
     let root = base.appendingPathComponent("Vault", isDirectory: true)

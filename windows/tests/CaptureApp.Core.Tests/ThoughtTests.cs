@@ -12,6 +12,18 @@ public sealed class ThoughtTests
     private static string? Set(string? text, string contents, Guid? id = null) =>
         CaptureFormat.SettingThought(text, id ?? Id, contents, CheckVault.Now, CheckVault.Zone);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MarkerExamplesRemainCaptureText(bool fenced)
+    {
+        var example = "<!-- thought:" + Id.ToString("D") + (fenced ? " at=old -->" : " is an example -->");
+        var excerpt = "start\n" + (fenced ? "```\n" : "") + example + "\nrest" + (fenced ? "\n```" : "");
+        var original = Marker + "\n\n" + excerpt + "\n";
+        Assert.Equal(excerpt, Assert.Single(NoteParser.Parse(original, "N.md", "N", CheckVault.Zone).Blocks).Body);
+        Assert.Equal(original, Set(null, Set("reflection", original)!));
+    }
+
     [Fact]
     public void ExactBlockAndMiddleInsertionPreserveSuffixAndRoundTrip()
     {

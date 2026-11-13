@@ -204,6 +204,20 @@ public static class CaptureFormat
         return $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{body}{closing}\n";
     }
 
+    internal static int FindThoughtMarker(string[] lines, int start, int end, Guid captureId)
+    {
+        var prefix = ThoughtMarkerPrefix + captureId.ToString("D") + " at=";
+        var fence = new FenceState();
+        for (var index = 0; index < end; index++)
+        {
+            var line = lines[index];
+            if (!fence.Advance(line) || index < start || !line.StartsWith(prefix, StringComparison.Ordinal) || !line.EndsWith(MarkerSuffix, StringComparison.Ordinal)) continue;
+            var stamp = line[prefix.Length..^MarkerSuffix.Length];
+            if (stamp.Length > 0 && !stamp.Any(c => char.IsWhiteSpace(c) || c is '<' or '>')) return index;
+        }
+        return -1;
+    }
+
     public static string? SettingThought(string? text, Guid captureId, string contents, DateTimeOffset at, TimeZoneInfo timeZone)
     {
         // Probe lines drop one trailing CR so CRLF notes match the parser; splicing uses the raw lines.
@@ -218,7 +232,7 @@ public static class CaptureFormat
         var contentEnd = next;
         static bool Blank(string line) => line.All(c => c is '\t' or '\u200b' || char.GetUnicodeCategory(c) == UnicodeCategory.SpaceSeparator);
         while (contentEnd > marker + 1 && Blank(lines[contentEnd - 1])) contentEnd--;
-        var existing = Array.FindIndex(lines, marker, contentEnd - marker, line => line.StartsWith(ThoughtMarkerPrefix + captureId.ToString("D"), StringComparison.Ordinal));
+        var existing = FindThoughtMarker(lines, marker, contentEnd, captureId);
         // Editors (WPF TextBox) hand back CRLF text; the note's own line ending is applied below.
         text = text?.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var cleaned = text is null || text.All(c => char.IsWhiteSpace(c) || c == '\u200b') ? null : text;

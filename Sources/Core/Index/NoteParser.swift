@@ -47,7 +47,7 @@ public enum NoteParser {
             while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }
             var thought: String?
             if let id = boundary.id, !boundary.isNote,
-               let thoughtLine = (bodyStart..<bodyEnd).first(where: { lines[$0].hasPrefix(CaptureFormat.thoughtMarkerPrefix + id.uuidString.lowercased()) }) {
+               let thoughtLine = CaptureFormat.thoughtMarker(in: lines, range: bodyStart..<bodyEnd, captureID: id) {
                 thought = thoughtText(lines[(thoughtLine + 1)..<bodyEnd])
                 bodyEnd = thoughtLine
                 while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }

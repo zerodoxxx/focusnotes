@@ -60,8 +60,7 @@ public static class NoteParser
             string? thought = null;
             if (b.Id is { } id && !b.IsNote)
             {
-                var thoughtLine = Array.FindIndex(lines, from, end - from,
-                    line => line.StartsWith(CaptureFormat.ThoughtMarkerPrefix + id.ToString("D"), StringComparison.Ordinal));
+                var thoughtLine = CaptureFormat.FindThoughtMarker(lines, from, end, id);
                 if (thoughtLine >= 0)
                 {
                     var thoughtLines = lines[(thoughtLine + 1)..end].SkipWhile(string.IsNullOrWhiteSpace).ToList();
