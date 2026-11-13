@@ -1,0 +1,28 @@
+{
+  "area" : "notewriter",
+  "description" : "A thought inserted into a middle capture stays before the next heading.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n\n<!-- thought:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\nmiddle thought\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000003 at=2026-10-13T14:32:42+05:30 app=\"\" -->\n\nthird\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "thought-insert-middle",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000003 at=2026-10-13T14:32:42+05:30 app=\"\" -->\n\nthird\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000002",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "middle thought"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

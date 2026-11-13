@@ -63,8 +63,8 @@ private extension Dictionary where Key == String, Value == FixtureValue {
 private let conformanceOperations: [String: Set<String>] = [
     "notetitle": ["cleanTitle", "matchKey", "fileStem", "pathName"],
     "router": ["route"],
-    "captureformat": ["block", "sourceHeading", "noteHeader", "noteBody", "cleanSubheading"],
-    "notewriter": ["append", "appendIfMissing"],
+    "captureformat": ["block", "thoughtBlock", "sourceHeading", "noteHeader", "noteBody", "cleanSubheading"],
+    "notewriter": ["append", "appendIfMissing", "setThought"],
     "vault-naming": ["pathName", "resolve", "unique", "list"],
     "sessionstore": ["start", "current", "end", "reload", "persisted", "writeState", "resume"],
     "noteparser": ["parse"],
@@ -112,6 +112,10 @@ private func fixtureError(_ error: any Error) throws -> FixtureValue {
         }
     case let error as CocoaError where error.code == .fileWriteInvalidFileName:
         kind = "invalidFileName"
+    case let error as ThoughtWriteError:
+        kind = switch error {
+        case .captureNotFound: "captureNotFound"
+        }
     default: throw error
     }
     return .object(["error": .string(kind)])
@@ -306,6 +310,13 @@ private final class ConformanceExecution {
             return .string(CaptureFormat.block(for: try capture(op), noteRelativeDir: op["dir"]?.text ?? "",
                                                calendar: calendar, includeSourceHeading: op["includeSourceHeading"]?.flag ?? true,
                                                assetPathPrefix: op["assetPathPrefix"]?.text))
+        case "thoughtBlock":
+            guard let id = UUID(uuidString: try op.string("captureID")) else { throw CheckFailure.failed("Invalid capture UUID") }
+            return .string(CaptureFormat.thoughtBlock(captureID: id, text: try op.string("text"), createdAt: clock, calendar: calendar))
+        case "setThought":
+            guard let id = UUID(uuidString: try op.string("captureID")) else { throw CheckFailure.failed("Invalid capture UUID") }
+            try await writer.setThought(op["text"]?.text, forCapture: id, inNoteAt: url(op.string("path")), at: clock)
+            return .null
         case "append", "appendIfMissing":
             let destination = Destination(url: try url(op.string("path")), title: try op.string("title"), kind: .note)
             if name == "append" {
@@ -336,10 +347,14 @@ private final class ConformanceExecution {
             let parsed = NoteParser.parse(contents: contents, notePath: notePath,
                                           titleFallback: op["fallback"]?.text ?? "Fallback", calendar: calendar)
             return .object(["title": .string(parsed.title), "blocks": .array(parsed.blocks.map { block in
-                .object(["id": fixtureString(block.captureID?.uuidString.lowercased()), "kind": .string(block.kind.rawValue),
-                         "createdAt": fixtureStamp(block.createdAt), "sourceApp": fixtureString(block.sourceApp),
-                         "windowTitle": fixtureString(block.windowTitle), "body": .string(block.body),
-                         "assetPath": fixtureString(block.assetPath)])
+                var fields: [String: FixtureValue] = ["id": fixtureString(block.captureID?.uuidString.lowercased()),
+                                                      "kind": .string(block.kind.rawValue),
+                                                      "createdAt": fixtureStamp(block.createdAt), "sourceApp": fixtureString(block.sourceApp),
+                                                      "windowTitle": fixtureString(block.windowTitle), "body": .string(block.body),
+                                                      "assetPath": fixtureString(block.assetPath)]
+                // Absent unless present, so blocks without a thought keep their existing fixture bytes.
+                if let thought = block.thought { fields["thought"] = .string(thought) }
+                return .object(fields)
             })])
         case "sync":
             let stats = try await searchIndex().sync()

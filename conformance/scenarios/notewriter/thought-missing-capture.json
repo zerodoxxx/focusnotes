@@ -1,0 +1,30 @@
+{
+  "area" : "notewriter",
+  "description" : "An unknown capture id reports captureNotFound and leaves the note unchanged.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n"
+    },
+    "results" : [
+      {
+        "error" : "captureNotFound"
+      }
+    ]
+  },
+  "id" : "thought-missing-capture",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000009",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "lost thought"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}
