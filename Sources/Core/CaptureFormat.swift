@@ -3,6 +3,8 @@ import Foundation
 /// Markdown format for captures. This is a file-format contract: changes break existing notes.
 public enum CaptureFormat {
     public static let markerPrefix = "<!-- capture:"
+    public static let thoughtMarkerPrefix = "<!-- thought:"
+    public static let thoughtLabel = "**My thought**"
     public static let markerSuffix = " -->"
     @_spi(Checks) public static let noteMarkerPrefix = "<!-- note:"
     static let subheadingMarkerPrefix = "<!-- subheading:"
@@ -242,6 +244,43 @@ public enum CaptureFormat {
     /// Preserve every internal byte, including leading whitespace and Markdown hard breaks.
     public static func noteBody(_ text: String) -> String {
         String(text.dropLast(text.reversed().prefix(while: \.isWhitespace).count))
+    }
+
+    public static func thoughtBlock(captureID: UUID, text: String, createdAt: Date, calendar: Calendar) -> String {
+        "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar)) -->\n\(thoughtLabel)\n\n\(noteBody(text))\n"
+    }
+
+    public static func settingThought(_ text: String?, forCapture id: UUID, in contents: String, at date: Date, calendar: Calendar) -> String? {
+        let lines = contents.components(separatedBy: "\n")
+        let capturePrefix = markerPrefix + id.uuidString.lowercased()
+        guard let marker = lines.indices.reversed().first(where: { lines[$0].hasPrefix(capturePrefix) }) else { return nil }
+        let next = ((marker + 1)..<lines.count).first { index in
+            lines[index].hasPrefix(markerPrefix) || lines[index].hasPrefix(noteMarkerPrefix) || lines[index].hasPrefix(subheadingMarkerPrefix)
+        } ?? lines.count
+        var contentEnd = next
+        if next < lines.count, contentEnd > marker + 1,
+           lines[contentEnd - 1].hasPrefix("### ") || lines[contentEnd - 1].hasPrefix("## ") { contentEnd -= 1 }
+        while contentEnd > marker + 1 && lines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty { contentEnd -= 1 }
+        let thoughtPrefix = thoughtMarkerPrefix + id.uuidString.lowercased()
+        let existing = (marker..<contentEnd).first { lines[$0].hasPrefix(thoughtPrefix) }
+        let cleaned = text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        guard cleaned != nil || existing != nil else { return contents }
+        var bodyEnd = existing ?? contentEnd
+        while bodyEnd > marker + 1 && lines[bodyEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            bodyEnd -= 1
+        }
+        // Edit between line endings, leaving the original suffix untouched.
+        func endOffset(_ index: Int) -> Int {
+            lines[..<index].reduce(0) { $0 + $1.utf8.count + 1 } - 1
+        }
+        let startOffset = endOffset(bodyEnd)
+        let endOffset = endOffset(contentEnd)
+        let bytes = Array(contents.utf8)
+        let replacement = cleaned.map {
+            "\n\n" + thoughtBlock(captureID: id, text: $0, createdAt: date, calendar: calendar).dropLast()
+        } ?? ""
+        return String(decoding: bytes[..<startOffset], as: UTF8.self)
+            + replacement + String(decoding: bytes[endOffset...], as: UTF8.self)
     }
 
     public static func cleanSubheading(_ text: String) -> String {

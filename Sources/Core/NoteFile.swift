@@ -635,6 +635,53 @@ enum NoteFile {
         return rewritten
     }
 
+    /// Replaces a snapshot while holding the same inode lock as append.
+    static func rewrite(root: VaultDirectoryAnchor, relativePath: String, at url: URL,
+                        beforeWrite: (@Sendable (URL) -> Void)?, afterWrite: (@Sendable (URL) -> Void)?,
+                        transform: (String) throws -> String) throws {
+        for attempt in 1...attempts {
+            do {
+                let location = try openLocation(root: root, relativePath: relativePath)
+                let descriptor = openat(location.parentDescriptor, location.name,
+                                        O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+                guard descriptor >= 0 else { throw posixError() }
+                try withLockedDescriptor(descriptor) {
+                    guard try isCurrent(descriptor, at: location) else { throw POSIXError(.EAGAIN) }
+                    _ = try validateManagedFile(descriptor)
+                    let initial = try fingerprint(descriptor)
+                    let original = try readAll(descriptor)
+                    guard let contents = String(data: original, encoding: .utf8) else {
+                        throw CocoaError(.fileReadInapplicableStringEncoding)
+                    }
+                    let rewritten = Data(try transform(contents).utf8)
+                    guard rewritten != original else { return }
+                    let temporaryName = ".note-\(UUID().uuidString).pending"
+                    let temporary = FileLocation(directories: location.directories, name: temporaryName)
+                    let staged = openat(location.parentDescriptor, temporaryName,
+                                        O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+                    guard staged >= 0 else { throw posixError() }
+                    defer { _ = unlinkat(location.parentDescriptor, temporaryName, 0) }
+                    try withLockedDescriptor(staged) {
+                        _ = try validateManagedFile(staged)
+                        try writeAll(rewritten, to: staged)
+                        guard fsync(staged) == 0 else { throw posixError() }
+                        beforeWrite?(url)
+                        _ = try validateManagedFile(descriptor)
+                        guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial,
+                              try isCurrent(staged, at: temporary) else { throw POSIXError(.EAGAIN) }
+                        guard renameat(location.parentDescriptor, temporaryName,
+                                       location.parentDescriptor, location.name) == 0 else { throw posixError() }
+                        _ = fsync(location.parentDescriptor)
+                        afterWrite?(url)
+                    }
+                }
+                return
+            } catch let error as POSIXError where error.code == .EAGAIN && attempt < attempts {
+                continue
+            }
+        }
+    }
+
     static func append(block: String, header: String, root: VaultDirectoryAnchor, relativePath: String, to url: URL, cache: inout AppendCache, identityPrefix: String,
                        unlessMarkerExists marker: String? = nil,
                        savedNoteMarker: String? = nil, sourceHeading: String? = nil, equivalentBlocks: [String] = [], calendar: Calendar = .current,

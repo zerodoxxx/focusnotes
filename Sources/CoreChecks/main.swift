@@ -71,6 +71,7 @@ do {
     try runChecks()
     print("Core checks passed (SQLite \(SQLiteVersion.string), FTS5 MATCH).")
     try checkCaptureFormat()
+    try await checkThoughts()
     try checkNoteTitle()
     try checkVault()
     try checkRouter()

@@ -358,7 +358,8 @@ public actor SearchIndex {
                     .text(block.kind.rawValue), block.createdAt.map { .double($0.timeIntervalSince1970) } ?? .null,
                     Self.value(block.sourceApp), Self.value(block.windowTitle), .text(block.body), Self.value(block.assetPath)
                 ])
-                try fts.run([.int(database.lastInsertedID), .text(title), .text(Self.ftsText(block.body)), Self.value(block.assetPath)])
+                let searchable = block.thought.map { block.body + "\n\n" + $0 } ?? block.body
+                try fts.run([.int(database.lastInsertedID), .text(title), .text(Self.ftsText(searchable)), Self.value(block.assetPath)])
             }
         }
     }
