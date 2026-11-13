@@ -530,8 +530,11 @@ enum NoteFile {
     }
 
     /// Same locked, staged swap used by session rewrites; never truncate the original inode.
+    /// A non-cooperating editor can still replace the note between the last check and the swap;
+    /// then its file is swapped back into place, never deleted, and the replace fails with EAGAIN.
     static func replaceContents(_ contents: Data, matching snapshot: MoveSnapshot,
-                                in root: VaultDirectoryAnchor, relativePath: String) throws {
+                                in root: VaultDirectoryAnchor, relativePath: String,
+                                beforeSwap: (() throws -> Void)? = nil) throws {
         let location = try openLocation(root: root, relativePath: relativePath)
         let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else { throw posixError() }
@@ -543,7 +546,9 @@ enum NoteFile {
             let temporary = FileLocation(directories: location.directories, name: name)
             let staged = openat(location.parentDescriptor, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
             guard staged >= 0 else { throw posixError() }
-            defer { _ = unlinkat(location.parentDescriptor, name, 0) }
+            // The temporary name holds the staged copy, or our validated original after the swap.
+            var removeTemporary = true
+            defer { if removeTemporary { _ = unlinkat(location.parentDescriptor, name, 0) } }
             try withLockedDescriptor(staged) {
                 try writeAll(contents, to: staged)
                 guard fsync(staged) == 0 else { throw posixError() }
@@ -552,10 +557,47 @@ enum NoteFile {
                 guard try isCurrent(staged, at: temporary), try isCurrent(descriptor, at: location),
                       try isCurrent(location.directories), try fingerprint(descriptor) == snapshot.fingerprint,
                       try readAll(descriptor) == snapshot.contents else { throw POSIXError(.EAGAIN) }
+                try beforeSwap?()
                 guard renameatx_np(location.parentDescriptor, name, location.parentDescriptor, location.name,
                                    UInt32(RENAME_SWAP)) == 0 else { throw posixError() }
+                let displaced = try? fingerprint(descriptor)
+                let displacedIsOriginal = (try? isCurrent(descriptor, at: temporary)) == true && displaced.map {
+                    $0.size == snapshot.fingerprint.size && $0.modified.tv_sec == snapshot.fingerprint.modified.tv_sec &&
+                        $0.modified.tv_nsec == snapshot.fingerprint.modified.tv_nsec
+                } == true
+                guard displacedIsOriginal else {
+                    // Restore whatever we displaced; keep the temporary name unless it is our staged copy.
+                    removeTemporary = false
+                    if (try? isCurrent(staged, at: location)) == true,
+                       renameatx_np(location.parentDescriptor, name, location.parentDescriptor, location.name,
+                                    UInt32(RENAME_SWAP)) == 0 {
+                        removeTemporary = (try? isCurrent(staged, at: temporary)) == true
+                    }
+                    throw POSIXError(.EAGAIN)
+                }
                 _ = fsync(location.parentDescriptor)
             }
+        }
+    }
+
+    /// Undoes one `append` only while the note is exactly as that append left it: truncates to the prior
+    /// length, or removes a note the append created. Returns false, touching nothing, if it changed since.
+    static func removeAppended(_ appended: AppendedBytes, in root: VaultDirectoryAnchor, relativePath: String) throws -> Bool {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        let descriptor = openat(location.parentDescriptor, location.name, O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT { return false }
+        guard descriptor >= 0 else { throw posixError() }
+        return try withLockedDescriptor(descriptor) {
+            guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == appended.fingerprint else { return false }
+            _ = try validateManagedFile(descriptor)
+            if appended.created {
+                guard unlinkat(location.parentDescriptor, location.name, 0) == 0 else { throw posixError() }
+            } else {
+                guard ftruncate(descriptor, off_t(appended.offset)) == 0 else { throw posixError() }
+                _ = fsync(descriptor)
+            }
+            _ = fsync(location.parentDescriptor)
+            return true
         }
     }
 
@@ -685,11 +727,20 @@ enum NoteFile {
         return rewritten
     }
 
+    /// Bytes one `append` added, so a move can undo exactly them while the note is unchanged since.
+    struct AppendedBytes {
+        let offset: UInt64
+        let created: Bool
+        let fingerprint: Fingerprint
+    }
+
+    /// Returns nil when the block was already saved and nothing was written.
+    @discardableResult
     static func append(block: String, header: String, root: VaultDirectoryAnchor, relativePath: String, to url: URL, cache: inout AppendCache, identityPrefix: String,
                        unlessMarkerExists marker: String? = nil, markerIsIdentity: Bool = false,
                        savedNoteMarker: String? = nil, sourceHeading: String? = nil, equivalentBlocks: [String] = [], calendar: Calendar = .current,
                        beforeWrite: (@Sendable (URL) -> Void)? = nil,
-                       afterWrite: (@Sendable (URL) -> Void)? = nil) throws {
+                       afterWrite: (@Sendable (URL) -> Void)? = nil) throws -> AppendedBytes? {
         if savedNoteMarker != nil { try createCompleteNote(Data((header + block).utf8), root: root, relativePath: relativePath) }
         let blockData = Data(block.utf8)
         // Once a locked inode was replaced or unlinked, never recreate the path: a rename
@@ -699,9 +750,12 @@ enum NoteFile {
             let location = try openLocation(root: root, relativePath: relativePath)
             guard try isCurrent(location.directories) else { throw POSIXError(.EAGAIN) }
             var descriptor: Int32 = -1
+            var created = false
+            var appendedBytes: AppendedBytes?
             if !sawReplacement {
                 descriptor = openat(location.parentDescriptor, location.name,
                                     O_RDWR | O_APPEND | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+                created = descriptor >= 0
             }
             if sawReplacement || (descriptor < 0 && errno == EEXIST) {
                 descriptor = openat(location.parentDescriptor, location.name,
@@ -799,6 +853,7 @@ enum NoteFile {
                     throw error
                 }
                 let written = try fingerprint(descriptor)
+                appendedBytes = AppendedBytes(offset: end, created: created, fingerprint: written)
                 afterWrite?(url)
                 let current = try isCurrent(descriptor, at: location)
                 if current, var state, written.size == initial.size + off_t(appended.count),
@@ -810,7 +865,7 @@ enum NoteFile {
                 if !current { sawReplacement = true }
                 return current
             }
-            if current { return }
+            if current { return appendedBytes }
             // A replacement or detected in-place edit invalidated our view. Retry
             // from current bytes, including editors that copied our append forward.
         }

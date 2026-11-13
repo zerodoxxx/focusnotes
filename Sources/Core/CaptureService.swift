@@ -33,12 +33,14 @@ public enum CaptureMoveError: Error, LocalizedError, Equatable {
     case notFound(noteTitle: String)
     case sourceChanged(noteTitle: String)
     case writeFailed(noteTitle: String)
+    case conflict(noteTitle: String)
 
     public var errorDescription: String? {
         switch self {
         case .notFound(let title): return "This capture is no longer in \(title). It may have been edited or moved. Nothing was changed."
         case .sourceChanged(let title): return "\(title) changed while moving. Nothing was moved; try again."
         case .writeFailed(let title): return "Could not update \(title). Nothing was changed; try again."
+        case .conflict(let title): return "\(title) already has a different copy of this capture. Nothing was moved; remove that copy and try again."
         }
     }
 }
@@ -157,10 +159,18 @@ public actor CaptureService {
     }
 
     public func moveCapture(id: UUID, from source: Destination, to destination: Destination) async throws -> SavedCapture {
-        if source.url.standardizedFileURL != destination.url.standardizedFileURL {
+        if source.url.standardizedFileURL != destination.url.standardizedFileURL,
+           !Self.isSameFile(source.url, destination.url) {
             try await writer.moveCapture(id: id, from: source, to: destination)
         }
         return SavedCapture(captureID: id, destination: destination, section: try? await section(of: destination))
+    }
+
+    /// Path aliases (case-insensitive volumes) name one note; moving onto it would delete the capture.
+    private static func isSameFile(_ first: URL, _ second: URL) -> Bool {
+        var a = stat(), b = stat()
+        guard stat(first.path, &a) == 0, stat(second.path, &b) == 0 else { return false }
+        return a.st_dev == b.st_dev && a.st_ino == b.st_ino
     }
 
     /// Returns the last level-two heading outside fenced code blocks.

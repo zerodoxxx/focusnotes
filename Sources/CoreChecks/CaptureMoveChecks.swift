@@ -110,7 +110,7 @@ func checkCaptureMoves() async throws {
     }
     await writer.setBeforeCaptureMoveRemoval(nil)
     try verify(try Data(contentsOf: rollbackSource.url) == beforeRollback, "failed removal retains byte-identical source")
-    try verify(try !checkRead(rollbackTarget.url).contains(checkCaptureMarker(rollbackID)), "failed removal rolls destination back")
+    try verify(!FileManager.default.fileExists(atPath: rollbackTarget.url.path), "failed removal rolls destination back")
 
     // A real intervening edit must be detected without overwriting that edit.
     await writer.setBeforeCaptureMoveRemoval { url in
@@ -125,16 +125,101 @@ func checkCaptureMoves() async throws {
     }
     await writer.setBeforeCaptureMoveRemoval(nil)
     try verify(try Data(contentsOf: rollbackSource.url) == beforeRollback + Data("external edit\n".utf8), "intervening edit survives")
-    try verify(try !checkRead(rollbackTarget.url).contains(checkCaptureMarker(rollbackID)), "sourceChanged rolls destination back")
+    try verify(!FileManager.default.fileExists(atPath: rollbackTarget.url.path), "sourceChanged rolls destination back")
 
-    // Existing UUIDs are idempotent even when their destination body was edited.
-    let duplicateSource = note("Duplicate source"), duplicateTarget = note("Duplicate target")
-    let duplicateID = UUID()
-    try await save(duplicateID, "source version", to: duplicateSource)
-    try await save(duplicateID, "edited target version", to: duplicateTarget)
-    let existingTarget = try Data(contentsOf: duplicateTarget.url)
-    _ = try await service.moveCapture(id: duplicateID, from: duplicateSource, to: duplicateTarget)
-    try verify(try Data(contentsOf: duplicateTarget.url) == existingTarget, "existing UUID is not appended again")
+    // A path differing only in case names the same file on case-insensitive volumes.
+    let aliasSource = note("inbox")
+    let aliasTarget = Destination(url: vault.root.appendingPathComponent("Inbox.md"), title: "Inbox", kind: .note)
+    let aliasID = UUID()
+    try await save(aliasID, "alias body", to: aliasSource)
+    let aliasBytes = try Data(contentsOf: aliasSource.url)
+    if FileManager.default.fileExists(atPath: aliasTarget.url.path) {
+        _ = try await service.moveCapture(id: aliasID, from: aliasSource, to: aliasTarget)
+        try verify(try Data(contentsOf: aliasSource.url) == aliasBytes, "case alias of the source writes nothing")
+    } else { print("Skipping case-alias move check: volume is case-sensitive.") }
+
+    // A different destination copy must not cost the source its extra lines.
+    let conflictSource = note("Conflict source"), conflictTarget = note("Conflict target")
+    let conflictID = UUID()
+    try await save(conflictID, "shared body", to: conflictSource)
+    try await save(conflictID, "shared body", to: conflictTarget)
+    try checkWrite(try checkRead(conflictSource.url) + "my thought\n", to: conflictSource.url)
+    let conflictSourceBytes = try Data(contentsOf: conflictSource.url), conflictTargetBytes = try Data(contentsOf: conflictTarget.url)
+    do {
+        _ = try await service.moveCapture(id: conflictID, from: conflictSource, to: conflictTarget)
+        throw CheckFailure.failed("divergent destination copy accepted")
+    } catch let error as CaptureMoveError {
+        try verify(error == .conflict(noteTitle: conflictTarget.title), "divergent destination copy reports conflict")
+    }
+    try verify(try Data(contentsOf: conflictSource.url) == conflictSourceBytes && Data(contentsOf: conflictTarget.url) == conflictTargetBytes, "conflict changes neither note")
+
+    // An identical destination copy completes an interrupted move.
+    let resumeSource = note("Resume source"), resumeTarget = note("Resume target")
+    let resumeID = UUID()
+    try await save(resumeID, "resume body", to: resumeSource)
+    try await save(resumeID, "resume body", to: resumeTarget)
+    _ = try await service.moveCapture(id: resumeID, from: resumeSource, to: resumeTarget)
+    try verify(try !checkRead(resumeSource.url).contains(checkCaptureMarker(resumeID)), "identical copy removes the source block")
+    try verify(try checkRead(resumeTarget.url).components(separatedBy: checkCaptureMarker(resumeID)).count == 2, "identical copy is kept once")
+
+    // Rollback never touches a destination edited after our append.
+    let editSource = note("Edit source"), editTarget = note("Edit target")
+    let editID = UUID()
+    try await save(editID, "edit body", to: editSource)
+    try checkWrite("# Edit target\n\nexisting\n", to: editTarget.url)
+    let editSourceBytes = try Data(contentsOf: editSource.url)
+    let editTargetURL = editTarget.url
+    await writer.setBeforeCaptureMoveRemoval { _ in
+        try (Data(contentsOf: editTargetURL) + Data("edited meanwhile\n".utf8)).write(to: editTargetURL)
+        throw CocoaError(.fileWriteNoPermission)
+    }
+    do {
+        _ = try await service.moveCapture(id: editID, from: editSource, to: editTarget)
+        throw CheckFailure.failed("injected removal failure succeeded")
+    } catch let error as CaptureMoveError {
+        try verify(error == .writeFailed(noteTitle: editSource.title), "removal failure after destination edit identifies source")
+    }
+    await writer.setBeforeCaptureMoveRemoval(nil)
+    try verify(try checkRead(editTarget.url).contains("edited meanwhile"), "rollback keeps intervening destination edit")
+    try verify(try Data(contentsOf: editSource.url) == editSourceBytes, "rollback after destination edit retains source")
+
+    // Rollback restores the destination's exact bytes, or removes a note the move created.
+    let exactSource = note("Exact source"), exactTarget = note("Exact target"), createdTarget = note("Created target")
+    let exactID = UUID()
+    try await save(exactID, "exact body", to: exactSource)
+    try checkWrite("# Exact target\n\n### Safari", to: exactTarget.url)
+    let exactTargetBytes = try Data(contentsOf: exactTarget.url)
+    await writer.setBeforeCaptureMoveRemoval { _ in throw CocoaError(.fileWriteNoPermission) }
+    for target in [exactTarget, createdTarget] {
+        do {
+            _ = try await service.moveCapture(id: exactID, from: exactSource, to: target)
+            throw CheckFailure.failed("injected removal failure succeeded")
+        } catch is CaptureMoveError {}
+    }
+    await writer.setBeforeCaptureMoveRemoval(nil)
+    try verify(try Data(contentsOf: exactTarget.url) == exactTargetBytes, "rollback restores exact destination bytes")
+    try verify(!FileManager.default.fileExists(atPath: createdTarget.url.path), "rollback removes a destination the move created")
+
+    // An editor's atomic save just before the source swap survives, and the move fails.
+    let swapSource = note("Swap source"), swapTarget = note("Swap target")
+    let swapID = UUID()
+    try await save(swapID, "swap body", to: swapSource)
+    try checkWrite("# Swap target\n\nexisting\n", to: swapTarget.url)
+    let swapTargetBytes = try Data(contentsOf: swapTarget.url)
+    await writer.setBeforeCaptureMoveSwap { url in
+        let staged = url.deletingLastPathComponent().appendingPathComponent("editor-save.tmp")
+        try Data("editor version\n".utf8).write(to: staged)
+        guard rename(staged.path, url.path) == 0 else { throw POSIXError(.EIO) }
+    }
+    do {
+        _ = try await service.moveCapture(id: swapID, from: swapSource, to: swapTarget)
+        throw CheckFailure.failed("swap over an editor save succeeded")
+    } catch let error as CaptureMoveError {
+        try verify(error == .sourceChanged(noteTitle: swapSource.title), "replacement before swap reports sourceChanged")
+    }
+    await writer.setBeforeCaptureMoveSwap(nil)
+    try verify(try checkRead(swapSource.url) == "editor version\n", "editor save stays at the source path")
+    try verify(try Data(contentsOf: swapTarget.url) == swapTargetBytes, "replacement before swap rolls destination back")
 
     let invalidSource = note("Typed marker")
     let typedID = UUID()
