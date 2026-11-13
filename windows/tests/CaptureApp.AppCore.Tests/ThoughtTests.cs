@@ -1,0 +1,188 @@
+using CaptureApp.AppCore.Shell;
+using CaptureApp.Core;
+using Xunit;
+
+namespace CaptureApp.AppCore.Tests;
+
+public sealed class ThoughtTests
+{
+    [Fact]
+    public async Task OnlyStagedSuccessToastsOfferThoughts()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var host = new HeadlessCaptureHost(presentsUi: true);
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        await coordinator.AddNoteAsync("ordinary note");
+        Assert.All(host.Toasts, toast => Assert.Null(toast.Action));
+        Assert.NotEmpty(host.Toasts);
+        await coordinator.StageAsync(PendingCaptures.Selection("excerpt", new()));
+        Assert.Equal("Add a thought", host.Toasts.Last().Action?.Title);
+        await coordinator.CommitPending()!;
+    }
+
+    [Fact]
+    public async Task ThoughtActionCommitsOnceAndCarriesTheOriginalCapture()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var host = new HeadlessCaptureHost(presentsUi: true);
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        var capture = PendingCaptures.Selection("excerpt", new("Browser", "Page title", "https://example.com/page"));
+        ThoughtTarget? target = null;
+        coordinator.ThoughtRequested += value => target = value;
+        await coordinator.StageAsync(capture);
+        var action = Assert.IsType<AppToastAction>(host.Toasts.Last().Action);
+        action.Invoke();
+        var request = Assert.IsType<ThoughtTarget>(target);
+        Assert.Equal(capture.Id, request.CaptureId);
+        Assert.Equal("Page title", request.SourceTitle);
+        Assert.Equal("Browser · example.com", request.SourceDetail);
+        Assert.Equal("excerpt", request.ExcerptText);
+        Assert.Null(request.ExcerptImagePath);
+        var saved = await Assert.IsAssignableFrom<Task<SavedCapture>>(request.Commit);
+        Assert.Null(coordinator.Pending);
+        Assert.False(coordinator.HasPendingToast);
+        coordinator.ToastExpired();
+        action.Invoke();
+        Assert.Null(target!.Commit);
+        Assert.Null(coordinator.CommitPending());
+        Assert.Equal(1, File.ReadAllText(saved.Destination.Url).Split(capture.Id.ToString("D")).Length - 1);
+    }
+
+    [Fact]
+    public async Task StaleActionLeavesNewerPendingCaptureAlone()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var host = new HeadlessCaptureHost(presentsUi: true);
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        var old = PendingCaptures.Selection("old", new());
+        var newer = PendingCaptures.Selection("new", new());
+        ThoughtTarget? target = null;
+        coordinator.ThoughtRequested += value => target = value;
+        await coordinator.StageAsync(old);
+        var action = host.Toasts.Last().Action!;
+        await coordinator.StageAsync(newer);
+        action.Invoke();
+        Assert.Equal(old.Id, target!.CaptureId);
+        Assert.Null(target.Commit);
+        Assert.Equal(newer.Id, coordinator.Pending?.Id);
+        Assert.True(coordinator.HasPendingToast);
+        await coordinator.CommitPending()!;
+    }
+
+    [Fact]
+    public async Task ImageActionReportsKnownAssetAfterCommitAndNoTextExcerpt()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var host = new HeadlessCaptureHost(presentsUi: true);
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        var capture = PendingCaptures.Image([137, 80, 78, 71], null, new("Image app"));
+        ThoughtTarget? target = null;
+        coordinator.ThoughtRequested += value => target = value;
+        await coordinator.StageAsync(capture);
+        var action = host.Toasts.Last().Action!;
+        await coordinator.CommitPending()!;
+        action.Invoke();
+        Assert.Equal("Image app", target!.SourceTitle);
+        Assert.Equal("Image app", target.SourceDetail);
+        Assert.Null(target.ExcerptText);
+        Assert.Null(target.Commit);
+        Assert.True(Path.IsPathFullyQualified(target.ExcerptImagePath!));
+        Assert.Equal(capture.Png, File.ReadAllBytes(target.ExcerptImagePath!));
+    }
+
+    [Fact]
+    public async Task SavingWhileAnotherCaptureOpensKeepsTheOriginalDestination()
+    {
+        var destination = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writes = new List<(string? Text, Guid Id, string Path)>();
+        var composer = new ThoughtComposer((text, id, path) => { writes.Add((text, id, path)); return Task.CompletedTask; });
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        composer.Begin(a, null, () => destination.Task);
+        composer.Close(a, "A draft");
+        var saving = composer.SaveAsync(a, "A text");
+        composer.Begin(b, null, () => Task.FromResult("b.md"));
+        composer.Close(b, "B draft");
+        destination.SetResult("a.md");
+        Assert.IsType<ThoughtSaveOutcome.Saved>(await saving);
+        Assert.Equal(("A text", a, "a.md"), Assert.Single(writes));
+        Assert.False(composer.Drafts.ContainsKey(a));
+        Assert.Equal("B draft", composer.Drafts[b]);
+    }
+
+    [Fact]
+    public void ComposerRestoresDraftBeforeDifferentSavedTextAndDropsUnchangedDraft()
+    {
+        var composer = new ThoughtComposer((_, _, _) => Task.CompletedTask);
+        var id = Guid.NewGuid();
+        Assert.Equal("saved", composer.Begin(id, "saved", () => Task.FromResult("a.md")));
+        composer.Close(id, "draft");
+        Assert.Equal("draft", composer.Begin(id, "different saved", () => Task.FromResult("a.md")));
+        composer.Close(id, "different saved");
+        Assert.Empty(composer.Drafts);
+        Assert.Equal("different saved", composer.Begin(id, null, () => Task.FromResult("a.md")));
+        var empty = Guid.NewGuid();
+        Assert.Equal("", composer.Begin(empty, null, () => Task.FromResult("b.md")));
+        composer.Close(empty, "");
+        Assert.Empty(composer.Drafts);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ComposerPreservesFailedTextAndExplainsFailure(bool missing)
+    {
+        var composer = new ThoughtComposer((_, _, _) => Task.FromException(missing
+            ? new ThoughtWriteException(ThoughtWriteError.CaptureNotFound) : new IOException("unavailable")));
+        var id = Guid.NewGuid();
+        composer.Begin(id, null, () => Task.FromResult("a.md"));
+        var outcome = Assert.IsType<ThoughtSaveOutcome.Failed>(await composer.SaveAsync(id, "keep me"));
+        Assert.Equal(missing ? ThoughtComposer.CaptureNotFoundMessage : ThoughtComposer.SaveFailedMessage, outcome.Message);
+        Assert.Equal("keep me", composer.Drafts[id]);
+        Assert.Equal("keep me", composer.Begin(id, null, () => Task.FromResult("a.md")));
+    }
+
+    [Fact]
+    public async Task ComposerSavesToEachCapturesDestinationAndRemovesWhitespaceThoughts()
+    {
+        var writes = new List<(string? Text, Guid Id, string Path)>();
+        var composer = new ThoughtComposer((text, id, path) => { writes.Add((text, id, path)); return Task.CompletedTask; });
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        composer.Begin(a, "old", () => Task.FromResult("a.md"));
+        composer.Close(a, "new");
+        composer.Begin(b, null, () => Task.FromResult("b.md"));
+        composer.Close(b, "b draft");
+        Assert.IsType<ThoughtSaveOutcome.Saved>(await composer.SaveAsync(a, "new"));
+        Assert.Equal(("new", a, "a.md"), Assert.Single(writes));
+        Assert.False(composer.Drafts.ContainsKey(a));
+        Assert.Equal("b draft", composer.Drafts[b]);
+        Assert.Equal("new", composer.Begin(a, null, () => Task.FromResult("a.md")));
+        Assert.IsType<ThoughtSaveOutcome.Saved>(await composer.SaveAsync(a, " \n\t"));
+        Assert.Null(writes.Last().Text);
+        Assert.Equal("", composer.Begin(a, null, () => Task.FromResult("a.md")));
+    }
+
+    [Fact]
+    public async Task PipelineWritesReadsReindexesAndRemovesThought()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var saved = pipeline.Commit(pipeline.PrepareText("original capture", new()));
+        Assert.Equal(pipeline.Vault.NoteId(saved.Destination.Url), pipeline.NotePathFor(saved.CaptureId));
+        Assert.Null(pipeline.NotePathFor(Guid.NewGuid()));
+        await pipeline.SetThoughtAsync("thoughtuniqueneedle", saved.CaptureId, saved.Destination.Url);
+        Assert.Contains("<!-- thought:" + saved.CaptureId.ToString("D"), File.ReadAllText(saved.Destination.Url));
+        Assert.Equal("thoughtuniqueneedle", await pipeline.SavedThoughtAsync(saved.CaptureId, saved.Destination.Url));
+        Assert.Contains(pipeline.Index.Search("thoughtuniqueneedle"), hit => hit.NotePath == pipeline.NotePathFor(saved.CaptureId));
+        await pipeline.SetThoughtAsync(null, saved.CaptureId, saved.Destination.Url);
+        Assert.Null(await pipeline.SavedThoughtAsync(saved.CaptureId, saved.Destination.Url));
+        Assert.DoesNotContain("<!-- thought:", File.ReadAllText(saved.Destination.Url));
+        Assert.Empty(pipeline.Index.Search("thoughtuniqueneedle"));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => pipeline.SavedThoughtAsync(saved.CaptureId, Path.Combine(temp.Path, "missing.md")));
+    }
+}

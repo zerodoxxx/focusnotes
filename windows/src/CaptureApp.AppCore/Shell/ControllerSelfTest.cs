@@ -5,10 +5,10 @@ using CaptureApp.Core.Index;
 namespace CaptureApp.AppCore.Shell;
 
 /// A host that presents nothing and records toasts (the Mac's presentsUI=false controller).
-public sealed class HeadlessCaptureHost : ICaptureHost
+public sealed class HeadlessCaptureHost(bool presentsUi = false) : ICaptureHost
 {
     public List<AppToast> Toasts { get; } = [];
-    public bool PresentsUi => false;
+    public bool PresentsUi => presentsUi;
     public bool StagedToastVisible => false;
     public string SessionBinding => "the session shortcut";
     public void ShowToast(AppToast toast) { lock (Toasts) { Toasts.Add(toast); } }

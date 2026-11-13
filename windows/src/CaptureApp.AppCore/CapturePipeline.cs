@@ -21,6 +21,7 @@ public sealed class CapturePipeline : IDisposable
     private readonly object captureGate = new();
     private readonly SessionRenameTransaction renames;
     private readonly TimeProvider clock;
+    private readonly NoteWriter writer;
     private readonly AppLog logger;
     private bool disposed;
 
@@ -39,7 +40,7 @@ public sealed class CapturePipeline : IDisposable
 
     private CapturePipeline(Vault vault, SessionStore sessions, CaptureService service, SearchIndex index,
         VaultMonitor monitor, CaptureJournal journal, NoteDraftStore drafts, NotePinStore pins,
-        TimeZoneInfo timeZone, string stateDirectory, string? modelsDirectory, TimeProvider clock)
+        TimeZoneInfo timeZone, string stateDirectory, string? modelsDirectory, TimeProvider clock, NoteWriter writer)
     {
         Vault = vault;
         Sessions = sessions;
@@ -53,6 +54,7 @@ public sealed class CapturePipeline : IDisposable
         StateDirectory = stateDirectory;
         ModelsDirectory = modelsDirectory;
         this.clock = clock;
+        this.writer = writer;
         logger = new(stateDirectory, "pipeline");
         Unsaved = new(this);
         renames = new(vault, sessions, service, journal, pins, index, stateDirectory, logger, Unsaved);
@@ -75,11 +77,26 @@ public sealed class CapturePipeline : IDisposable
         var service = new CaptureService(vault, sessions, writer, clock);
         var monitor = new VaultMonitor(vault, index, state, watcherLatencySeconds);
         var pipeline = new CapturePipeline(vault, sessions, service, index, monitor, journal, new(state), new(state), zone,
-            state, modelsDirectory is null ? null : Path.GetFullPath(modelsDirectory), clock);
+            state, modelsDirectory is null ? null : Path.GetFullPath(modelsDirectory), clock, writer);
         try { pipeline.RecoverPendingRename(); }
         catch { pipeline.Dispose(); throw; }
         return pipeline;
     }
+
+    public string? NotePathFor(Guid captureId) => Index.Capture(captureId)?.NotePath;
+
+    public Task SetThoughtAsync(string? text, Guid captureId, string notePath) => Task.Run(() =>
+    {
+        writer.SetThought(text, captureId, notePath, DateTimeOffset.Now);
+        Index.Reindex(notePath);
+    });
+
+    public Task<string?> SavedThoughtAsync(Guid captureId, string notePath) => Task.Run(() =>
+    {
+        var contents = File.ReadAllText(notePath);
+        var parsed = NoteParser.Parse(contents, notePath, "", TimeZone);
+        return parsed.Blocks.FirstOrDefault(block => block.CaptureId == captureId)?.Thought;
+    });
 
     public CaptureJob PrepareText(string text, CaptureSource source, string? noteTitle = null, string? noteDraft = null,
         Guid? id = null, DateTimeOffset? createdAt = null, Destination? destination = null)

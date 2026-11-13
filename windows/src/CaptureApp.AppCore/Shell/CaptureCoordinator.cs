@@ -65,6 +65,7 @@ public sealed class CaptureCoordinator
     public CapturePipeline Pipeline { get; }
     public SemanticIndexer? Semantic { get; set; }
     public Action<Guid>? ChooseNoteRequested { get; set; }
+    public event Action<ThoughtTarget>? ThoughtRequested;
     public Session? ActiveSession { get; private set; }
     public bool IsTerminating { get { lock (gate) { return isTerminating; } } }
     public bool AcquisitionInProgress { get { lock (gate) { return acquisitionInProgress; } } }
@@ -289,7 +290,27 @@ public sealed class CaptureCoordinator
         // Fold the notice into this toast so it cannot hide it.
         var subtitle = string.Join(" · ", new[] { capture.Subtitle, previousNotice }.Where(part => !string.IsNullOrEmpty(part)));
         host.ShowStagedToast(new(AppToastStyle.Success, session is null ? Strings.SavedTo(Vault.InboxTitle) : Strings.AddedTo(session.Name),
-            subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint));
+            subtitle, host.BindingFor(capture.Trigger), Strings.ChooseNoteHint, Action: new("Add a thought", () => OpenThought(capture))));
+    }
+
+    private void OpenThought(PendingCapture capture)
+    {
+        var commit = CommitPendingCore(null, false, false, null, capture.Id);
+        var source = capture.Source;
+        var app = source.AppName ?? "";
+        string? hostName = null;
+        if (Uri.TryCreate(source.Url, UriKind.Absolute, out var uri)) hostName = uri.Host;
+        var detail = string.Join(" · ", new[] { app, hostName }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        ThoughtRequested?.Invoke(new(capture.Id, CaptureFormat.SourceHeading(source), detail.Length == 0 ? null : detail,
+            capture.Content.Kind == CaptureContentKind.Text ? capture.Content.Value : null, KnownImagePath(capture.Id), commit));
+    }
+
+    private string? KnownImagePath(Guid captureId)
+    {
+        var asset = Pipeline.Index.Capture(captureId)?.AssetPath;
+        if (asset is null) { return null; }
+        try { return Pipeline.AssetUrl(asset); }
+        catch (FileNotFoundException) { return null; }
     }
 
     /// A newer capture saves a retry-pending one to its staged default, then says so.
@@ -319,16 +340,16 @@ public sealed class CaptureCoordinator
     /// The staged toast expired: the default destination is the answer. A retry-pending capture only loses its warning.
     public void ToastExpired()
     {
-        bool commit;
+        Guid? commitId;
         bool warningGone;
         lock (gate)
         {
-            commit = pending is not null && pendingToastId == pending.Id;
+            commitId = pending is not null && pendingToastId == pending.Id ? pending.Id : null;
             warningGone = retryWarningShown;
             retryWarningShown = false;
         }
 
-        if (commit) { _ = CommitPending(); }
+        if (commitId is { } id) { _ = CommitPendingCore(null, false, false, null, id); }
         else if (warningGone) { host.DismissStagedToast(); }
     }
 
@@ -343,13 +364,16 @@ public sealed class CaptureCoordinator
     /// destination, shutdown, or a newer capture staged in <see cref="StageAsync"/> (force) may save it. A picked
     /// destination is saved without routing, if its note still exists.
     public Task<SavedCapture>? CommitPending(string? noteTitle = null, bool announce = false, bool force = false, Destination? destination = null)
+        => CommitPendingCore(noteTitle, announce, force, destination, null);
+
+    private Task<SavedCapture>? CommitPendingCore(string? noteTitle, bool announce, bool force, Destination? destination, Guid? expectedId)
     {
         PendingCapture capture;
         bool wasStaged;
         bool terminating;
         lock (gate)
         {
-            if (pending is null) { return null; }
+            if (pending is null || (expectedId is not null && pending.Id != expectedId)) { return null; }
             if (pendingNeedsRetryChoice && !force && noteTitle is null && destination is null && !isTerminating) { return null; }
             capture = pending;
             pending = null;

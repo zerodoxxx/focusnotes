@@ -6,8 +6,9 @@ namespace CaptureApp.AppCore.Shell;
 public enum AppToastStyle { Success, Warning, Session, Copied }
 
 /// A UI-neutral toast; the App maps it onto the Overlay toast.
+public sealed record AppToastAction(string Title, Action Invoke);
 public sealed record AppToast(AppToastStyle Style, string Title, string? Subtitle = null, string? HintKey = null,
-    string? HintLabel = null, double? Duration = null);
+    string? HintLabel = null, double? Duration = null, AppToastAction? Action = null);
 
 /// What the capture coordinator needs from the UI layer. All methods may be called from any thread;
 /// implementations marshal to the UI thread.
