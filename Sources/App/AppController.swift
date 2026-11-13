@@ -125,7 +125,7 @@ private final class SearchSnapshot {
 }
 
 @MainActor
-final class AppController: NSObject, NSMenuDelegate {
+final class AppController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     let pipeline: CapturePipeline
     let presentsUI: Bool
     private let onToast: ((Toast) -> Void)?
@@ -166,6 +166,8 @@ final class AppController: NSObject, NSMenuDelegate {
     private var recordingShortcut = false
     private var folderShortcutStore: FolderShortcutStore { pipeline.folderShortcuts }
     private var sessionItem: NSMenuItem?
+    /// Kept in memory: Move Last Capture… targets the capture saved in this launch, so it is not persisted.
+    private var lastCapture: (id: UUID, destination: Destination)?
     private var accessibilityItem: NSMenuItem?
     private var screenRecordingItem: NSMenuItem?
     private var semanticModels: SemanticModelsMenu?
@@ -1343,6 +1345,7 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.addItem(menuItem("Capture Area", hotkey: .captureRegion, action: #selector(menuCaptureRegion)))
         menu.addItem(menuItem("Capture Selection Outside Session…", hotkey: .captureSelectionOutsideSession, action: #selector(menuCaptureSelectionOutsideSession)))
         menu.addItem(menuItem("Capture Area Outside Session…", hotkey: .captureRegionOutsideSession, action: #selector(menuCaptureRegionOutsideSession)))
+        menu.addItem(menuItem("Move Last Capture…", action: #selector(menuMoveLastCapture)))
         menu.addItem(menuItem("Search Notes…", hotkey: .search, action: #selector(menuSearch)))
         let session = menuItem("Start Session…", hotkey: .toggleSession, action: #selector(menuSession))
         sessionItem = session
@@ -1530,6 +1533,60 @@ final class AppController: NSObject, NSMenuDelegate {
     @objc private func menuCaptureRegionOutsideSession() {
         captureFromMenu { controller, context in controller.capture(.region, outsideSession: true, fromHotkey: false, context: context) }
     }
+    @objc private func menuMoveLastCapture() { afterMenu { [weak self] in self?.moveLastCapture() } }
+
+    /// NSMenu autoenabling would overwrite a manually set isEnabled, so the item is validated on each open.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(menuMoveLastCapture) else { return true }
+        return lastCapture != nil
+    }
+
+    /// A pending capture is still in its toast, so it takes the choose-note flow instead of a move.
+    private func moveLastCapture() {
+        if let pending = captures.pending {
+            showTitlePicker(for: pending.id)
+            return
+        }
+        guard let last = lastCapture else { return }
+        enqueue { controller in
+            guard await controller.closePanels() else { return }
+            let suggestions = await controller.suggestionSnapshot(sessionsOnly: false)
+            guard await controller.waitForAcquisition() else { return }
+            controller.presentInput(placeholder: "Move capture to…", suggestions: suggestions, suggestionValue: { $0.path },
+                                    onAccept: { [weak controller] text in
+                guard let controller else { return }
+                guard let picked = suggestions.first(where: { $0.path == text }) else {
+                    // Typed titles resolve only inside CaptureService.route, which needs a Capture, so a move takes a picked note.
+                    controller.showToast(Toast(style: .warning, title: "Choose a note from the list"))
+                    return
+                }
+                controller.performMove(of: last, toNoteID: picked.path, noteTitle: picked.title, kind: picked.kind)
+            }, onSubmit: { _ in }, onCancel: {})
+        }
+    }
+
+    /// The picker callback returns before the move finishes, so the move runs in its own task.
+    /// A failed move leaves the capture and `lastCapture` where they were.
+    private func performMove(of last: (id: UUID, destination: Destination), toNoteID noteID: String, noteTitle: String, kind: NoteKind) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let destination = try pipeline.pickedDestination(noteID: noteID, title: noteTitle, kind: kind)
+                let moved = try await pipeline.moveCapture(id: last.id, from: last.destination, to: destination)
+                try? await pipeline.index.reindex(note: last.destination.url)
+                try? await pipeline.index.reindex(note: moved.destination.url)
+                if lastCapture?.id == last.id { lastCapture = (last.id, moved.destination) }
+                let session = await pipeline.currentSession()
+                let title = "Moved to \(moved.destination.title)" + (moved.section.map { " › \($0)" } ?? "")
+                    + (session.map { " · " + Self.stillActive($0.name) } ?? "")
+                showToast(Toast(style: .success, title: title, duration: 1.6))
+            } catch {
+                logger.error("Move capture failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+                showToast(Toast(style: .warning, title: "Couldn't move capture",
+                                subtitle: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+            }
+        }
+    }
     @objc private func menuSearch() { afterMenu { [weak self] in self?.openSearch() } }
     @objc private func menuWriteNote() { afterMenu { [weak self] in self?.openNoteEditor() } }
     @objc private func menuWriteNoteOutsideSession() { afterMenu { [weak self] in self?.openNoteEditor(outsideSession: true) } }
@@ -1584,6 +1641,11 @@ final class AppController: NSObject, NSMenuDelegate {
 extension AppController: CaptureQueueHost {
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async {
         let session = await pipeline.currentSession()
+        var sectionSuffix = ""
+        if session != nil, let destination = try? await pipeline.sessionDestination(),
+           let section = await pipeline.section(of: destination) {
+            sectionSuffix = " › \(section)"
+        }
         guard presentsUI, captures.isPending(capture.id), !isTerminating else { return }
         if outsideSession {
             showTitlePicker(for: capture.id)
@@ -1594,7 +1656,7 @@ extension AppController: CaptureQueueHost {
         // Fold the notice into this toast so it cannot hide it.
         let subtitle = [capture.subtitle, previousNotice].compactMap { $0 }.joined(separator: " · ")
         let saved = Toast(style: .success,
-                          title: session.map { "Added to \($0.name)" } ?? "Saved to \(Vault.inboxTitle)",
+                          title: session.map { "Added to \($0.name)\(sectionSuffix)" } ?? "Saved to \(Vault.inboxTitle)",
                           subtitle: subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
         if previousNotice != nil { onToast?(saved) }
         toast.show(saved)
@@ -1607,8 +1669,10 @@ extension AppController: CaptureQueueHost {
     }
 
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
+        lastCapture = (saved.captureID, saved.destination)
         let session = outsideSession ? await pipeline.currentSession() : nil
         let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
+            + (saved.section.map { " › \($0)" } ?? "")
             + (session.map { " · " + Self.stillActive($0.name) } ?? "")
         if captures.pending == nil { showToast(Toast(style: .success, title: title, duration: 1.6)) }
     }

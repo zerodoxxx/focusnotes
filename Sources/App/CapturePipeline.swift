@@ -183,6 +183,10 @@ struct CapturePipeline: Sendable {
         try service.pickedDestination(noteID: noteID, title: title, kind: kind)
     }
 
+    func moveCapture(id: UUID, from source: Destination, to destination: Destination) async throws -> SavedCapture {
+        try await service.moveCapture(id: id, from: source, to: destination)
+    }
+
     func existingTitle(forTypedNote markdown: String, intent: CaptureIntent) -> String? {
         service.existingTitle(forTypedNote: markdown, intent: intent, calendar: calendar)
     }
