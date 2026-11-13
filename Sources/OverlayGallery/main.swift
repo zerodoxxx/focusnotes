@@ -22,6 +22,17 @@ func thumbnail() -> NSImage {
 }
 
 @MainActor
+func excerptImage() -> NSImage {
+    NSImage(size: NSSize(width: 440, height: 260), flipped: false) { bounds in
+        NSGradient(colors: [
+            NSColor(calibratedRed: 0.16, green: 0.30, blue: 0.42, alpha: 1),
+            NSColor(calibratedRed: 0.45, green: 0.72, blue: 0.88, alpha: 1)
+        ])?.draw(in: bounds, angle: 35)
+        return true
+    }
+}
+
+@MainActor
 func recent() -> [SearchSection] {
     [SearchSection(title: "Recent", rows: [
         SearchRow(id: "system", title: "System Design", snippet: "Design a reliable notification service at scale.", meta: "10:04 · Safari · System Design"),
@@ -111,6 +122,9 @@ func generateGallery() async throws {
                 }
             }
         }
+        let thoughtToast = Toast(style: .success, title: "Added to Reading", hint: .init(key: "⌃⌥C", label: "choose note"),
+                                 action: .init(title: "Add a thought", handler: {}))
+        try save(OverlayPreview.toast(thoughtToast), "toast-thought-action")
         try save(OverlayPreview.noteEditor(), "editor-empty")
         try save(OverlayPreview.noteEditor(destination: "System Design", text: "- [ ] jdf", selection: NSRange(location: 9, length: 0)), "editor-typing-task")
         try save(OverlayPreview.noteEditor(text: "## Ideas for tomorrow\n- Make space for a focused morning\n- [ ] Review the next step", selection: NSRange(location: 3, length: 0)), "editor-new-note")
@@ -156,6 +170,13 @@ func generateGallery() async throws {
         try save(OverlayPreview.noteEditor(text: twoLines, overlay: .browse(items: browseItems, query: "trip", selected: 0)), "quick-browse-filtered")
         try save(OverlayPreview.noteEditor(text: twoLines, overlay: .browse(items: [])), "quick-browse-empty")
         try save(OverlayPreview.noteEditor(text: twoLines, overlay: .browse(items: browseItems, query: "zzz")), "quick-browse-none")
+        let chapterTitle = "How to Take Smart Notes", chapterSource = "Safari · example.com"
+        let passage = "Progressive summarization works best when you revisit a passage later and mark only the sentences that would matter to you again. Highlight on the first pass, bold on the second, and write your own summary on the third. The goal is not to collect quotes but to leave a trail that makes the original idea easy to rebuild when a real project needs it. Most readers stop after the first pass, which is why their highlights end up as noise rather than material they can use."
+        try save(OverlayPreview.thoughtEditor(ThoughtEditorContent(sourceTitle: chapterTitle, sourceDetail: chapterSource, excerpt: .text(passage))), "thought-editor-text")
+        try save(OverlayPreview.thoughtEditor(ThoughtEditorContent(sourceTitle: chapterTitle, sourceDetail: chapterSource, excerpt: .image({ nil }),
+                                                                  text: "This diagram explains the whole chapter."), image: excerptImage()), "thought-editor-image")
+        try save(OverlayPreview.thoughtEditor(ThoughtEditorContent(sourceTitle: chapterTitle, sourceDetail: chapterSource, excerpt: .text(passage),
+                                                                  text: "Draft that failed to save"), error: "Couldn't save your thought. Your text is kept."), "thought-editor-failed")
         try save(OverlayPreview.input(placeholder: "Subheading", title: "Add subheading", secondary: "In System Design"), "input-subheading")
         try save(OverlayPreview.input(placeholder: "Name this session"), "input-empty")
         try save(OverlayPreview.input(placeholder: "Name this session", text: "System", suggestions: suggestions), "input-suggestions")

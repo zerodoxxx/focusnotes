@@ -12,13 +12,16 @@ public enum BlockKind
     Note
 }
 
-public sealed record ParsedBlock(Guid? CaptureId, BlockKind Kind, DateTimeOffset? CreatedAt, string? SourceApp, string? WindowTitle, string Body, string? AssetPath);
+public sealed record ParsedBlock(Guid? CaptureId, BlockKind Kind, DateTimeOffset? CreatedAt, string? SourceApp, string? WindowTitle, string Body, string? AssetPath, string? Thought = null);
 public sealed record ParsedNote(string Title, IReadOnlyList<ParsedBlock> Blocks);
 public static class NoteParser
 {
     private const int ChunkLength = 2000;
     private static readonly string NoteMarkerPattern = "^" + Regex.Escape(CaptureFormat.NoteMarkerPrefix) + "([0-9a-fA-F-]{36}) at=(.+)" + Regex.Escape(CaptureFormat.MarkerSuffix) + "$";
-    private sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
+    /// <summary>The first line after the note's <c># </c> title; a leading BOM is ignored.</summary>
+    internal static int ContentStart(string[] lines) => lines[0].TrimStart('\uFEFF').StartsWith("# ", StringComparison.Ordinal) ? 1 : 0;
+    /// <summary>Shared with the thought writer so edits use the parser's block boundaries.</summary>
+    internal sealed record Boundary(int Line, int Marker, Guid? Id, DateTimeOffset? Date, string? App, string? Window, string? Source, bool IsNote = false);
     private sealed record Marker(Guid Id, DateTimeOffset? Date, string? App);
     public static ParsedNote Parse(string contents, string notePath, string titleFallback, TimeZoneInfo timeZone, string? assetRootUrl = null)
     {
@@ -54,6 +57,20 @@ public static class NoteParser
                 end--;
             }
 
+            string? thought = null;
+            if (b.Id is { } id && !b.IsNote)
+            {
+                var thoughtLine = CaptureFormat.FindThoughtMarker(lines, from, end, id);
+                if (thoughtLine >= 0)
+                {
+                    var thoughtLines = lines[(thoughtLine + 1)..end].SkipWhile(string.IsNullOrWhiteSpace).ToList();
+                    if (thoughtLines.FirstOrDefault() == CaptureFormat.ThoughtLabel) thoughtLines.RemoveAt(0);
+                    var text = thoughtLines.SkipWhile(string.IsNullOrWhiteSpace).Reverse().SkipWhile(string.IsNullOrWhiteSpace).Reverse().ToArray();
+                    thought = text.Length == 0 ? null : string.Join('\n', text.Select(line => lines[thoughtLine].EndsWith(" escaped=1 -->", StringComparison.Ordinal) ? CaptureFormat.UnescapeThoughtLine(line) : line));
+                    end = thoughtLine;
+                    while (end > from && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
+                }
+            }
             var body = string.Join('\n', lines[from..end]);
             if (b.Id is null)
             {
@@ -62,15 +79,15 @@ public static class NoteParser
             }
 
             var asset = b.IsNote ? null : ImagePath(body, notePath, assetRootUrl);
-            blocks.Add(new(b.Id, b.IsNote ? BlockKind.Note : asset is null ? BlockKind.Text : BlockKind.Image, b.Date, b.App, b.Window, body, asset));
+            blocks.Add(new(b.Id, b.IsNote ? BlockKind.Note : asset is null ? BlockKind.Text : BlockKind.Image, b.Date, b.App, b.Window, body, asset, thought));
         }
 
         var seen = new HashSet<Guid>();
-        var filtered = blocks.AsEnumerable().Reverse().Where(b => b.CaptureId is null || (b.Body.Length > 0 || b.Kind == BlockKind.Note) && seen.Add(b.CaptureId.Value)).Reverse().ToArray();
+        var filtered = blocks.AsEnumerable().Reverse().Where(b => b.CaptureId is null || (b.Body.Length > 0 || b.Thought is not null || b.Kind == BlockKind.Note) && seen.Add(b.CaptureId.Value)).Reverse().ToArray();
         return new(title, filtered);
     }
 
-    private static List<Boundary> Boundaries(string[] lines, int start, TimeZoneInfo zone)
+    internal static List<Boundary> Boundaries(string[] lines, int start, TimeZoneInfo zone)
     {
         var visible = CaptureFormat.UnfencedLines(lines).ToHashSet();
         string? source = null;

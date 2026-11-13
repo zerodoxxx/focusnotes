@@ -3,6 +3,8 @@ import Foundation
 /// Markdown format for captures. This is a file-format contract: changes break existing notes.
 public enum CaptureFormat {
     public static let markerPrefix = "<!-- capture:"
+    public static let thoughtMarkerPrefix = "<!-- thought:"
+    public static let thoughtLabel = "**My thought**"
     public static let markerSuffix = " -->"
     @_spi(Checks) public static let noteMarkerPrefix = "<!-- note:"
     static let subheadingMarkerPrefix = "<!-- subheading:"
@@ -244,6 +246,80 @@ public enum CaptureFormat {
         String(text.dropLast(text.reversed().prefix(while: \.isWhitespace).count))
     }
 
+    /// An unclosed fence in the text is closed so it cannot hide the blocks after the thought.
+    public static func thoughtBlock(captureID: UUID, text: String, createdAt: Date, calendar: Calendar) -> String {
+        let original = noteBody(text)
+        let body = original.components(separatedBy: "\n").map { line in
+            line.hasPrefix("<!--") || line.hasPrefix("\\") || line.hasPrefix("#") ? "\\" + line : line
+        }.joined(separator: "\n")
+        var fence = FenceState()
+        for line in body.components(separatedBy: "\n") { _ = fence.isVisible(line) }
+        let closing = fence.openFence.map { "\n" + $0 } ?? ""
+        return "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar))\(body == original ? "" : " escaped=1") -->\n\(thoughtLabel)\n\n\(body)\(closing)\n"
+    }
+
+    static func unescapeThoughtLine(_ line: String) -> String {
+        guard line.hasPrefix("\\") else { return line }
+        let rest = String(line.dropFirst())
+        return rest.hasPrefix("<!--") || rest.hasPrefix("\\") || rest.hasPrefix("#") ? rest : line
+    }
+
+    static func thoughtMarker(in lines: [String], range: Range<Int>, captureID: UUID) -> Int? {
+        let prefix = thoughtMarkerPrefix + captureID.uuidString.lowercased() + " at="
+        return unfencedLines(Array(lines[range])).map { $0 + range.lowerBound }.first { index in
+            guard lines[index].hasPrefix(prefix), lines[index].hasSuffix(markerSuffix) else { return false }
+            let metadata = lines[index].dropFirst(prefix.count).dropLast(markerSuffix.count)
+            let stamp = metadata.hasSuffix(" escaped=1") ? metadata.dropLast(" escaped=1".count) : metadata
+            return !stamp.isEmpty && !stamp.contains(where: { $0.isWhitespace || $0 == "<" || $0 == ">" })
+        }
+    }
+
+    public static func settingThought(_ text: String?, forCapture id: UUID, in contents: String, at date: Date, calendar: Calendar) -> String? {
+        // Probe lines drop one trailing CR so CRLF notes match the parser; splicing uses the raw lines.
+        let raw = contents.components(separatedBy: "\n")
+        let lines = raw.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let boundaries = NoteParser.boundaries(in: lines, start: NoteParser.contentStart(lines), calendar: calendar)
+        guard let position = boundaries.lastIndex(where: { $0.id == id && !$0.isNote }) else { return nil }
+        let marker = boundaries[position].marker
+        let following = boundaries.indices.contains(position + 1) ? boundaries[position + 1] : nil
+        let next = following?.line ?? lines.count
+        var contentEnd = next
+        while contentEnd > marker + 1 && lines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty { contentEnd -= 1 }
+        let existing = thoughtMarker(in: lines, range: marker..<contentEnd, captureID: id)
+        // Editors may hand back CRLF text; the note's own line ending is applied below.
+        let normalized = text?.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let cleaned = normalized.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        guard cleaned != nil || existing != nil else { return contents }
+        var bodyEnd = existing ?? contentEnd
+        while bodyEnd > marker + 1 && lines[bodyEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            bodyEnd -= 1
+        }
+        // Edit between line endings, leaving the original suffix untouched.
+        func endOffset(_ index: Int) -> Int {
+            raw[..<index].reduce(0) { $0 + $1.utf8.count + 1 } - 1 - (raw[index - 1].hasSuffix("\r") ? 1 : 0)
+        }
+        let newline = raw[marker].hasSuffix("\r") ? "\r\n" : "\n"
+        let startOffset = endOffset(bodyEnd)
+        let endOffset = endOffset(contentEnd)
+        let bytes = Array(contents.utf8)
+        let replacement = cleaned.map {
+            newline + newline + thoughtBlock(captureID: id, text: $0, createdAt: date, calendar: calendar).dropLast()
+                .replacingOccurrences(of: "\n", with: newline)
+        } ?? ""
+        // A following capture that shares this capture's heading gets it repeated, so the
+        // excerpt stays visibly separate from the thought and keeps its parsed source.
+        var heading = ""
+        var headingOffset = bytes.count
+        if cleaned != nil, let following, following.id != nil, !following.isNote,
+           following.line == following.marker, let source = following.source {
+            heading = (contentEnd < next ? "" : newline) + sourceHeadingPrefix + source + newline
+            headingOffset = raw[..<next].reduce(0) { $0 + $1.utf8.count + 1 }
+        }
+        return String(decoding: bytes[..<startOffset], as: UTF8.self) + replacement
+            + String(decoding: bytes[endOffset..<headingOffset], as: UTF8.self)
+            + heading + String(decoding: bytes[headingOffset...], as: UTF8.self)
+    }
+
     public static func cleanSubheading(_ text: String) -> String {
         NoteTitle.cleanTitle(String(NoteTitle.cleanTitle(text).drop(while: { $0 == "#" || $0.isWhitespace })))
     }
@@ -277,6 +353,9 @@ public enum CaptureFormat {
     /// Shared by full parsing and incremental append source grouping.
     struct FenceState {
         private var fence: (Character, Int)?
+
+        /// The shortest line that closes the open fence, if any.
+        var openFence: String? { fence.map { String(repeating: $0.0, count: $0.1) } }
 
         mutating func isVisible(_ line: String) -> Bool {
             let indentation = line.prefix(while: { $0 == " " }).count

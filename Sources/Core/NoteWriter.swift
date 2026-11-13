@@ -1,5 +1,9 @@
 import Foundation
 
+public enum ThoughtWriteError: Error, Equatable {
+    case captureNotFound
+}
+
 /// Serializes capture and asset writes. Captures append; SessionStore owns safe heading rewrites during renames.
 public actor NoteWriter {
     private let vault: Vault
@@ -75,6 +79,18 @@ public actor NoteWriter {
                             savedNoteMarker: savedNoteMarker, sourceHeading: headingSource(capture),
                             equivalentBlocks: legacyBlocks(capture, block: block), calendar: calendar,
                             beforeWrite: beforeAppend, afterWrite: afterAppend)
+    }
+
+    public func setThought(_ text: String?, forCapture id: UUID, inNoteAt url: URL, at date: Date) async throws {
+        let location = try vault.managedLocation(of: url)
+        try NoteFile.rewrite(root: location.anchor, relativePath: location.relativePath, at: location.url,
+                             beforeWrite: beforeAppend, afterWrite: afterAppend) { contents in
+            guard let updated = CaptureFormat.settingThought(text, forCapture: id, in: contents,
+                                                              at: date, calendar: calendar) else {
+                throw ThoughtWriteError.captureNotFound
+            }
+            return updated
+        }
     }
 
     private func prepareParentDirectory(for location: VaultManagedLocation) throws {

@@ -17,6 +17,7 @@ extension AppController {
         try await checkAppReliability()
         try await checkSemanticRetryRecovery()
         try await checkNoteDraftStoreScheduling()
+        try await checkThoughtComposer()
         try await checkOutsideSessionWrites()
         if ProcessInfo.processInfo.environment["QUICK_NOTE_SELF_TEST"] == "1" {
             try await checkQuickNotePinPersistence()
@@ -714,7 +715,7 @@ extension AppController {
         let resolveBase = base.appendingPathComponent("PinIdentityFailure", isDirectory: true)
         let opened = try await CapturePipeline.open(vaultRoot: resolveBase.appendingPathComponent("Vault"),
             stateDirectory: resolveBase.appendingPathComponent("State"), calendar: pipeline.calendar)
-        let resolvePipeline = CapturePipeline(vault: opened.vault, sessions: opened.selfCheck.sessions, service: opened.selfCheck.service,
+        let resolvePipeline = CapturePipeline(vault: opened.vault, sessions: opened.selfCheck.sessions, service: opened.selfCheck.service, writer: opened.selfCheck.writer,
             index: opened.index, semantic: opened.semantic, monitor: opened.monitor, journal: opened.selfCheck.journal,
             drafts: opened.drafts, pins: opened.pins, folderShortcuts: opened.folderShortcuts,
             calendar: opened.calendar, logger: opened.logger,

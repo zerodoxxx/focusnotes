@@ -978,7 +978,7 @@ private func checkChangesDuringInitialScan() async throws {
     let original = try await CapturePipeline.open(vaultRoot: root, stateDirectory: root.appendingPathComponent("State"), calendar: .current)
     let monitor = VaultMonitor(vault: vault) { request in await recorder.scan(request, index: original.index) }
     defer { monitor.stop() }
-    let pipeline = CapturePipeline(vault: original.vault, sessions: original.selfCheck.sessions, service: original.selfCheck.service,
+    let pipeline = CapturePipeline(vault: original.vault, sessions: original.selfCheck.sessions, service: original.selfCheck.service, writer: original.selfCheck.writer,
                                    index: original.index, semantic: original.semantic, monitor: monitor,
                                    journal: original.selfCheck.journal, drafts: original.drafts, pins: original.pins,
                                    folderShortcuts: original.folderShortcuts, calendar: original.calendar, logger: original.logger)

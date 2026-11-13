@@ -118,6 +118,18 @@ public sealed class WiringTests
     }
 
     [Fact]
+    public void ToastMappingKeepsTheCaptureAction()
+    {
+        var invoked = false;
+        var toast = UiHost.Map(new AppToast(AppToastStyle.Success, "Saved", Action: new("Add a thought", () => invoked = true)));
+        Assert.NotNull(toast.Action);
+        Assert.Equal("Add a thought", toast.Action.Title);
+        toast.Action.Invoke();
+        Assert.True(invoked);
+        Assert.Null(UiHost.Map(new AppToast(AppToastStyle.Success, "Saved")).Action);
+    }
+
+    [Fact]
     public void PanelPositionsPersistInTheSettingsSection()
     {
         var path = Path.Combine(Path.GetTempPath(), "captureapp-app-tests-" + Guid.NewGuid().ToString("N"), "settings.json");

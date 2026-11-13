@@ -1,0 +1,35 @@
+{
+  "area" : "notewriter",
+  "description" : "A body line that only looks like a note marker stays in the body when a thought is set and replaced.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Docs\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n<!-- note: keep -->\nmore\n\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\ntwo\n\n### Docs\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+    },
+    "results" : [
+      null,
+      null
+    ]
+  },
+  "id" : "thought-marker-like-body-line",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Docs\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\n<!-- note: keep -->\nmore\n\n### Docs\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "one"
+      },
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "two"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

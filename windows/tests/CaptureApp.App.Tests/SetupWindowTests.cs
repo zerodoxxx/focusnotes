@@ -57,6 +57,7 @@ public sealed class SetupWindowTests
                 NotesFolderChecks.Run(app);
                 ShortcutCountTests.CapabilityTableKeepsShortcutsOnWhileSomeStayEnabled(app);
                 ShortcutResetChecks.ResetReportsUnreadableShortcutData(app);
+                ThoughtEditorChecks.Run();
 
                 var gallery = Environment.GetEnvironmentVariable("FOCUSNOTES_SETUP_GALLERY_OUT");
                 if (!string.IsNullOrWhiteSpace(gallery))

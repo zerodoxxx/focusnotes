@@ -1,0 +1,35 @@
+{
+  "area" : "notewriter",
+  "description" : "A thought before a capture sharing its heading repeats that heading once, also after a replace.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\n\n### Docs page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\nchanged\n\n### Docs page\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+    },
+    "results" : [
+      null,
+      null
+    ]
+  },
+  "id" : "thought-shared-heading",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\n\n### Docs page\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "a thought"
+      },
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "changed"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

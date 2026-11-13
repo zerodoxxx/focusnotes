@@ -1,0 +1,28 @@
+{
+  "area" : "notewriter",
+  "description" : "A thought inserted into a CRLF note keeps every line ending CRLF.",
+  "expected" : {
+    "files" : {
+      "Note.md" : "# Note\r\n\r\n### Docs page\r\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\r\n\r\nfirst\r\n\r\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\r\n**My thought**\r\n\r\na thought\r\n\r\n### Docs page\r\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\r\n\r\nsecond\r\n"
+    },
+    "results" : [
+      null
+    ]
+  },
+  "id" : "thought-crlf",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+      "Note.md" : "# Note\r\n\r\n### Docs page\r\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\r\n\r\nfirst\r\n\r\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\r\n\r\nsecond\r\n"
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "setThought",
+        "path" : "Note.md",
+        "text" : "a thought"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

@@ -60,7 +60,8 @@ internal sealed class UiHost : ICaptureHost, IDisposable
             AppToastStyle.Copied => ToastStyle.Copied,
             _ => ToastStyle.Success
         },
-        value.Title, value.Subtitle, value.HintKey is { } key ? new ToastHint(key, value.HintLabel ?? "") : null, value.Duration);
+        value.Title, value.Subtitle, value.HintKey is { } key ? new ToastHint(key, value.HintLabel ?? "") : null, value.Duration,
+        value.Action is { } action ? new ToastAction(action.Title, action.Invoke) : null);
 }
 
 /// Panel positions persist in the settings.json "panels" section as screen fractions.

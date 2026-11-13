@@ -543,3 +543,11 @@ captures.
 
 The maintainer reviews and signs off deviations DV1-DV12 (see [DESIGN.md](../DESIGN.md#deviations-from-the-mac)), any OCR
 language not covered, any exception to the focus, OCR and resource gates, and the candidate itself.
+
+## Personal thoughts on captures
+
+1. Capture text and click **Add a thought** on its success toast. Confirm the capture saves to its default note and the editor shows its source and excerpt. Type a thought and save with ⌘S or ⌘Return.
+2. Confirm the thought appears after the capture body in the Markdown block, with the thought marker and **My thought** label. Search for a distinctive word from the thought and confirm the capture is returned.
+3. Open that result's editor with ⇧Return, change the thought, and save. Confirm it is replaced in place. Save empty text and confirm the thought is removed. Repeat with an image capture.
+4. Close the editor with Escape after changing text, reopen it, and confirm the draft remains. Confirm it is bound to the original capture note and that a failed save keeps the text visible.
+5. On Windows, repeat with Shift+Enter from search and Ctrl+S or Ctrl+Enter to save; confirm the Thought search hint wraps the footer to two rows.

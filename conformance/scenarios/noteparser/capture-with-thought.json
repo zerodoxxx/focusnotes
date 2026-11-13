@@ -1,0 +1,49 @@
+{
+  "area" : "noteparser",
+  "description" : "A thought stays out of the capture body and is omitted when absent.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      {
+        "blocks" : [
+          {
+            "assetPath" : null,
+            "body" : "first",
+            "createdAt" : "2026-10-13T09:00:42Z",
+            "id" : "00000000-0000-4000-8000-000000000001",
+            "kind" : "text",
+            "sourceApp" : null,
+            "thought" : "with a thought",
+            "windowTitle" : "Unknown source"
+          },
+          {
+            "assetPath" : null,
+            "body" : "second",
+            "createdAt" : "2026-10-13T09:01:42Z",
+            "id" : "00000000-0000-4000-8000-000000000002",
+            "kind" : "text",
+            "sourceApp" : null,
+            "windowTitle" : "Unknown source"
+          }
+        ],
+        "title" : "Note"
+      }
+    ]
+  },
+  "id" : "capture-with-thought",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "op" : "parse",
+        "text" : "# Note\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 app=\"\" -->\n\nfirst\n\n<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\nwith a thought\n\n### Unknown source\n<!-- capture:00000000-0000-4000-8000-000000000002 at=2026-10-13T14:31:42+05:30 app=\"\" -->\n\nsecond\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}

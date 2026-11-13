@@ -87,6 +87,8 @@ internal sealed partial class AppController
                 // The full hit is captured now; later query results cannot change the action.
                 return action switch
                 {
+                    SearchAction.Thought => hit.CaptureID is { } id && hit.BlockKind is BlockKind.Text or BlockKind.Image
+                        ? () => _ = OpenThoughtAsync(hit, id) : null,
                     SearchAction.Primary => () => CopyHit(hit),
                     SearchAction.Open => () =>
                     {
@@ -99,7 +101,7 @@ internal sealed partial class AppController
                         catch (Exception error) { Coordinator.Report(error, Strings.CouldNotRevealNote); }
                     }
                 };
-            }));
+            }, Thought: _ => { }));
         });
     }
 

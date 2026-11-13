@@ -407,7 +407,44 @@ public static partial class NoteFile
         }
     }
 
-    public static void AtomicWrite(byte[] bytes, string root, string relativePath, bool overwrite = true)
+    internal static void Rewrite(string root, string relativePath, Action<string>? beforeWrite, Action<string>? afterWrite, Func<string, string> transform)
+    {
+        var target = SafePath(root, relativePath);
+        lock (Gate(target))
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                using var original = OpenRenameSource(target);
+                var initial = FileMetadata.Of(original);
+                initial.Validate();
+                using var buffer = new MemoryStream();
+                original.CopyTo(buffer);
+                var bytes = buffer.ToArray();
+                var updated = Utf8.GetBytes(transform(Utf8.GetString(bytes)));
+                if (updated.AsSpan().SequenceEqual(bytes)) return;
+                try
+                {
+                    AtomicWrite(updated, root, relativePath, true, beforeInstall: () =>
+                    {
+                        beforeWrite?.Invoke(target);
+                        var named = FileMetadata.At(SafePath(root, relativePath));
+                        named?.Validate();
+                        if (named is null || !initial.SameFile(named) || FileMetadata.Of(original) != initial)
+                            throw new VaultFileException(VaultFileError.Changed);
+                        // The rename-source handle permits replacement while denying writers.
+                    });
+                    afterWrite?.Invoke(target);
+                    return;
+                }
+                catch (VaultFileException error) when (error.Kind == VaultFileError.Changed && attempt < 3) { }
+            }
+        }
+    }
+
+    public static void AtomicWrite(byte[] bytes, string root, string relativePath, bool overwrite = true) =>
+        AtomicWrite(bytes, root, relativePath, overwrite, null);
+
+    private static void AtomicWrite(byte[] bytes, string root, string relativePath, bool overwrite, Action? beforeInstall)
     {
         var target = SafePath(root, relativePath, true);
         var existing = FileMetadata.At(target);
@@ -423,6 +460,7 @@ public static partial class NoteFile
                 stream.Flush(flushToDisk: true);
             }
 
+            beforeInstall?.Invoke();
             _ = SafePath(root, relativePath);
             var current = FileMetadata.At(target);
             if (existing is not null && (current is null || !existing.SameFile(current)))

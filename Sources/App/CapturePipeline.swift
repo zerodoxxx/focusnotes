@@ -34,6 +34,7 @@ struct CapturePipeline: Sendable {
     let vault: Vault
     private let sessions: SessionStore
     private let service: CaptureService
+    private let writer: NoteWriter
     let index: SearchIndex
     let semantic: SemanticIndexer
     let monitor: VaultMonitor
@@ -50,18 +51,20 @@ struct CapturePipeline: Sendable {
     struct SelfCheckAccess: Sendable {
         let sessions: SessionStore
         let service: CaptureService
+        let writer: NoteWriter
         let journal: CaptureJournal
         let renames: SessionRenameTransaction
     }
     let selfCheck: SelfCheckAccess
 
-    init(vault: Vault, sessions: SessionStore, service: CaptureService, index: SearchIndex,
+    init(vault: Vault, sessions: SessionStore, service: CaptureService, writer: NoteWriter, index: SearchIndex,
          semantic: SemanticIndexer, monitor: VaultMonitor, journal: CaptureJournal,
          drafts: NoteDraftStore, pins: NotePinStore, folderShortcuts: FolderShortcutStore,
          calendar: Calendar, logger: Logger, noteIDForPin: (@Sendable (URL) throws -> String)? = nil) {
         self.vault = vault
         self.sessions = sessions
         self.service = service
+        self.writer = writer
         self.index = index
         self.semantic = semantic
         self.monitor = monitor
@@ -74,7 +77,7 @@ struct CapturePipeline: Sendable {
         self.noteIDForPin = noteIDForPin
         renames = SessionRenameTransaction(vault: vault, stateDirectory: journal.stateDirectory, sessions: sessions,
                                            journal: journal, pins: pins, index: index, semantic: semantic, logger: logger)
-        selfCheck = SelfCheckAccess(sessions: sessions, service: service, journal: journal, renames: renames)
+        selfCheck = SelfCheckAccess(sessions: sessions, service: service, writer: writer, journal: journal, renames: renames)
     }
 
     @concurrent
@@ -98,6 +101,7 @@ struct CapturePipeline: Sendable {
         let pipeline = Self(
             vault: vault, sessions: sessions,
             service: CaptureService(vault: vault, sessions: sessions, writer: writer, now: Date.init),
+            writer: writer,
             index: index,
             semantic: semantic, monitor: monitor,
             journal: CaptureJournal(stateDirectory: stateDirectory),
@@ -308,6 +312,31 @@ struct CapturePipeline: Sendable {
             await semantic.schedule()
         } catch {
             logger.error("OCR backfill list failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
+        }
+    }
+
+    /// Where the capture lives now (it may have moved since the caller learned its note); `fallback` covers an unindexed capture.
+    func noteURL(forCapture id: UUID, fallback: URL?) async -> URL? {
+        if let path = try? await index.capture(id: id)?.notePath, let url = try? vault.noteLocation(forID: path).url { return url }
+        return fallback
+    }
+
+    @concurrent
+    func savedThought(forCapture id: UUID, inNoteAt url: URL) async throws -> String? {
+        let noteID = try vault.noteID(for: url)
+        guard let data = try vault.fileSnapshot(noteID: noteID)?.contents else { throw CocoaError(.fileReadNoSuchFile) }
+        guard let contents = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+        let note = NoteParser.parse(contents: contents, notePath: url.path, titleFallback: "", calendar: calendar)
+        return note.blocks.first { $0.captureID == id }?.thought
+    }
+
+    func setThought(_ text: String, forCapture id: UUID, inNoteAt url: URL) async throws {
+        try await recoverPendingRename(allowFileRename: false)
+        let destination = await noteURL(forCapture: id, fallback: url) ?? url
+        try await writer.setThought(text, forCapture: id, inNoteAt: destination, at: Date())
+        do { try await index.reindex(note: destination) }
+        catch {
+            logger.error("Thought saved; index update failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
         }
     }
 

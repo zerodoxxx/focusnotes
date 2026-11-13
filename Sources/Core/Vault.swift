@@ -734,7 +734,7 @@ public struct Vault: Sendable {
 
     /// Reads a note identity through its scope's descriptor anchor. This is the
     /// common safe path for external-index refreshes and search consumers.
-    func fileSnapshot(noteID: String, includingContents: Bool = true) throws -> VaultFileSnapshot? {
+    public func fileSnapshot(noteID: String, includingContents: Bool = true) throws -> VaultFileSnapshot? {
         let managed = try managedLocation(forNoteID: noteID)
         return try NoteFile.readManagedSnapshot(in: managed.anchor, relativePath: managed.relativePath,
                                                includingContents: includingContents)

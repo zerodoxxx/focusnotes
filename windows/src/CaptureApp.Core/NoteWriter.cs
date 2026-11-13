@@ -4,6 +4,12 @@ using CaptureApp.Core.Index;
 
 namespace CaptureApp.Core;
 
+public enum ThoughtWriteError { CaptureNotFound }
+public sealed class ThoughtWriteException(ThoughtWriteError kind) : IOException(kind.ToString())
+{
+    public ThoughtWriteError Kind { get; } = kind;
+}
+
 public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider? timeProvider = null, Action<string>? beforeAppend = null, Action<string>? afterAppend = null)
 {
     private readonly object gate = new();
@@ -81,6 +87,17 @@ public sealed class NoteWriter(Vault vault, TimeZoneInfo timeZone, TimeProvider?
     }
 
     public void Append(Capture capture, string note, string title) => AppendCore(capture, new(note, title, NoteKind.Note), false, false);
+    public void SetThought(string? text, Guid captureId, string note, DateTimeOffset at)
+    {
+        lock (gate)
+        {
+            var location = vault.ManagedLocation(note);
+            NoteFile.Rewrite(location.Root, location.RelativePath, beforeAppend, afterAppend, contents =>
+                CaptureFormat.SettingThought(text, captureId, contents, at, timeZone)
+                ?? throw new ThoughtWriteException(ThoughtWriteError.CaptureNotFound));
+        }
+    }
+
     public void AppendIfMissing(Capture capture, Destination destination, byte[]? png = null, bool noteMarkerIsIdentity = false)
     {
         lock (gate)

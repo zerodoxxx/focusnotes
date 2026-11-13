@@ -30,7 +30,7 @@ public struct SearchSection: Sendable {
 
 @MainActor
 public struct SearchActions {
-    public enum Action { case primary, open, reveal }
+    public enum Action { case primary, open, reveal, thought }
     /// Resolve the selected model synchronously, before dismissal invalidates results.
     public var freeze: ((SearchRow, Action) -> (() -> Void)?)?
     public var primary: (SearchRow) -> Void
@@ -60,6 +60,7 @@ final class SearchPanelView: OverlaySurface {
         KeycapView(key: "↵", caption: "Copy", color: OverlayTheme.tertiaryColor),
         KeycapView(key: "⌘↵", caption: "Open", color: OverlayTheme.tertiaryColor),
         KeycapView(key: "⌥↵", caption: "Show in Finder", color: OverlayTheme.tertiaryColor),
+        KeycapView(key: "⇧↵", caption: "Thought", color: OverlayTheme.tertiaryColor),
         KeycapView(key: "esc", caption: "Close", color: OverlayTheme.tertiaryColor)
     ]
     private var entries: [(view: NSView, height: CGFloat)] = []
@@ -326,13 +327,14 @@ public final class SearchPanelController: NSObject, NSTextFieldDelegate {
     private func perform(index: Int, modifiers: NSEvent.ModifierFlags) {
         guard rows.indices.contains(index), let actions else { return }
         let row = rows[index]
-        let action: SearchActions.Action = modifiers.contains(.command) ? .open : (modifiers.contains(.option) ? .reveal : .primary)
+        let action: SearchActions.Action = modifiers.contains(.command) ? .open : (modifiers.contains(.option) ? .reveal : (modifiers.contains(.shift) ? .thought : .primary))
         if let freeze = actions.freeze { pendingAction = freeze(row, action) }
         else {
             switch action {
             case .primary: pendingAction = { actions.primary(row) }
             case .open: pendingAction = { actions.open(row) }
             case .reveal: pendingAction = { actions.reveal(row) }
+            case .thought: pendingAction = { }
             }
         }
         dismiss()

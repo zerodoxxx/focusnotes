@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using CaptureApp.Overlay;
 
 namespace CaptureApp.Gallery;
@@ -60,6 +61,22 @@ internal static class Fixtures
         yield return Input("session-picker-empty", "Select a session…", "zzz", [], null, "Multiple sessions found with the given name", "Enter resumes · Ctrl+Enter renames");
         yield return Input("session-rename", "Name this session", "System Design", [], null, "Rename and resume session", "Enter renames and resumes · Esc returns to sessions");
         yield return Input("session-rename-error", "Name this session", "Daily sync", [], null, "Rename and resume session", "Check the name and file access. Existing files are kept.");
+        ToastView ActionToast() => new(new Toast(ToastStyle.Success, "Saved to Biology", Action: new ToastAction("Add a thought", () => { })));
+        yield return new Fixture("toast-thought-action", ActionToast, ActionToast().Width, Tokens.ToastHeight);
+        var thought = new ThoughtEditorContent("Cell signalling", "Biology · Today", "Cells communicate through chemical signals. Receptors translate these signals into changes inside the cell.", null, "Connect this to the feedback loop from yesterday.");
+        var bitmap = BitmapSource.Create(4, 2, 96, 96, PixelFormats.Bgra32, null,
+            Enumerable.Repeat(new byte[] { 160, 120, 80, 255 }, 8).SelectMany(pixel => pixel).ToArray(), 16);
+        bitmap.Freeze();
+        var imageThought = thought with { ExcerptText = null, ExcerptImage = () => Task.FromResult<ImageSource?>(bitmap) };
+        foreach (var (name, content, image, error) in new (string, ThoughtEditorContent, ImageSource?, string?)[] {
+            ("thought-editor-text", thought, null, null),
+            ("thought-editor-image", imageThought, bitmap, null),
+            ("thought-editor-failed", thought, null, "Couldn't save your thought. Your text is kept.") })
+        {
+            OverlaySurface Create() => ThoughtEditorPanel.Preview(content, image, error);
+            var sample = Create();
+            yield return new Fixture(name, Create, sample.Width, sample.Height);
+        }
         foreach (var quick in QuickFixtures()) yield return quick;
     }
     internal static readonly BrowseItem[] BrowseItems =

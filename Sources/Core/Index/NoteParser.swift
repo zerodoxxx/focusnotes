@@ -12,6 +12,7 @@ public struct ParsedBlock: Sendable, Equatable {
     public let windowTitle: String?
     public let body: String
     public let assetPath: String?
+    public let thought: String?
 }
 
 public struct ParsedNote: Sendable, Equatable {
@@ -44,6 +45,13 @@ public enum NoteParser {
             var bodyEnd = offset + 1 < boundaries.count ? boundaries[offset + 1].line : lines.count
             if bodyStart < bodyEnd, isBlankLine(lines[bodyStart]) { bodyStart += 1 }
             while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }
+            var thought: String?
+            if let id = boundary.id, !boundary.isNote,
+               let thoughtLine = CaptureFormat.thoughtMarker(in: lines, range: bodyStart..<bodyEnd, captureID: id) {
+                thought = thoughtText(lines[(thoughtLine + 1)..<bodyEnd], escaped: lines[thoughtLine].hasSuffix(" escaped=1 -->"))
+                bodyEnd = thoughtLine
+                while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }
+            }
             var body = lines[bodyStart..<bodyEnd].joined(separator: "\n")
             if boundary.id == nil {
                 body = lines[boundary.line] + (body.isEmpty ? "" : "\n" + body)
@@ -54,7 +62,7 @@ public enum NoteParser {
             blocks.append(ParsedBlock(
                 captureID: boundary.id, kind: boundary.isNote ? .note : (asset == nil ? .text : .image),
                 createdAt: boundary.date, sourceApp: boundary.app, windowTitle: boundary.window,
-                body: body, assetPath: asset
+                body: body, assetPath: asset, thought: thought
             ))
         }
         // A failed append may leave an earlier fragment with the same identity.
@@ -63,13 +71,20 @@ public enum NoteParser {
         var seen = Set<UUID>()
         blocks = blocks.reversed().filter { block in
             guard let id = block.captureID else { return true }
-            guard !block.body.isEmpty || block.kind == .note else { return false }
+            guard !block.body.isEmpty || block.thought != nil || block.kind == .note else { return false }
             return seen.insert(id).inserted
         }.reversed()
         return ParsedNote(title: title, blocks: blocks)
     }
 
-    private struct Boundary {
+    /// The first line after the note's `# ` title; a leading BOM is ignored.
+    static func contentStart(_ lines: [String]) -> Int {
+        let first = lines[0].hasPrefix("\u{FEFF}") ? String(lines[0].dropFirst()) : lines[0]
+        return first.hasPrefix("# ") ? 1 : 0
+    }
+
+    /// Shared with the thought writer so edits use the parser's block boundaries.
+    struct Boundary {
         let line: Int
         let marker: Int
         let id: UUID?
@@ -80,7 +95,7 @@ public enum NoteParser {
         var isNote = false
     }
 
-    private static func boundaries(in lines: [String], start: Int, calendar: Calendar) -> [Boundary] {
+    static func boundaries(in lines: [String], start: Int, calendar: Calendar) -> [Boundary] {
         let visible = Set(CaptureFormat.unfencedLines(lines))
         var source: String?
         var result: [Boundary] = []
@@ -293,6 +308,15 @@ public enum NoteParser {
     /// Swift `isWhitespace`, not `CaptureFormat.isBlank`: a U+200B-only line is content, not a block break.
     private static func isBlankLine(_ line: String) -> Bool { line.allSatisfy(\.isWhitespace) }
 
+    /// The lines after a thought marker, without its label and surrounding blank lines.
+    private static func thoughtText(_ lines: ArraySlice<String>, escaped: Bool) -> String? {
+        var text = lines.drop(while: { isBlankLine($0) })
+        if text.first == CaptureFormat.thoughtLabel { text = text.dropFirst() }
+        text = text.drop(while: { isBlankLine($0) })
+        while let last = text.last, isBlankLine(last) { text = text.dropLast() }
+        return text.isEmpty ? nil : text.map { escaped ? CaptureFormat.unescapeThoughtLine($0) : $0 }.joined(separator: "\n")
+    }
+
     private static func looseBlocks(_ lines: ArraySlice<String>) -> [ParsedBlock] {
         var blocks: [ParsedBlock] = []
         var region: [String] = []
@@ -304,7 +328,7 @@ public enum NoteParser {
                 let end = body.index(start, offsetBy: 2_000, limitedBy: body.endIndex) ?? body.endIndex
                 blocks.append(ParsedBlock(
                     captureID: nil, kind: .loose, createdAt: nil, sourceApp: nil, windowTitle: nil,
-                    body: String(body[start..<end]), assetPath: nil
+                    body: String(body[start..<end]), assetPath: nil, thought: nil
                 ))
                 start = end
             }

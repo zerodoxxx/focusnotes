@@ -1,0 +1,27 @@
+{
+  "area" : "captureformat",
+  "description" : "A thought block trims trailing whitespace and keeps internal hard breaks.",
+  "expected" : {
+    "files" : {
+
+    },
+    "results" : [
+      "<!-- thought:00000000-0000-4000-8000-000000000001 at=2026-10-13T14:30:42+05:30 -->\n**My thought**\n\n  A thought  \nnext\n"
+    ]
+  },
+  "id" : "thought-block",
+  "input" : {
+    "clock" : "2026-10-13T09:00:42Z",
+    "files" : {
+
+    },
+    "ops" : [
+      {
+        "captureID" : "00000000-0000-4000-8000-000000000001",
+        "op" : "thoughtBlock",
+        "text" : "  A thought  \nnext  \n\n"
+      }
+    ],
+    "timeZone" : "Asia/Kolkata"
+  }
+}
