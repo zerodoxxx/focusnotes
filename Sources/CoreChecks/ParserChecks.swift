@@ -64,14 +64,11 @@ func checkNoteParser() throws {
 
     let literalLink = "[Source](<\(sourceURL)>)"
     let linkedSelection = Capture(id: id, createdAt: minute, content: .text(literalLink), source: CaptureSource(url: sourceURL))
-    let renderedSelection = CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar)
-    let generatedLink = renderedSelection.split(separator: "\n").first { $0.hasPrefix("[Source](<") }.map(String.init) ?? ""
     let selectionBlock = NoteParser.parse(
-        contents: renderedSelection,
+        contents: CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar),
         notePath: "Root.md", titleFallback: "Root", calendar: calendar
     ).blocks[0]
-    try require(generatedLink.contains(":~:text="), "a selected text capture must get a passage link: \(generatedLink)")
-    try require(selectionBlock.kind == .text && selectionBlock.body == "\(generatedLink)\n\n\(literalLink)",
+    try require(selectionBlock.kind == .text && selectionBlock.body == "\(literalLink)\n\n\(literalLink)",
                 "a selected literal source link must remain in the parsed text body")
 
     for invalidURL in ["javascript:alert(1)", "file:///tmp/page", "https://example.test/%GG"] {
@@ -171,8 +168,9 @@ func checkNoteParser() throws {
     func sourceBlock(_ markdown: String) -> ParsedBlock {
         NoteParser.parse(contents: markdown, notePath: "Source.md", titleFallback: "Fallback", calendar: calendar).blocks[0]
     }
+    let passageURL = CaptureFormat.passageSourceURL("https://blog.example/post", selectedText: "Caching keeps   hot data\nclose to the CPU so reads stay fast")
     let passage = Capture(id: id, createdAt: minute, content: .text("Caching keeps   hot data\nclose to the CPU so reads stay fast"),
-                          source: CaptureSource(url: "https://blog.example/post"))
+                          source: CaptureSource(url: passageURL))
     let passageBlock = sourceBlock(CaptureFormat.block(for: passage, noteRelativeDir: "", calendar: calendar))
     try require(passageBlock.sourceURL == "https://blog.example/post#:~:text=Caching%20keeps%20hot%20data,so%20reads%20stay%20fast" && passageBlock.sourcePage == nil,
                 "a web passage capture must expose its full rendered source URL without a page")

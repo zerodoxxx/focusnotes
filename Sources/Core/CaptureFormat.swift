@@ -87,17 +87,15 @@ public enum CaptureFormat {
         let stamp = localStamp(capture.createdAt, pattern: markerStampPattern, calendar: calendar)
         let marker = identityPrefix(for: capture) + markerStampKey + stamp + markerAppKey + app + "\"" + markerSuffix
         let heading = includeSourceHeading ? "\(sourceHeadingPrefix)\(sourceHeading(capture.source))\n" : ""
-        let sourceLink = sourceLink(for: capture.source, content: capture.content).map { $0 + "\n\n" } ?? ""
+        let sourceLink = sourceLink(for: capture.source).map { $0 + "\n\n" } ?? ""
         return heading + marker + "\n\n" + sourceLink + body + "\n"
     }
 
     /// A source URL is serialized only when it is a well-formed absolute HTTP(S) URL.
     /// Angle brackets keep Markdown syntax out of the destination; encoded parentheses
     /// also keep the editor's current link recognizer from ending the destination early.
-    static func sourceLink(for source: CaptureSource) -> String? { sourceLink(for: source, content: nil) }
-
-    private static func sourceLink(for source: CaptureSource, content: CaptureContent?) -> String? {
-        if let web = webSourceLink(for: source, content: content) { return web }
+    static func sourceLink(for source: CaptureSource) -> String? {
+        if let web = webSourceLink(for: source) { return web }
         guard let value = source.documentURL, !value.isEmpty,
               value.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) && $0.properties.generalCategory != .control && $0.properties.generalCategory != .format && $0.properties.generalCategory != .lineSeparator && $0.properties.generalCategory != .paragraphSeparator }),
               value.range(of: #"%(?![0-9A-Fa-f]{2})"#, options: .regularExpression) == nil,
@@ -109,7 +107,7 @@ public enum CaptureFormat {
         return "\(sourceLinkPrefix)\(renderedURL)\(sourceLinkSuffix)\(suffix)"
     }
 
-    private static func webSourceLink(for source: CaptureSource, content: CaptureContent?) -> String? {
+    private static func webSourceLink(for source: CaptureSource) -> String? {
         guard let value = source.url, !value.isEmpty else { return nil }
         let scalars = Array(value.unicodeScalars)
         guard scalars.allSatisfy({
@@ -237,9 +235,16 @@ public enum CaptureFormat {
               components.scheme?.lowercased() == scheme,
               let host = components.host, !host.isEmpty,
               components.url != nil else { return nil }
-        var webURL = normalized
-        if case .text(let text)? = content, !normalized.contains(":~:"), let directive = textDirective(text) { webURL += normalized.contains("#") ? ":~:\(directive)" : "#:~:\(directive)" }
-        return "\(sourceLinkPrefix)\(webURL)\(sourceLinkSuffix)"
+        return "\(sourceLinkPrefix)\(normalized)\(sourceLinkSuffix)"
+    }
+
+    public static func passageSourceURL(_ url: String, selectedText: String) -> String {
+        guard let directive = textDirective(selectedText), let parsed = URL(string: url),
+              let scheme = parsed.scheme?.lowercased(), ["http", "https"].contains(scheme), parsed.host != nil else { return url }
+        let base: String
+        if let range = url.range(of: ":~:") { base = String(url[..<range.lowerBound]) }
+        else { base = url }
+        return base + (base.contains("#") ? ":~:" : "#:~:") + directive
     }
 
     private static func textDirective(_ text: String) -> String? {

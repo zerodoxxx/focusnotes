@@ -360,7 +360,11 @@ struct CapturePipeline: Sendable {
     }
 
     static func selection(text: String, context: FrontmostContext) -> PendingCapture {
-        PendingCapture(trigger: .selection, content: .text(text), source: source(context), subtitle: firstLine(text))
+        var captureSource = source(context)
+        if let url = captureSource.url {
+            captureSource.url = CaptureFormat.passageSourceURL(url, selectedText: text)
+        }
+        return PendingCapture(trigger: .selection, content: .text(text), source: captureSource, subtitle: firstLine(text))
     }
 
     static func source(_ context: FrontmostContext) -> CaptureSource {
