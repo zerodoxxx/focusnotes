@@ -4,11 +4,16 @@ public struct CaptureSource: Codable, Sendable, Equatable {
     public var appName: String?
     public var windowTitle: String?
     public var url: String?
+    public var documentURL: String?
+    public var page: Int?
 
-    public init(appName: String? = nil, windowTitle: String? = nil, url: String? = nil) {
+    public init(appName: String? = nil, windowTitle: String? = nil, url: String? = nil,
+                documentURL: String? = nil, page: Int? = nil) {
         self.appName = appName
         self.windowTitle = windowTitle
         self.url = url
+        self.documentURL = documentURL
+        self.page = page
     }
 }
 

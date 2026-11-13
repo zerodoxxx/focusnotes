@@ -57,11 +57,14 @@ func checkNoteParser() throws {
 
     let literalLink = "[Source](<\(sourceURL)>)"
     let linkedSelection = Capture(id: id, createdAt: minute, content: .text(literalLink), source: CaptureSource(url: sourceURL))
+    let renderedSelection = CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar)
+    let generatedLink = renderedSelection.split(separator: "\n").first { $0.hasPrefix("[Source](<") }.map(String.init) ?? ""
     let selectionBlock = NoteParser.parse(
-        contents: CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar),
+        contents: renderedSelection,
         notePath: "Root.md", titleFallback: "Root", calendar: calendar
     ).blocks[0]
-    try require(selectionBlock.kind == .text && selectionBlock.body == "\(literalLink)\n\n\(literalLink)",
+    try require(generatedLink.contains(":~:text="), "a selected text capture must get a passage link: \(generatedLink)")
+    try require(selectionBlock.kind == .text && selectionBlock.body == "\(generatedLink)\n\n\(literalLink)",
                 "a selected literal source link must remain in the parsed text body")
 
     for invalidURL in ["javascript:alert(1)", "file:///tmp/page", "https://example.test/%GG"] {

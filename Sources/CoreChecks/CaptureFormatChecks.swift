@@ -28,18 +28,40 @@ func checkCaptureFormat() throws {
     for (name, actual, expected) in cases { try require(actual == expected, "\(name): got \(actual.debugDescription)") }
     let selectionURL = "https://docs.example.test/notes?id=1#part"
     let selection = block(.text("Selected words"), source: CaptureSource(appName: "Browser", windowTitle: "Selection", url: selectionURL))
-    try require(selection == "### Selection\n\(marker("Browser"))\n\n[Source](<\(selectionURL)>)\n\nSelected words\n",
+    try require(selection == "### Selection\n\(marker("Browser"))\n\n[Source](<\(selectionURL):~:text=Selected%20words>)\n\nSelected words\n",
                 "selection source URL must follow the marker and precede captured text: \(selection.debugDescription)")
+    let passage = block(.text("Caching keeps   hot data\nclose to the CPU so reads stay fast"), source: CaptureSource(url: "https://blog.example/post"))
+    try require(passage.contains("[Source](<https://blog.example/post#:~:text=Caching%20keeps%20hot%20data,so%20reads%20stay%20fast>)"), "passage link must use first and last four words")
+    let doc = block(.image(assetPath: "assets/a.pdf"), source: CaptureSource(documentURL: "file:///Users/me/Papers/My%20Paper%20(v2).pdf", page: 12))
+    try require(doc.contains("[Source](<file:///Users/me/Papers/My%20Paper%20%28v2%29.pdf>) · page 12"), "document source must encode parentheses and append page")
+    let oldJSON = try JSONDecoder().decode(CaptureSource.self, from: Data(#"{"appName":"Safari","windowTitle":"T","url":"https://e.com"}"#.utf8))
+    try require(oldJSON.documentURL == nil && oldJSON.page == nil, "old capture source JSON must decode with nil document fields")
+    let shortPassage = block(.text("Use well-known keys"), source: CaptureSource(url: "https://e.com/a#intro"))
+    try require(shortPassage.contains("[Source](<https://e.com/a#intro:~:text=Use%20well%2Dknown%20keys>)"), "short passage link must encode hyphens")
+    let directiveURL = "https://e.com/a#:~:text=old"
+    try require(block(.text("Hello"), source: CaptureSource(url: directiveURL)).contains("[Source](<\(directiveURL)>)"), "existing text directive must remain unchanged")
+    let symbolText = block(.text("— …"), source: CaptureSource(url: "https://e.com"))
+    try require(symbolText.contains("[Source](<https://e.com>)"), "text without letters or digits must not add a directive")
+    try require(block(.image(assetPath: "assets/x.png"), source: CaptureSource(url: "https://e.com")).contains("[Source](<https://e.com>)"), "image URL must not add a directive")
+    for (documentURL, page, expectedSuffix) in [("file:///tmp/a.pdf", Optional<Int>.none, ""), ("file:///tmp/a.pdf", 0, "")] {
+        let rendered = block(.image(assetPath: "assets/a.pdf"), source: CaptureSource(documentURL: documentURL, page: page))
+        try require(rendered.contains("[Source](<file:///tmp/a.pdf>)\(expectedSuffix)"), "document link with nil or zero page must omit suffix")
+    }
+    for invalidDocumentURL in ["https://x", "relative/path", "garbage"] {
+        try require(!block(.text("plain"), source: CaptureSource(documentURL: invalidDocumentURL)).contains("[Source]"), "invalid document URL must be omitted")
+    }
+    let bothLinks = block(.text("Hello"), source: CaptureSource(url: "https://e.com", documentURL: "file:///tmp/a.pdf", page: 7))
+    try require(bothLinks.contains("[Source](<https://e.com#:~:text=Hello>)") && !bothLinks.contains("page 7"), "web URL must win without a page suffix")
     let regionURL = "https://docs.example.test/doc/section#reading"
     let region = block(.image(assetPath: "assets/shot.png"), source: CaptureSource(appName: "Safari", windowTitle: "Document — Safari", url: regionURL))
     try require(region == "### Document\n\(marker("Safari"))\n\n[Source](<\(regionURL)>)\n\n![](assets/shot.png)\n",
                 "region source URL must precede the saved image")
     let escapedURL = "HTTPS://example.test/a(b)/x\\y?q=<x>&r=(2)#part(3)"
     let escapedURLBlock = block(.text("Hello"), source: CaptureSource(url: escapedURL))
-    try require(escapedURLBlock.contains("[Source](<https://example.test/a%28b%29/x%5Cy?q=%3Cx%3E&r=%282%29#part%283%29>)"),
+    try require(escapedURLBlock.contains("[Source](<https://example.test/a%28b%29/x%5Cy?q=%3Cx%3E&r=%282%29#part%283%29:~:text=Hello>)"),
                 "source URL must normalize the scheme and escape Markdown delimiters")
     let percentURL = "https://example.test/path%2Fpart?next=a%20b&tag=x+y#frag%2f"
-    try require(block(.text("Hello"), source: CaptureSource(url: percentURL)).contains("[Source](<\(percentURL)>)"),
+    try require(block(.text("Hello"), source: CaptureSource(url: percentURL)).contains("[Source](<\(percentURL):~:text=Hello>)"),
                 "source URL must preserve valid percent escapes and query/fragment text")
     let noURL = block(.text("Hello"), source: CaptureSource(appName: "Safari"))
     for invalidURL in [
