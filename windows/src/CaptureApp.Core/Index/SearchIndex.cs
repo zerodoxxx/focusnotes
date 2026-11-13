@@ -461,7 +461,7 @@ public sealed class SearchIndex : IDisposable
                     SQLiteValue.Int(noteId), SQLiteValue.Int(ordinal), block.CaptureId is { } captureId ? SQLiteValue.Text(captureId.ToString("D").ToLowerInvariant()) : SQLiteValue.Null,
                     SQLiteValue.Text(BlockKindName(block.Kind)), block.CreatedAt is { } date ? SQLiteValue.Double(ToUnixSeconds(date)) : SQLiteValue.Null,
                     SQLiteValue.Text(block.SourceApp), SQLiteValue.Text(block.WindowTitle), SQLiteValue.Text(block.Body), SQLiteValue.Text(block.AssetPath));
-                fts.Run(SQLiteValue.Text(title), SQLiteValue.Text(FtsText(block.Body)), SQLiteValue.Text(block.AssetPath));
+                fts.Run(SQLiteValue.Text(title), SQLiteValue.Text(FtsText(block.Thought is null ? block.Body : block.Body + "\n\n" + block.Thought)), SQLiteValue.Text(block.AssetPath));
             }
         });
     }

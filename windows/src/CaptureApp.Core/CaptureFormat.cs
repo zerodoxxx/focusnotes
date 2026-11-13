@@ -6,6 +6,8 @@ namespace CaptureApp.Core;
 public static class CaptureFormat
 {
     public const string MarkerPrefix = "<!-- capture:";
+    public const string ThoughtMarkerPrefix = "<!-- thought:";
+    public const string ThoughtLabel = "**My thought**";
     public const string NoteMarkerPrefix = "<!-- note:";
     public const string MarkerSuffix = " -->";
     public const int CaptureIdLength = 36;
@@ -192,6 +194,32 @@ public static class CaptureFormat
     }
 
     public static string NoteBody(string text) => text.TrimEnd();
+    public static string ThoughtBlock(Guid captureId, string text, DateTimeOffset createdAt, TimeZoneInfo timeZone) =>
+        $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{NoteBody(text)}\n";
+
+    public static string? SettingThought(string? text, Guid captureId, string contents, DateTimeOffset at, TimeZoneInfo timeZone)
+    {
+        var lines = contents.Split('\n');
+        var marker = Array.FindLastIndex(lines, line => line.StartsWith(MarkerPrefix + captureId.ToString("D"), StringComparison.Ordinal));
+        if (marker < 0) return null;
+        var next = Array.FindIndex(lines, marker + 1, line => line.StartsWith(MarkerPrefix, StringComparison.Ordinal)
+            || line.StartsWith(NoteMarkerPrefix, StringComparison.Ordinal) || line.StartsWith(SubheadingMarkerPrefix, StringComparison.Ordinal));
+        if (next < 0) next = lines.Length;
+        var contentEnd = next;
+        if (next < lines.Length && contentEnd > marker + 1
+            && (lines[contentEnd - 1].StartsWith("### ", StringComparison.Ordinal) || lines[contentEnd - 1].StartsWith("## ", StringComparison.Ordinal))) contentEnd--;
+        static bool Blank(string line) => line.All(c => c is '\t' or '\u200b' || char.GetUnicodeCategory(c) == UnicodeCategory.SpaceSeparator);
+        while (contentEnd > marker + 1 && Blank(lines[contentEnd - 1])) contentEnd--;
+        var existing = Array.FindIndex(lines, marker, contentEnd - marker, line => line.StartsWith(ThoughtMarkerPrefix + captureId.ToString("D"), StringComparison.Ordinal));
+        var cleaned = text is null || text.All(c => char.IsWhiteSpace(c) || c == '\u200b') ? null : text;
+        if (cleaned is null && existing < 0) return contents;
+        var bodyEnd = existing < 0 ? contentEnd : existing;
+        while (bodyEnd > marker + 1 && Blank(lines[bodyEnd - 1])) bodyEnd--;
+        int EndOffset(int index) => lines.Take(index).Sum(line => line.Length + 1) - 1;
+        var replacement = cleaned is null ? "" : "\n\n" + ThoughtBlock(captureId, cleaned, at, timeZone)[..^1];
+        return contents[..EndOffset(bodyEnd)] + replacement + contents[EndOffset(contentEnd)..];
+    }
+
     public static string CleanSubheading(string text) => NoteTitle.CleanTitle(NoteTitle.CleanTitle(text).TrimStart('#', ' ', '\t', '\r', '\n'));
     public static string CleanPart(string? text) => NoteTitle.CleanTitle((text ?? "").Replace('·', '-'));
     public static string EscapeMetadata(string text) => text.Replace("&", "&amp;", StringComparison.Ordinal).Replace("\"", "&quot;", StringComparison.Ordinal).Replace("-", "&#45;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal).Replace(">", "&gt;", StringComparison.Ordinal);

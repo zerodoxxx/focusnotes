@@ -135,6 +135,10 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
                     error = "invalidFileName"
                 };
             }
+            catch (ThoughtWriteException error) when (error.Kind == ThoughtWriteError.CaptureNotFound)
+            {
+                value = new { error = "captureNotFound" };
+            }
             catch (SessionStoreException error)
             {
                 value = new
@@ -357,6 +361,11 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
                     return CaptureFormat.SourceHeading(Capture(op).Source);
                 case "block":
                     return CaptureFormat.Block(Capture(op), S(op, "dir", ""), zone, B(op, "includeSourceHeading", true), Optional(op, "assetPathPrefix"));
+                case "thoughtBlock":
+                    return CaptureFormat.ThoughtBlock(Guid.Parse(S(op, "captureID")), S(op, "text"), input.Clock, zone);
+                case "setThought":
+                    writer.SetThought(Optional(op, "text"), Guid.Parse(S(op, "captureID")), Url(S(op, "path")), input.Clock);
+                    return null;
                 case "append":
                     writer.Append(Capture(op), Url(S(op, "path")), S(op, "title"));
                     return null;
@@ -387,7 +396,17 @@ public abstract class CoreAreaExecutor(string area) : IAreaExecutor
                     return new
                     {
                         title = parsed.Title,
-                        blocks = parsed.Blocks.Select(b => new { id = b.CaptureId?.ToString("D"), kind = Lower(b.Kind.ToString()), createdAt = Stamp(b.CreatedAt), sourceApp = b.SourceApp, windowTitle = b.WindowTitle, body = b.Body, assetPath = b.AssetPath }).ToArray()
+                        blocks = parsed.Blocks.Select(b =>
+                        {
+                            var block = new Dictionary<string, object?>
+                            {
+                                ["id"] = b.CaptureId?.ToString("D"), ["kind"] = Lower(b.Kind.ToString()),
+                                ["createdAt"] = Stamp(b.CreatedAt), ["sourceApp"] = b.SourceApp,
+                                ["windowTitle"] = b.WindowTitle, ["body"] = b.Body, ["assetPath"] = b.AssetPath
+                            };
+                            if (b.Thought is not null) block["thought"] = b.Thought;
+                            return block;
+                        }).ToArray()
                     };
                 default:
                     throw new InvalidOperationException("Missing executor operation: " + S(op, "op"));
