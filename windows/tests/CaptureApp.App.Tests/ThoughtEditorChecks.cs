@@ -6,7 +6,11 @@ namespace CaptureApp.App.Tests;
 // Runs on the existing Setup test's STA/Application, avoiding a second WPF Application instance.
 internal static class ThoughtEditorChecks
 {
-    internal static void Run() => SaveCompletionKeepsNewerText();
+    internal static void Run()
+    {
+        SaveCompletionKeepsNewerText();
+        AnotherPanelKeepsTheDraftOpen();
+    }
 
     private static void SaveCompletionKeepsNewerText()
     {
@@ -32,5 +36,27 @@ internal static class ThoughtEditorChecks
             Assert.NotEqual(stale, editor.InstanceId);
         }
         finally { editor.Dismiss(); }
+    }
+
+    private static void AnotherPanelKeepsTheDraftOpen()
+    {
+        var editor = new ThoughtEditorPanel();
+        var capture = Guid.NewGuid();
+        var content = new ThoughtEditorContent("Biology", null, "Cell respiration", null, "Draft");
+        editor.Present(capture, content, _ => { }, _ => { });
+        var other = new OverlayWindow(ThoughtEditorPanel.Preview(content));
+        try
+        {
+            editor.ViewForChecks!.Editor.Text = "Mid-thought";
+            other.Present(); // Stands in for the session prompt: an interactive panel taking focus.
+            Assert.True(editor.IsVisible);
+            Assert.Equal(capture, editor.CaptureId);
+            Assert.Equal("Mid-thought", editor.CurrentText);
+        }
+        finally
+        {
+            other.Dismiss(animated: false);
+            editor.Dismiss();
+        }
     }
 }

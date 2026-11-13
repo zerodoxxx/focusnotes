@@ -35,6 +35,8 @@ public class OverlayWindow : Window
     private readonly ScaleTransform scale = new(Tokens.One, Tokens.One);
     private readonly TranslateTransform travel = new();
     public bool IsSticky { get; set; }
+    /// Stays open when another interactive panel presents.
+    public bool KeepsOpenOnHandoff { get; set; }
     public bool IsMovable { get; set; }
     public IPanelPositionStore? PositionStore { get; set; }
     public string PositionKey { get; set; } = PanelGeometry.SharedPositionKey;
@@ -88,7 +90,7 @@ public class OverlayWindow : Window
         if (interactive)
         {
             returnTarget = activePanel is { closing: false } previous ? previous.returnTarget : focus.BeforeActivation();
-            if (activePanel is { closing: false } old && old != this) { old.handedOff = true; old.Dismiss(DismissReason.Handoff, false); }
+            if (activePanel is { closing: false, KeepsOpenOnHandoff: false } old && old != this) { old.handedOff = true; old.Dismiss(DismissReason.Handoff, false); }
             activePanel = this;
         }
         var monitor = MonitorGeometry.UnderPointer(); workArea = monitor.WorkArea;
@@ -114,6 +116,13 @@ public class OverlayWindow : Window
         CaptureReturnTarget();
         Activate(); // Synchronous activation/focus before returning from a hotkey handler.
         if (field is not null) Keyboard.Focus(field);
+    }
+    /// Hands the foreground back to the window this panel took it from, leaving the panel open.
+    public bool ReturnFocus()
+    {
+        if (closing || NativeMethods.GetForegroundWindow() != handle || !focus.CanRestore(returnTarget)) return false;
+        focus.RestoreExplicit(returnTarget);
+        return NativeMethods.GetForegroundWindow() == returnTarget;
     }
     private void CaptureReturnTarget() => returnTarget = focus.BeforeActivation();
     protected override void OnActivated(EventArgs e)

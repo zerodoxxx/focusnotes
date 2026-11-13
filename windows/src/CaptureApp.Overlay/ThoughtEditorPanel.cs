@@ -110,7 +110,8 @@ public sealed class ThoughtEditorPanel
         Finish(true);
         var token = ++generation;
         var editor = new ThoughtEditorView(content);
-        var window = new OverlayWindow(editor);
+        // Sticky like the quick note, so session prompts, other panels and captures leave the draft open.
+        var window = new OverlayWindow(editor) { IsSticky = true, KeepsOpenOnHandoff = true };
         panel = window; view = editor; close = onClose; CaptureId = captureId; saving = false;
         window.Dismissed += _ => { if (generation == token) Finish(true, alreadyDismissed: true); };
         window.Closed += (_, _) => { if (generation == token) Finish(true, alreadyDismissed: true); };
@@ -148,6 +149,7 @@ public sealed class ThoughtEditorPanel
     }
     // Text typed while the save was pending keeps the editor open and saveable.
     public void SaveSucceeded(string savedText) { if (CurrentText == savedText) Finish(false); else saving = false; }
+    public bool ReturnFocus() => panel?.ReturnFocus() == true;
     public void SaveFailed(string message) { saving = false; view?.SaveFailed(message); }
     public void Dismiss() => Finish(false);
 

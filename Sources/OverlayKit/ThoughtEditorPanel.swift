@@ -107,6 +107,8 @@ public struct ThoughtEditorContent: Sendable {
         let token = generation
         let view = ThoughtEditorView(content); self.view = view; self.handlers = handlers; self.captureID = captureID; saving = false
         let panel = OverlayPanel(interactive: true, size: view.frame.size); self.panel = panel
+        // Sticky like the note editor, so session prompts and captures leave the draft open.
+        panel.isSticky = true
         panel.onClose = { [weak self] in guard let self, self.generation == token else { return }; self.finish(close: true, alreadyClosed: true) }
         panel.onKey = { [weak self] event in
             guard let self else { return false }

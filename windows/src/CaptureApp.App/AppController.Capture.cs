@@ -23,6 +23,8 @@ internal sealed partial class AppController
     private void Capture(CaptureTrigger trigger, bool fromHotkey, FrontmostContext context, bool outsideSession = false)
     {
         if (Coordinator.IsTerminating || Coordinator.AcquisitionInProgress) { return; }
+        // A focused thought editor stays open; the capture reads the window it took focus from.
+        if (context.ProcessIdentifier == (uint)Environment.ProcessId && thoughtEditor.ReturnFocus()) { context = FrontmostContext.Capture(); }
         if (context.ProcessIdentifier == (uint)Environment.ProcessId) { return; }
         // An Unavailable capability names its cause and points at Setup; nothing partial is captured.
         var capability = Capabilities.Of(CapabilityTable(), trigger == CaptureTrigger.Selection ? CapabilityId.SelectionCapture : CapabilityId.AreaCapture);

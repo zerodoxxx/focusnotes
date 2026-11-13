@@ -1827,4 +1827,16 @@ private func checkThoughtEditorBehavior() async throws {
     try require(editor.captureID == first && editor.instanceID != staleInstance, "Reopening a capture must start a new editor instance")
     editor.dismiss()
     try await settle()
+
+    // Losing key to a session prompt or capture keeps the editor and its draft.
+    var focusCloses = 0
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { _ in focusCloses += 1 }))
+    try textView().string = "Mid-thought"
+    let thoughtPanel = try currentPanel()
+    thoughtPanel.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: thoughtPanel))
+    try await settle()
+    try require(thoughtPanel.isSticky && editor.isVisible && focusCloses == 0 && editor.currentText == "Mid-thought",
+                "Losing key must keep the thought editor open with its draft")
+    editor.dismiss()
+    try await settle()
 }
