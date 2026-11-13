@@ -302,15 +302,7 @@ public sealed class CaptureCoordinator
         if (Uri.TryCreate(source.Url, UriKind.Absolute, out var uri)) hostName = uri.Host;
         var detail = string.Join(" · ", new[] { app, hostName }.Where(value => !string.IsNullOrWhiteSpace(value)));
         ThoughtRequested?.Invoke(new(capture.Id, CaptureFormat.SourceHeading(source), detail.Length == 0 ? null : detail,
-            capture.Content.Kind == CaptureContentKind.Text ? capture.Content.Value : null, KnownImagePath(capture.Id), commit));
-    }
-
-    private string? KnownImagePath(Guid captureId)
-    {
-        var asset = Pipeline.Index.Capture(captureId)?.AssetPath;
-        if (asset is null) { return null; }
-        try { return Pipeline.AssetUrl(asset); }
-        catch (FileNotFoundException) { return null; }
+            capture.Content.Kind == CaptureContentKind.Text ? capture.Content.Value : null, capture.Png, commit));
     }
 
     /// A newer capture saves a retry-pending one to its staged default, then says so.

@@ -99,7 +99,7 @@ public sealed class ThoughtTests
         Assert.Equal("Page title", request.SourceTitle);
         Assert.Equal("Browser · example.com", request.SourceDetail);
         Assert.Equal("excerpt", request.ExcerptText);
-        Assert.Null(request.ExcerptImagePath);
+        Assert.Null(request.ExcerptImagePng);
         var saved = await Assert.IsAssignableFrom<Task<SavedCapture>>(request.Commit);
         Assert.Null(coordinator.Pending);
         Assert.False(coordinator.HasPendingToast);
@@ -133,7 +133,23 @@ public sealed class ThoughtTests
     }
 
     [Fact]
-    public async Task ImageActionReportsKnownAssetAfterCommitAndNoTextExcerpt()
+    public async Task ImageActionBeforeCommitStillCarriesTheImage()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var host = new HeadlessCaptureHost(presentsUi: true);
+        var coordinator = new CaptureCoordinator(pipeline, host);
+        var capture = PendingCaptures.Image([137, 80, 78, 71], null, new("Image app"));
+        ThoughtTarget? target = null;
+        coordinator.ThoughtRequested += value => target = value;
+        await coordinator.StageAsync(capture);
+        host.Toasts.Last().Action!.Invoke();
+        Assert.Equal(capture.Png, target!.ExcerptImagePng);
+        await target.Commit!;
+    }
+
+    [Fact]
+    public async Task ImageActionCarriesThePngAfterCommitAndNoTextExcerpt()
     {
         using var temp = new TempDirectory();
         using var pipeline = TestPipeline.Open(temp);
@@ -150,8 +166,7 @@ public sealed class ThoughtTests
         Assert.Equal("Image app", target.SourceDetail);
         Assert.Null(target.ExcerptText);
         Assert.Null(target.Commit);
-        Assert.True(Path.IsPathFullyQualified(target.ExcerptImagePath!));
-        Assert.Equal(capture.Png, File.ReadAllBytes(target.ExcerptImagePath!));
+        Assert.Equal(capture.Png, target.ExcerptImagePng);
     }
 
     [Fact]

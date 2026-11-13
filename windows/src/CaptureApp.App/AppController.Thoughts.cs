@@ -23,7 +23,8 @@ internal sealed partial class AppController
     private void OnThoughtRequested(ThoughtTarget target) => dispatcher.BeginInvoke(() =>
     {
         if (disposed || quitting || Coordinator.IsTerminating) { return; }
-        Func<Task<ImageSource?>>? image = target.ExcerptImagePath is { } path ? () => LoadThoughtImage(path) : null;
+        // The PNG in hand, since the index may not have the asset until the queued commit runs.
+        Func<Task<ImageSource?>>? image = target.ExcerptImagePng is { } png ? () => LoadThoughtImage(() => png) : null;
         PresentThought(target.CaptureId, new(target.SourceTitle, target.SourceDetail, target.ExcerptText, image), null, async () =>
         {
             if (pipeline.NotePathFor(target.CaptureId) is { } note) { return pipeline.Vault.NoteLocation(note).Url; }
@@ -49,7 +50,7 @@ internal sealed partial class AppController
         var title = string.IsNullOrWhiteSpace(hit.WindowTitle) && string.IsNullOrWhiteSpace(hit.SourceApp)
             ? hit.NoteTitle : CaptureFormat.SourceHeading(new(hit.SourceApp, hit.WindowTitle));
         Func<Task<ImageSource?>>? image = hit.BlockKind == BlockKind.Image && hit.AssetPath is { } asset
-            ? () => LoadThoughtImage(asset, fromVault: true) : null;
+            ? () => LoadThoughtImage(() => pipeline.AssetData(asset)) : null;
         PresentThought(id, new(title, string.IsNullOrWhiteSpace(hit.SourceApp) ? null : hit.SourceApp,
             hit.BlockKind == BlockKind.Image ? null : hit.Body, image), saved,
             () => Task.FromResult(pipeline.Vault.NoteLocation(pipeline.NotePathFor(id) ?? hit.NotePath).Url));
@@ -86,11 +87,11 @@ internal sealed partial class AppController
         });
     }
 
-    private Task<ImageSource?> LoadThoughtImage(string path, bool fromVault = false) => Task.Run<ImageSource?>(() =>
+    private static Task<ImageSource?> LoadThoughtImage(Func<byte[]> read) => Task.Run<ImageSource?>(() =>
     {
         try
         {
-            var bytes = fromVault ? pipeline.AssetData(path) : File.ReadAllBytes(path);
+            var bytes = read();
             using var stream = new MemoryStream(bytes);
             var image = new BitmapImage();
             image.BeginInit();
