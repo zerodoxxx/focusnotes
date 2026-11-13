@@ -395,6 +395,33 @@ func checkBrowserAddressURL() throws {
     print("Browser URL: PASS (recognized address fields, browser and content isolation, strict HTTP(S), context fallback).")
 }
 
+func checkPDFSource() throws {
+    try require(FrontmostContext.pdfDocumentURL("file:///Users/me/Papers/My%20Paper.pdf")
+                == "file:///Users/me/Papers/My%20Paper.pdf", "Encoded PDF file URL rejected")
+    try require(FrontmostContext.pdfDocumentURL(URL(fileURLWithPath: "/tmp/A B.PDF")) == "file:///tmp/A%20B.PDF",
+                "Native PDF file URL not normalized")
+    let rejectedDocuments: [Any?] = [URL(fileURLWithPath: "/tmp/notes.txt"), "https://e.com/a.pdf", nil, 42, ""]
+    for document in rejectedDocuments {
+        try require(FrontmostContext.pdfDocumentURL(document) == nil,
+                    "Non-PDF or non-file document accepted: \(String(describing: document))")
+    }
+
+    try require(FrontmostContext.pdfPage(inWindowTitle: "Paper.pdf (page 12 of 40)") == 12, "Page with total missed")
+    try require(FrontmostContext.pdfPage(inWindowTitle: "Paper.pdf – Page 3") == 3, "Case-insensitive page missed")
+    for title in ["Paper.pdf", "page0.pdf", "Paper.pdf (page 0 of 4)"] {
+        try require(FrontmostContext.pdfPage(inWindowTitle: title) == nil, "Invalid page accepted: \(title)")
+    }
+    try require(FrontmostContext.pdfPage(inWindowTitle: nil) == nil, "Missing title produced a page")
+
+    let pdf = FrontmostContext(appName: "Preview", bundleIdentifier: "com.apple.Preview", processIdentifier: 456,
+                               windowTitle: "Paper.pdf (page 12 of 40)", documentURL: "file:///x/Paper.pdf")
+    try require(pdf.page == 12 && pdf.documentURL == "file:///x/Paper.pdf", "PDF context page lost")
+    let webOnly = FrontmostContext(appName: "Preview", bundleIdentifier: "com.apple.Preview", processIdentifier: 456,
+                                   windowTitle: "Paper.pdf (page 12 of 40)")
+    try require(webOnly.page == nil && webOnly.documentURL == nil, "Page reported without a PDF document")
+    print("PDF source: PASS (PDF document URL, page from window title, context page gating).")
+}
+
 // A running app can own the defaults; still exercise pasteboard, OCR and classification.
 var hotkeyFailure: Error?
 do { try checkHotkeys() } catch { hotkeyFailure = error }
@@ -403,6 +430,7 @@ do {
     try await checkOCRAndClassifier()
     try checkRegionCaptureProcessDisposition()
     try checkBrowserAddressURL()
+    try checkPDFSource()
     if let hotkeyFailure { throw hotkeyFailure }
 } catch {
     FileHandle.standardError.write(Data("Capture checks failed: \(error)\n".utf8))

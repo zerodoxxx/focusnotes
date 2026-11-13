@@ -364,7 +364,8 @@ struct CapturePipeline: Sendable {
     }
 
     static func source(_ context: FrontmostContext) -> CaptureSource {
-        CaptureSource(appName: context.appName, windowTitle: context.windowTitle, url: context.url)
+        CaptureSource(appName: context.appName, windowTitle: context.windowTitle, url: context.url,
+                      documentURL: context.documentURL, page: context.page)
     }
 
     static func imageSubtitle(preview: String? = nil) -> String {
