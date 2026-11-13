@@ -59,6 +59,14 @@ func checkThoughts() async throws {
         try exact(set(nil, set("reflection", original)!), original, "marker example round trip")
     }
 
+    let structuralText = marker + "\nreplacement\n" + marker.replacingOccurrences(of: id.uuidString.lowercased(), with: unknown.uuidString.lowercased())
+        + "\nphantom\n<!-- note:\(id.uuidString.lowercased()) at=old -->\n\\<!-- capture:literal -->"
+    let structuralNote = set(structuralText, last)!
+    let structuralBlocks = NoteParser.parse(contents: structuralNote, notePath: "N.md", titleFallback: "N", calendar: calendar).blocks
+    try require(structuralBlocks.count == 1 && structuralBlocks[0].body == "Hello é  " && structuralBlocks[0].thought == structuralText,
+                "structural markers in thought must round trip without phantom captures")
+    try exact(set(nil, structuralNote), last, "structural thought removal")
+
     let base = try checkMakeDirectory("thought")
     defer { checkRemoveDirectory(base) }
     let root = base.appendingPathComponent("Vault", isDirectory: true)

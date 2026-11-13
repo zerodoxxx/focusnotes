@@ -314,7 +314,7 @@ public enum NoteParser {
         if text.first == CaptureFormat.thoughtLabel { text = text.dropFirst() }
         text = text.drop(while: { isBlankLine($0) })
         while let last = text.last, isBlankLine(last) { text = text.dropLast() }
-        return text.isEmpty ? nil : text.joined(separator: "\n")
+        return text.isEmpty ? nil : text.map(CaptureFormat.unescapeThoughtLine).joined(separator: "\n")
     }
 
     private static func looseBlocks(_ lines: ArraySlice<String>) -> [ParsedBlock] {

@@ -197,11 +197,19 @@ public static class CaptureFormat
     /// <summary>An unclosed fence in the text is closed so it cannot hide the blocks after the thought.</summary>
     public static string ThoughtBlock(Guid captureId, string text, DateTimeOffset createdAt, TimeZoneInfo timeZone)
     {
-        var body = NoteBody(text);
+        var body = string.Join('\n', NoteBody(text).Split('\n').Select(line =>
+            line.StartsWith("<!--", StringComparison.Ordinal) || line.StartsWith('\\') || line.StartsWith('#') ? "\\" + line : line));
         var fence = new FenceState();
         foreach (var line in body.Split('\n')) fence.Advance(line);
         var closing = fence.OpenFence is { } open ? "\n" + open : "";
         return $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{body}{closing}\n";
+    }
+
+    internal static string UnescapeThoughtLine(string line)
+    {
+        if (!line.StartsWith('\\')) return line;
+        var rest = line[1..];
+        return rest.StartsWith("<!--", StringComparison.Ordinal) || rest.StartsWith('\\') || rest.StartsWith('#') ? rest : line;
     }
 
     internal static int FindThoughtMarker(string[] lines, int start, int end, Guid captureId)

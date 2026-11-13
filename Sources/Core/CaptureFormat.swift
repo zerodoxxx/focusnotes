@@ -248,11 +248,19 @@ public enum CaptureFormat {
 
     /// An unclosed fence in the text is closed so it cannot hide the blocks after the thought.
     public static func thoughtBlock(captureID: UUID, text: String, createdAt: Date, calendar: Calendar) -> String {
-        let body = noteBody(text)
+        let body = noteBody(text).components(separatedBy: "\n").map { line in
+            line.hasPrefix("<!--") || line.hasPrefix("\\") || line.hasPrefix("#") ? "\\" + line : line
+        }.joined(separator: "\n")
         var fence = FenceState()
         for line in body.components(separatedBy: "\n") { _ = fence.isVisible(line) }
         let closing = fence.openFence.map { "\n" + $0 } ?? ""
         return "\(thoughtMarkerPrefix)\(captureID.uuidString.lowercased()) at=\(localStamp(createdAt, pattern: markerStampPattern, calendar: calendar)) -->\n\(thoughtLabel)\n\n\(body)\(closing)\n"
+    }
+
+    static func unescapeThoughtLine(_ line: String) -> String {
+        guard line.hasPrefix("\\") else { return line }
+        let rest = String(line.dropFirst())
+        return rest.hasPrefix("<!--") || rest.hasPrefix("\\") || rest.hasPrefix("#") ? rest : line
     }
 
     static func thoughtMarker(in lines: [String], range: Range<Int>, captureID: UUID) -> Int? {

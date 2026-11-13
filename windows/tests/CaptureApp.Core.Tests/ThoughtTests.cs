@@ -25,6 +25,19 @@ public sealed class ThoughtTests
     }
 
     [Fact]
+    public void StructuralMarkersInThoughtRoundTripWithoutPhantomCaptures()
+    {
+        var text = Marker + "\nreplacement\n" + Marker.Replace(Id.ToString("D"), "00000000-0000-4000-8000-000000000002", StringComparison.Ordinal)
+            + "\nphantom\n<!-- note:" + Id.ToString("D") + " at=old -->\n\\<!-- capture:literal -->";
+        var original = Body + "\n";
+        var updated = Set(text, original)!;
+        var block = Assert.Single(NoteParser.Parse(updated, "N.md", "N", CheckVault.Zone).Blocks);
+        Assert.Equal("Hello é  ", block.Body);
+        Assert.Equal(text, block.Thought);
+        Assert.Equal(original, Set(null, updated));
+    }
+
+    [Fact]
     public void ExactBlockAndMiddleInsertionPreserveSuffixAndRoundTrip()
     {
         const string text = "  Reflect é\nnext \n\t";
