@@ -55,6 +55,13 @@ func checkNoteParser() throws {
                 "a generated source link must not hide the following image asset")
     try require(linkedImageBlock.body == linkedImageBody, "image classification must preserve the complete linked body")
 
+    let legacyImageBlock = NoteParser.parse(
+        contents: "### 2026-10-13 10:04\n\(checkMarker(id))\n\n[Source](<https://example.test/a>)\n\n![](assets/x.png)",
+        notePath: "Root.md", titleFallback: "Root", calendar: calendar
+    ).blocks[0]
+    try require(legacyImageBlock.kind == .image && legacyImageBlock.assetPath == "assets/x.png",
+                "a hand-written legacy source link must not hide the following image asset")
+
     let literalLink = "[Source](<\(sourceURL)>)"
     let linkedSelection = Capture(id: id, createdAt: minute, content: .text(literalLink), source: CaptureSource(url: sourceURL))
     let renderedSelection = CaptureFormat.block(for: linkedSelection, noteRelativeDir: "", calendar: calendar)
@@ -160,5 +167,39 @@ func checkNoteParser() throws {
     let fake = "\n````markdown\n### Fake\n" + CaptureFormat.block(for: repeatedCapture, noteRelativeDir: "", calendar: calendar) + "```\n````\n"
     let fenced = NoteParser.parse(contents: mixedFormats + fake, notePath: "Formats.md", titleFallback: "", calendar: calendar)
     try require(fenced.blocks.count == 3 && fenced.blocks[2].windowTitle == "Page", "markers and headings inside code fences must be ignored")
+
+    func sourceBlock(_ markdown: String) -> ParsedBlock {
+        NoteParser.parse(contents: markdown, notePath: "Source.md", titleFallback: "Fallback", calendar: calendar).blocks[0]
+    }
+    let passage = Capture(id: id, createdAt: minute, content: .text("Caching keeps   hot data\nclose to the CPU so reads stay fast"),
+                          source: CaptureSource(url: "https://blog.example/post"))
+    let passageBlock = sourceBlock(CaptureFormat.block(for: passage, noteRelativeDir: "", calendar: calendar))
+    try require(passageBlock.sourceURL == "https://blog.example/post#:~:text=Caching%20keeps%20hot%20data,so%20reads%20stay%20fast" && passageBlock.sourcePage == nil,
+                "a web passage capture must expose its full rendered source URL without a page")
+    let pdfPage = Capture(id: id, createdAt: minute, content: .image(assetPath: "assets/paper shot.png"),
+                          source: CaptureSource(documentURL: "file:///Users/me/Papers/Paper.pdf", page: 12))
+    let pdfBlock = sourceBlock(CaptureFormat.block(for: pdfPage, noteRelativeDir: "", calendar: calendar))
+    try require(pdfBlock.sourceURL == "file:///Users/me/Papers/Paper.pdf" && pdfBlock.sourcePage == 12
+                && pdfBlock.kind == .image && pdfBlock.assetPath == "assets/paper shot.png",
+                "a PDF page capture must expose its file URL and page while staying an image")
+    let legacyLinked = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\n[Source](<https://example.test/a>)\n\ntext\n")
+    try require(legacyLinked.sourceURL == "https://example.test/a" && legacyLinked.sourcePage == nil,
+                "a legacy source line after the marker must be recognized")
+    let pastedLater = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n[Source](<https://example.test/later>)\n\nold body\n")
+    try require(pastedLater.sourceURL == "https://example.test/later" && pastedLater.sourcePage == nil,
+                "a source link pasted under an old marker must be recognized")
+    let unlinked = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\nplain body\n")
+    let mentioned = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\nSee below\n[Source](<x>)\n")
+    let noteWithLink = Capture(id: id, createdAt: minute, content: .note("[Source](<https://example.test/n>)\n\nnote text"), source: CaptureSource())
+    let noteBlock = sourceBlock(CaptureFormat.block(for: noteWithLink, noteRelativeDir: "", calendar: calendar))
+    try require(noteBlock.kind == .note && noteBlock.body.hasPrefix("[Source](<"), "the note fixture must start with a source-like line")
+    try require(unlinked.sourceURL == nil && unlinked.sourcePage == nil && mentioned.sourceURL == nil && mentioned.sourcePage == nil
+                && noteBlock.sourceURL == nil && noteBlock.sourcePage == nil,
+                "captures without a leading source line and typed notes must have no source fields")
+    for suffix in [" · page 0", " · page abc", " page 12"] {
+        let malformed = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\n[Source](<https://example.test/f>)\(suffix)\n\nbody\n")
+        try require(malformed.sourceURL == "https://example.test/f" && malformed.sourcePage == nil,
+                    "a malformed page suffix '\(suffix)' must keep only the source URL")
+    }
     print("NoteParser checks passed.")
 }
