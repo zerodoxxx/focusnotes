@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 func checkThoughtComposer() async throws {
     try await checkThoughtReadScope()
+    try await checkThoughtRenameDestination()
     let a = UUID(), b = UUID()
     let noteA = URL(fileURLWithPath: "/vault/A.md"), noteB = URL(fileURLWithPath: "/vault/B.md")
     var writes: [(String, UUID, URL)] = []
@@ -79,4 +80,33 @@ private func checkThoughtReadScope() async throws {
     var rejected = false
     do { _ = try await pipeline.savedThought(forCapture: UUID(), inNoteAt: link) } catch { rejected = true }
     guard rejected else { throw SelfTestFailure("Thought read followed a link outside the vault") }
+}
+
+@MainActor
+private func checkThoughtRenameDestination() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("thought-rename-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let state = root.appendingPathComponent("State")
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: state, calendar: .current)
+    let session = try await pipeline.selfCheck.sessions.start(name: "Standup")
+    let oldURL = pipeline.vault.root.appendingPathComponent(session.notePath)
+    let capture = Capture(id: UUID(), createdAt: Date(), content: .text("capture"), source: CaptureSource(appName: "Check"))
+    let prepared = PreparedCapture(capture: capture, destination: Destination(url: oldURL, title: session.name, kind: .session), noteMarkerIsIdentity: true)
+    _ = try await pipeline.commit(CaptureJob(prepared: prepared, png: nil, ocr: nil, noteDraft: nil))
+    let stateFile = state.appendingPathComponent("session.json")
+    try FileManager.default.removeItem(at: stateFile)
+    try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+    let candidate = SessionCandidate(name: session.name, notePath: session.notePath, modifiedAt: .distantPast)
+    let outcome = try await pipeline.selfCheck.renames.rename(candidate, to: "Moved", followingCaptures: [])
+    guard outcome.identityUpdatePending else { throw SelfTestFailure("Expected pending thought rename recovery") }
+    let moved = pipeline.vault.root.appendingPathComponent(outcome.session.notePath)
+    let before = try Data(contentsOf: moved)
+    var rejected = false
+    do { try await pipeline.setThought("blocked", forCapture: capture.id, inNoteAt: moved) } catch { rejected = true }
+    guard rejected, try Data(contentsOf: moved) == before else { throw SelfTestFailure("Thought save bypassed pending rename recovery") }
+    try FileManager.default.removeItem(at: stateFile)
+    try await pipeline.setThought("recovered", forCapture: capture.id, inNoteAt: oldURL)
+    guard try await pipeline.savedThought(forCapture: capture.id, inNoteAt: moved) == "recovered" else {
+        throw SelfTestFailure("Thought save did not resolve recovered rename destination")
+    }
 }

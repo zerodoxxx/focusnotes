@@ -332,8 +332,9 @@ struct CapturePipeline: Sendable {
 
     func setThought(_ text: String, forCapture id: UUID, inNoteAt url: URL) async throws {
         try await recoverPendingRename(allowFileRename: false)
-        try await writer.setThought(text, forCapture: id, inNoteAt: url, at: Date())
-        do { try await index.reindex(note: url) }
+        let destination = await noteURL(forCapture: id, fallback: url) ?? url
+        try await writer.setThought(text, forCapture: id, inNoteAt: destination, at: Date())
+        do { try await index.reindex(note: destination) }
         catch {
             logger.error("Thought saved; index update failed (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)")
         }

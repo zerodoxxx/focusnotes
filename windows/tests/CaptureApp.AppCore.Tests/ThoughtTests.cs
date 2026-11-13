@@ -7,6 +7,27 @@ namespace CaptureApp.AppCore.Tests;
 public sealed class ThoughtTests
 {
     [Fact]
+    public async Task ThoughtSaveRecoversRenameBeforeResolvingDestination()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var session = pipeline.Sessions.Start("Standup");
+        var saved = pipeline.Commit(pipeline.PrepareText("capture", new()));
+        File.Delete(pipeline.Sessions.StateFileUrl);
+        Directory.CreateDirectory(pipeline.Sessions.StateFileUrl);
+        var outcome = pipeline.RenameSession(new(session.Name, session.NotePath, DateTimeOffset.UtcNow), "Moved");
+        Assert.True(outcome.IdentityUpdatePending);
+        var moved = pipeline.Vault.ManagedUrl(outcome.Session.NotePath);
+        var before = File.ReadAllBytes(moved);
+        await Assert.ThrowsAnyAsync<Exception>(() => pipeline.SetThoughtAsync("blocked", saved.CaptureId, moved));
+        Assert.Equal(before, File.ReadAllBytes(moved));
+        Directory.Delete(pipeline.Sessions.StateFileUrl);
+        await pipeline.SetThoughtAsync("recovered", saved.CaptureId, saved.Destination.Url);
+        Assert.Equal("recovered", await pipeline.SavedThoughtAsync(saved.CaptureId, moved));
+        Assert.False(pipeline.Pins.IsPinned(session.NotePath));
+    }
+
+    [Fact]
     public async Task PipelineRejectsThoughtReadOutsideManagedVault()
     {
         using var temp = new TempDirectory();

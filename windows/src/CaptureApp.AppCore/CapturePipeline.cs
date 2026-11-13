@@ -88,10 +88,15 @@ public sealed class CapturePipeline : IDisposable
 
     public Task SetThoughtAsync(string? text, Guid captureId, string notePath) => Task.Run(() =>
     {
-        writer.SetThought(text, captureId, notePath, DateTimeOffset.Now);
-        // The thought is saved; a stale index must not report the save as failed.
-        try { Index.Reindex(notePath); }
-        catch (Exception error) { logger.Error($"Thought saved but its index update failed: {error}"); }
+        Locked(() =>
+        {
+            var current = Index.Capture(captureId)?.NotePath;
+            var destination = current is null ? notePath : Vault.NoteLocation(current).Url;
+            writer.SetThought(text, captureId, destination, DateTimeOffset.Now);
+            // The thought is saved; a stale index must not report the save as failed.
+            try { Index.Reindex(destination); }
+            catch (Exception error) { logger.Error($"Thought saved but its index update failed: {error}"); }
+        });
     });
 
     public Task<string?> SavedThoughtAsync(Guid captureId, string notePath) => Task.Run(() =>
