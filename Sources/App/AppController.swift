@@ -1668,8 +1668,11 @@ extension AppController: CaptureQueueHost {
         if presentsUI { toast.dismiss(expire: false) }
     }
 
-    func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
+    func captureCommitted(_ saved: SavedCapture) async {
         lastCapture = (saved.captureID, saved.destination)
+    }
+
+    func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async {
         let session = outsideSession ? await pipeline.currentSession() : nil
         let title = "\(outsideSession ? "Added" : "Saved") to \(saved.destination.title)"
             + (saved.section.map { " › \($0)" } ?? "")
