@@ -31,6 +31,14 @@ final class QuickNoteState {
     func intent() -> CaptureIntent {
         CaptureIntent(destination.map { .resolved($0) } ?? .automatic, outsideSession: outsideSession, folder: folder)
     }
+    /// The save caption: the chosen note with its current section, or the folder a new note goes to.
+    func saveLabel(section: String?) -> String {
+        if let destination {
+            return "Adding to \(destination.title)" + (section.map { " › \($0)" } ?? "")
+        }
+        if let folder { return "Creating a note in \(folder.components.last ?? folder.rawValue)" }
+        return "Creating a note"
+    }
     /// The chosen note when its file exists on disk.
     var existingDestination: Destination? {
         destination.flatMap { FileManager.default.fileExists(atPath: $0.url.path) ? $0 : nil }

@@ -925,14 +925,16 @@ final class AppController: NSObject, NSMenuDelegate {
                 let initiallyPinned = noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? state.pinOnSave
                 // Persist a shortcut's explicit destination before editing an existing draft.
                 try pipeline.drafts.store(draft, pinOnSave: state.pinOnSave, folder: folder)
+                let initialSection: String?
+                if let destination = state.destination { initialSection = await pipeline.section(of: destination) } else { initialSection = nil }
                 // A folder is not a chosen note: its label only titles the blank editor, so typed names still resolve.
-                editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
-                    onDraft: { [weak editor] text in
+                editor.present(destination: state.destinationLabel, fallbackTitle: state.folderLabel, saveLabel: state.saveLabel(section: initialSection), isPinned: initiallyPinned, draft: draft, handlers: NoteEditorHandlers(
+                    onDraft: { [weak controller, weak editor] text in
                         let blank = CaptureFormat.isBlank(text)
                         try pipeline.drafts.flushScheduledStore(text, pinOnSave: state.pinOnSave(forDraft: text), folder: state.folder)
                         if blank {
                             state.dropPinOnSaveForBlankDraft()
-                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            controller?.applyDestination(editor: editor, state: state, isPinned: { noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false })
                         }
                     },
                     onSubmit: { [weak controller] text in
@@ -945,7 +947,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         if CaptureFormat.isBlank(text) {
                             do { try state.restoreSessionDestination(sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't reset draft pin"); return }
-                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            controller?.applyDestination(editor: editor, state: state, isPinned: { noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false })
                             return
                         }
                         controller?.enqueue(runsDuringQuit: true) { controller in
@@ -988,7 +990,7 @@ final class AppController: NSObject, NSMenuDelegate {
                                 state.destination = try pipeline.pickedDestination(noteID: item.id, title: item.title,
                                                                                    kind: state.kinds[item.id] ?? .note)
                             } catch { controller?.report(error, title: "Couldn't select note"); return }
-                            editor?.setDestination(item.title, isPinned: pipeline.pins.isPinned(item.id))
+                            controller?.applyDestination(editor: editor, state: state, isPinned: { pipeline.pins.isPinned(item.id) })
                         case .open:
                             do { controller?.openNote(try pipeline.vault.noteLocation(forID: item.id).url) }
                             catch { controller?.report(error, title: "Couldn't open note") }
@@ -1018,7 +1020,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         }
                         if blank {
                             state.dropPinOnSaveForBlankDraft()
-                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            controller?.applyDestination(editor: editor, state: state, isPinned: { noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false })
                         }
                     },
                     existingTitleForText: { text in
@@ -1034,7 +1036,7 @@ final class AppController: NSObject, NSMenuDelegate {
                         { [weak controller, weak editor] in
                             do { try state.toggleOutsideSession(sessionDestination: sessionDestination, drafts: pipeline.drafts) }
                             catch { controller?.report(error, title: "Couldn't change note destination"); return }
-                            editor?.setDestination(state.destinationLabel, isPinned: noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false)
+                            controller?.applyDestination(editor: editor, state: state, isPinned: { noteID(state.destination).map { pipeline.pins.isPinned($0) } ?? false })
                         }
                     }))
                 Task { @MainActor [weak controller, weak state, weak editor] in
@@ -1045,6 +1047,17 @@ final class AppController: NSObject, NSMenuDelegate {
                     editor?.refreshBrowseItems()
                 }
             } catch { controller.report(error, title: "Couldn't restore draft") }
+        }
+    }
+
+    /// Shows the chosen note's label at once, then again with its section once the note has been read.
+    private func applyDestination(editor: NoteEditorPanel?, state: QuickNoteState, isPinned: @escaping @MainActor () -> Bool) {
+        editor?.setDestination(state.destinationLabel, saveLabel: state.saveLabel(section: nil), isPinned: isPinned())
+        guard let destination = state.destination else { return }
+        Task { @MainActor [weak self, weak state, weak editor] in
+            let section = await self?.pipeline.section(of: destination)
+            guard let state, let editor, state.destination == destination, self?.editor === editor else { return }
+            editor.setDestination(state.destinationLabel, saveLabel: state.saveLabel(section: section), isPinned: isPinned())
         }
     }
 

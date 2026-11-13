@@ -175,6 +175,8 @@ struct CapturePipeline: Sendable {
 
     func sessionDestination() async throws -> Destination? { try await service.sessionDestination() }
 
+    func section(of destination: Destination) async -> String? { try? await service.section(of: destination) }
+
     func defaultDestination() async throws -> Destination { try await service.defaultDestination() }
 
     func pickedDestination(noteID: String, title: String, kind: NoteKind) throws -> Destination {
