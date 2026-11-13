@@ -144,7 +144,7 @@ choice; closing keeps the draft text, and the next quick note or normal capture 
 The caret and selection lines show dimmed syntax; other lines render
 without the syntax. Bullets display as •, and clickable task boxes support undo.
 The stored text stays Markdown. ⌘↩ (including keypad Enter) saves and appends to
-the active session by default. The footer says “Adding to <note>” for a selected note, active session, or typed title that resolves to an existing note; when that note has a `## ` subheading it appends ` › <latest section>`. A folder quick note otherwise says “Creating a note in <folder>” using the folder's last path component, and other new notes say “Creating a note”. Its name comes
+the active session by default. The footer says “Adding to <note>” for a selected note, active session, or typed title that resolves to an existing note; for a selected note or the active session it appends ` › <latest section>` when that note has a `## ` subheading. A folder quick note otherwise says “Creating a note in <folder>” using the folder's last path component, and other new notes say “Creating a note”. Its name comes
 from the first non-empty line with Markdown removed, or “Note yyyy-MM-dd HH.mm”
 if nothing remains. An unqualified name keeps the 60-character display-title cap
 (then “…”). A path is parsed before display truncation: each component is cleaned
