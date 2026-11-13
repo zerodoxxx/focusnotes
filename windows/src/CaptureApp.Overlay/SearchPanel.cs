@@ -20,8 +20,10 @@ public sealed class SearchPanelView : OverlaySurface, IDisposable
     private bool loading;
     public event Action<int>? Selected;
     public event Action<int>? Primary;
-    public SearchPanelView(string query = "") : base(Tokens.SearchWidth, Tokens.Padding * 2 + Tokens.SearchFieldHeight)
+    private readonly bool hasThought;
+    public SearchPanelView(string query = "", bool hasThought = false) : base(Tokens.SearchWidth, Tokens.Padding * 2 + Tokens.SearchFieldHeight)
     {
+        this.hasThought = hasThought;
         fieldHost = Ui.Field(Field, "Search notes"); Field.Text = query;
         spinner.RenderTransformOrigin = new Point(Tokens.Center, Tokens.Center); spinner.RenderTransform = rotation;
         AutomationProperties.SetName(spinner, "Searching");
@@ -56,7 +58,7 @@ public sealed class SearchPanelView : OverlaySurface, IDisposable
             listHeight += Tokens.HeaderHeight + count * Tokens.ResultHeight;
         }
         if (listHeight == 0) listHeight = Tokens.NoResultsHeight;
-        Height = Tokens.Padding * 2 + Tokens.SearchFieldHeight + Tokens.BorderWidth * 2 + listHeight + Tokens.FooterHeight;
+        Height = Tokens.Padding * 2 + Tokens.SearchFieldHeight + Tokens.BorderWidth * 2 + listHeight + (hasThought ? Tokens.FooterHeight * 2 : Tokens.FooterHeight);
         Ui.Place(Body, Ui.Icon("magnifyingglass"), Tokens.Padding, Tokens.Padding + (Tokens.SearchFieldHeight - Tokens.IconSize) / 2, Tokens.IconSize, Tokens.IconSize);
         var fieldX = Tokens.Padding + Tokens.IconSize + Tokens.IconGap;
         Ui.Place(Body, fieldHost, fieldX, Tokens.Padding, Width - fieldX - Tokens.Padding - Tokens.SpinnerSize - Tokens.IconGap, Tokens.SearchFieldHeight);
@@ -97,12 +99,15 @@ public sealed class SearchPanelView : OverlaySurface, IDisposable
         }
         top += listHeight;
         Ui.Place(Body, Ui.Separator(), Tokens.Padding, top, width, Tokens.BorderWidth);
-        var footer = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var (key, label) in new[] { ("Enter", "Copy"), ("Ctrl+Enter", "Open"), ("Alt+Enter", "Show in File Explorer"), ("Esc", "Close") })
+        var footer = new WrapPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var hints = new List<(string, string)> { ("Enter", "Copy"), ("Ctrl+Enter", "Open"), ("Alt+Enter", "Show in File Explorer") };
+        if (hasThought) hints.Add(("Shift+Enter", "Thought"));
+        hints.Add(("Esc", "Close"));
+        foreach (var (key, label) in hints)
         {
             var hint = new KeycapView(key, label) { Margin = new Thickness(Tokens.Zero, Tokens.Zero, Tokens.FooterHintGap, Tokens.Zero) }; footer.Children.Add(hint);
         }
-        Ui.Place(Body, footer, Tokens.Padding, top + Tokens.BorderWidth, width, Tokens.FooterHeight);
+        Ui.Place(Body, footer, Tokens.Padding, top + Tokens.BorderWidth, width, hasThought ? Tokens.FooterHeight * 2 : Tokens.FooterHeight);
     }
     private static async Task LoadThumbnail(Func<CancellationToken, Task<ImageSource?>> loader, Image image, CancellationToken token)
     {
@@ -128,7 +133,7 @@ public sealed class SearchPanelController
     {
         panel?.Dismiss(DismissReason.Replaced, false);
         this.provider = provider; this.actions = actions; rows = []; selection = null; pendingAction = null;
-        var content = new SearchPanelView(); view = content;
+        var content = new SearchPanelView(hasThought: actions.Thought is not null); view = content;
         var window = new OverlayWindow(content); panel = window;
         content.Field.TextChanged += (_, _) => Schedule(true);
         content.Selected += Select;
@@ -182,13 +187,14 @@ public sealed class SearchPanelController
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.Down || key == Key.Up) { if (rows.Count > 0) Select(Math.Clamp((selection ?? 0) + (key == Key.Down ? 1 : -1), 0, rows.Count - 1)); e.Handled = true; }
-        if (key == Key.Enter) { if (selection is { } index) Perform(index, Keyboard.Modifiers.HasFlag(ModifierKeys.Control) ? SearchAction.Open : Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) ? SearchAction.Reveal : SearchAction.Primary); e.Handled = true; }
+        if (key == Key.Enter) { if (selection is { } index) Perform(index, Keyboard.Modifiers.HasFlag(ModifierKeys.Control) ? SearchAction.Open : Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) ? SearchAction.Reveal : Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? SearchAction.Thought : SearchAction.Primary); e.Handled = true; }
     }
     private void Perform(int index, SearchAction kind)
     {
         if (index < 0 || index >= rows.Count || actions is null) return;
+        if (kind == SearchAction.Thought && actions.Thought is null) return;
         var row = rows[index]; var handlers = actions;
-        pendingAction = handlers.Freeze is { } freeze ? freeze(row, kind) : () => { switch (kind) { case SearchAction.Open: handlers.Open(row); break; case SearchAction.Reveal: handlers.Reveal(row); break; default: handlers.Primary(row); break; } };
+        pendingAction = handlers.Freeze is { } freeze ? freeze(row, kind) : () => { switch (kind) { case SearchAction.Thought: handlers.Thought?.Invoke(row); break; case SearchAction.Open: handlers.Open(row); break; case SearchAction.Reveal: handlers.Reveal(row); break; default: handlers.Primary(row); break; } };
         panel?.Dismiss();
     }
     public void Dismiss(DismissReason reason = DismissReason.Explicit) => panel?.Dismiss(reason);

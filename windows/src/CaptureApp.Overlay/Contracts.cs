@@ -4,7 +4,8 @@ namespace CaptureApp.Overlay;
 
 public enum ToastStyle { Success, Warning, Session, Copied }
 public sealed record ToastHint(string Key, string Label = "");
-public sealed record Toast(ToastStyle Style, string Title, string? Subtitle = null, ToastHint? Hint = null, double? Duration = null)
+public sealed record ToastAction(string Title, Action Invoke);
+public sealed record Toast(ToastStyle Style, string Title, string? Subtitle = null, ToastHint? Hint = null, double? Duration = null, ToastAction? Action = null)
 {
     public double DurationSeconds => Duration ?? (Style == ToastStyle.Warning ? Tokens.WarningToastDuration : Tokens.DefaultToastDuration);
 }
@@ -16,9 +17,9 @@ public sealed record SearchRow(string Id, string Title, string Snippet = "", str
     IReadOnlyList<TextMatch>? TitleMatches = null, IReadOnlyList<TextMatch>? SnippetMatches = null,
     Func<CancellationToken, Task<ImageSource?>>? ThumbnailLoader = null);
 public sealed record SearchSection(string Title, IReadOnlyList<SearchRow> Rows, string? ErrorMessage = null);
-public enum SearchAction { Primary, Open, Reveal }
+public enum SearchAction { Primary, Open, Reveal, Thought }
 public sealed record SearchActions(Action<SearchRow> Primary, Action<SearchRow> Open, Action<SearchRow> Reveal,
-    Action? OnClose = null, Func<SearchRow, SearchAction, Action?>? Freeze = null);
+    Action? OnClose = null, Func<SearchRow, SearchAction, Action?>? Freeze = null, Action<SearchRow>? Thought = null);
 public sealed record InputRequest(string Placeholder, Func<string, IReadOnlyList<Suggestion>> Suggestions,
     Action<string> OnSubmit, Action OnCancel, string InitialText = "", string? Title = null, string? Secondary = null,
     bool SelectionOnly = false, Action<string>? OnAccept = null, Action<string>? OnAlternateSubmit = null,
@@ -49,3 +50,6 @@ public sealed record QuickNoteHandlers(
     }
 }
 public enum QuickNoteToggle { Presented, Reactivated, Closed }
+
+public sealed record ThoughtEditorContent(string SourceTitle, string? SourceDetail, string? ExcerptText,
+    Func<Task<ImageSource?>>? ExcerptImage, string Text = "");

@@ -24,6 +24,7 @@ public class OverlayWindow : Window
 {
     private static OverlayWindow? activePanel;
     private readonly bool interactive;
+    private readonly bool receivesMouseClicks;
     private readonly FocusReturnTracker focus;
     private readonly DispatcherTimer desktopTimer;
     private HwndSource? source;
@@ -42,9 +43,10 @@ public class OverlayWindow : Window
     public event Action? Resigned;
     public Func<bool>? ShouldDismiss { get; set; }
     public Func<CancelResult>? CancelHandler { get; set; }
-    public OverlayWindow(OverlaySurface surface, bool interactive = true, FocusReturnTracker? focusTracker = null)
+    public OverlayWindow(OverlaySurface surface, bool interactive = true, FocusReturnTracker? focusTracker = null, bool receivesMouseClicks = false)
     {
         this.interactive = interactive;
+        this.receivesMouseClicks = receivesMouseClicks;
         focus = focusTracker ?? FocusReturnTracker.Shared;
         AllowsTransparency = true;
         WindowStyle = WindowStyle.None;
@@ -72,7 +74,12 @@ public class OverlayWindow : Window
         source = HwndSource.FromHwnd(handle);
         source.AddHook(WindowProc);
         var styles = NativeMethods.GetWindowLongPtr(handle, NativeMethods.GwlExStyle) | NativeMethods.WsExToolWindow;
-        if (!interactive) styles |= NativeMethods.WsExNoActivate | NativeMethods.WsExTransparent;
+        if (!interactive)
+        {
+            styles |= NativeMethods.WsExNoActivate;
+            if (!receivesMouseClicks) styles |= NativeMethods.WsExTransparent;
+            else styles &= ~NativeMethods.WsExTransparent;
+        }
         NativeMethods.SetWindowLongPtr(handle, NativeMethods.GwlExStyle, styles);
     }
     public void Present(bool typingNeeded = true, IInputElement? field = null)
