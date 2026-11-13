@@ -2,11 +2,11 @@ import AppKit
 @_spi(Checks) import OverlayKit
 
 @MainActor
-func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false) throws {
+func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false, characters: String = "") throws {
     let panel = try currentPanel()
     guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
-        characters: "", charactersIgnoringModifiers: "", isARepeat: isRepeat, keyCode: code) else {
+        characters: characters, charactersIgnoringModifiers: characters, isARepeat: isRepeat, keyCode: code) else {
         throw GalleryError("Could not construct key event")
     }
     if modifiers.contains(.command) { _ = panel.performKeyEquivalent(with: event) }
@@ -304,7 +304,10 @@ func runBehaviorChecks() async throws {
     try await checkPanelMoving()
     try await checkCaretStates()
     try await checkLivePreviewInteraction()
-    print("Behavior checks passed: focus policy, immediate focus release, heading acceptance, screen/space dismissal, view release, toast expiry, frozen search actions, query cancellation/errors/loading.")
+    try await checkToastAction()
+    try await checkThoughtSearchReturn()
+    try await checkThoughtEditorBehavior()
+    print("Behavior checks passed: focus policy, immediate focus release, heading acceptance, screen/space dismissal, view release, toast expiry, frozen search actions, query cancellation/errors/loading, toast action, thought search routing, thought editor keys.")
 }
 
 @MainActor
@@ -1692,4 +1695,112 @@ private func checkStickyNotes() async throws {
         try require(!search.isVisible, "Search must still dismiss on key loss and Space changes")
     }
     print("Sticky-note checks passed (resign/Space survival, card close, focus/scroll/caret retention, first mouse, transient Input/Search).")
+}
+
+@MainActor
+private final class ActionTally { var count = 0 }
+
+@MainActor
+private func newlyShownPanel(excluding before: Set<ObjectIdentifier>) -> NSWindow? {
+    NSApp.windows.first { $0 is OverlayPanel && $0.isVisible && !before.contains(ObjectIdentifier($0)) }
+}
+
+@MainActor
+private func checkToastAction() async throws {
+    let handled = ActionTally()
+    let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+    let toast = ToastController()
+    toast.show(Toast(style: .success, title: "Saved", duration: 5,
+                     action: Toast.Action(title: "Add a thought", handler: { handled.count += 1 })))
+    let button = newlyShownPanel(excluding: before)?.contentView.map(descendants)?
+        .compactMap { $0 as? NSButton }.first { $0.title == "Add a thought" }
+    try require(button != nil, "Toast with an action must show its button")
+    button?.performClick(nil)
+    try await settle()
+    try require(handled.count == 1 && !toast.isVisible, "Toast action must run its handler once and dismiss the toast")
+
+    let plainBefore = Set(NSApp.windows.map(ObjectIdentifier.init))
+    let plain = ToastController()
+    plain.show(Toast(style: .success, title: "Saved", duration: 5))
+    let plainPanel = newlyShownPanel(excluding: plainBefore)
+    try require(plainPanel != nil, "Toast without an action did not appear")
+    try require(!descendants(plainPanel!.contentView!).contains { $0 is NSButton }, "Toast without an action must not show a button")
+    plain.dismiss(expire: false)
+    try await settle()
+}
+
+@MainActor
+private func checkThoughtSearchReturn() async throws {
+    let search = SearchPanelController()
+    var resolved: [String] = []
+    // SearchActions has no thought closure, so the thought action is observed through the freeze hook.
+    let actions = SearchActions(primary: { _ in }, open: { _ in }, reveal: { _ in }, onClose: {}, freeze: { row, action in
+        resolved.append("\(action):\(row.id)")
+        return nil
+    })
+    func presentSearch() {
+        search.present(query: { _ in [SearchSection(title: "Recent", rows: [
+            SearchRow(id: "first", title: "System Design"), SearchRow(id: "second", title: "Rate limiting")
+        ])] }, actions: actions)
+    }
+    presentSearch()
+    try await settle()
+    try key(36, modifiers: .shift)
+    try await settle()
+    try require(resolved == ["thought:first"], "Shift-Return must perform the thought action")
+    presentSearch()
+    try await settle()
+    try key(36, modifiers: [.command, .shift])
+    try await settle()
+    try require(resolved == ["thought:first", "open:first"], "Command-Shift-Return must still perform open")
+}
+
+@MainActor
+private func checkThoughtEditorBehavior() async throws {
+    let editor = ThoughtEditorPanel()
+    let content = ThoughtEditorContent(sourceTitle: "Biology", excerpt: .text("Cell respiration"), text: "Draft")
+    func textView() throws -> NSTextView {
+        guard let root = try currentPanel().contentView, let text = descendants(root).compactMap({ $0 as? NSTextView }).first else {
+            throw GalleryError("Thought text view missing")
+        }
+        return text
+    }
+    let first = UUID(), second = UUID()
+    var saves: [String] = []
+    var closes: [String] = []
+    let handlers = ThoughtEditorPanel.Handlers(onSave: { saves.append($0) }, onClose: { closes.append($0) })
+
+    editor.present(captureID: first, content: content, handlers: handlers)
+    try require(editor.isVisible && editor.captureID == first, "Thought editor did not present")
+    let text = try textView()
+    text.string = "First thought"
+    try key(1, modifiers: .command, characters: "s")
+    try require(saves == ["First thought"] && closes.isEmpty, "Command-S must save the current text once")
+    try key(1, modifiers: .command, characters: "s")
+    try require(saves.count == 1, "A second Command-S before saveFailed must be ignored")
+    editor.saveFailed("Could not save. Try again.")
+    try key(1, modifiers: .command, characters: "s")
+    try require(saves == ["First thought", "First thought"], "Command-S after saveFailed must save again")
+    editor.dismiss()
+    try await settle()
+
+    editor.present(captureID: first, content: content, handlers: handlers)
+    try textView().string = "Escaped"
+    try key(53)
+    try require(closes == ["Escaped"] && !editor.isVisible && editor.captureID == nil, "Escape must close with the current text exactly once")
+    try await settle()
+
+    var aCloses: [String] = []
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { aCloses.append($0) }))
+    try textView().string = "A text"
+    editor.present(captureID: second, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { _ in }))
+    try require(aCloses == ["A text"] && editor.captureID == second, "Presenting B while A is shown must close A once and track B")
+    editor.dismiss()
+    try await settle()
+
+    var dismissCloses = 0
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { _ in dismissCloses += 1 }))
+    editor.dismiss()
+    try await settle()
+    try require(dismissCloses == 0 && editor.captureID == nil && !editor.isVisible, "dismiss() must clear the editor without calling onClose")
 }

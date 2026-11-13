@@ -135,6 +135,11 @@ final class AppController: NSObject, NSMenuDelegate {
     private var input: InputPanelController?
     private var search: SearchPanelController?
     private var editor: NoteEditorPanel?
+    // Not closed by closePanels(): captures and session changes continue while a thought is open.
+    private let thoughtEditor = ThoughtEditorPanel()
+    private lazy var thoughts = ThoughtComposer { [pipeline] text, captureID, note in
+        try await pipeline.setThought(text, forCapture: captureID, inNoteAt: note)
+    }
     private var inputCloseWaiters: [CheckedContinuation<Void, Never>] = []
     private var searchCloseWaiters: [CheckedContinuation<Void, Never>] = []
     let captures: CaptureCommitQueue
@@ -1156,6 +1161,9 @@ final class AppController: NSObject, NSMenuDelegate {
                     do { controller?.revealNote(try pipeline.vault.noteLocation(forID: hit.notePath).url) }
                     catch { controller?.report(error, title: "Couldn't reveal note") }
                 }
+                case .thought:
+                    guard let captureID = hit.captureID, hit.blockKind == .text || hit.blockKind == .image else { return nil }
+                    return { [weak controller] in controller?.openThought(for: hit, captureID: captureID) }
                 }
             }))
         }
@@ -1232,6 +1240,81 @@ final class AppController: NSObject, NSMenuDelegate {
             showToast(Toast(style: .success, title: created ? "Note created" : appended ? "Saved to \(saved.destination.title)" : "Note added",
                             subtitle: created ? saved.destination.title : CapturePipeline.firstLine(text)))
         }
+    }
+
+    /// From the confirmation toast: saves the capture now so the thought has a note to land in.
+    private func openThought(for capture: PendingCapture) {
+        let commit = captures.pending?.id == capture.id ? captures.commitPending() : nil
+        let excerpt: ThoughtEditorContent.Excerpt = switch capture.content {
+        case .text(let text): .text(text)
+        case .image(let png, _): .image { NSImage(data: png) }
+        }
+        let content = ThoughtEditorContent(sourceTitle: CaptureFormat.sourceHeading(capture.source),
+                                           sourceDetail: Self.thoughtDetail(app: capture.source.appName, url: capture.source.url),
+                                           excerpt: excerpt)
+        presentThought(capture.id, content: content, savedThought: nil) { try await commit?.value.destination.url }
+    }
+
+    /// From search: revisits a saved capture, starting from its saved thought.
+    private func openThought(for hit: SearchHit, captureID: UUID) {
+        let pipeline = pipeline
+        let found = try? pipeline.vault.noteLocation(forID: hit.notePath).url
+        Task { [weak self] in
+            let saved: String?
+            do {
+                guard let url = await pipeline.noteURL(forCapture: captureID, fallback: found) else { throw ThoughtWriteError.captureNotFound }
+                saved = try await pipeline.savedThought(forCapture: captureID, inNoteAt: url)
+            } catch {
+                self?.report(error, title: "Couldn't open that capture")
+                return
+            }
+            let excerpt: ThoughtEditorContent.Excerpt
+            if hit.blockKind == .image, let path = hit.assetPath {
+                excerpt = .image { (try? await pipeline.assetData(path)).flatMap(NSImage.init(data:)) }
+            } else { excerpt = .text(hit.body) }
+            let content = ThoughtEditorContent(sourceTitle: CaptureFormat.sourceHeading(CaptureSource(appName: hit.sourceApp, windowTitle: hit.windowTitle)),
+                                               sourceDetail: Self.thoughtDetail(app: hit.sourceApp, url: nil), excerpt: excerpt)
+            self?.presentThought(captureID, content: content, savedThought: saved) { found }
+        }
+    }
+
+    private func presentThought(_ captureID: UUID, content: ThoughtEditorContent, savedThought: String?,
+                                knownNote: @escaping () async throws -> URL?) {
+        guard presentsUI, !isTerminating else { return }
+        let pipeline = pipeline
+        var content = content
+        // Resolved at save time so a note renamed while the editor is open is still found.
+        content.text = thoughts.begin(captureID, savedThought: savedThought) {
+            guard let url = await pipeline.noteURL(forCapture: captureID, fallback: try await knownNote()) else {
+                throw ThoughtWriteError.captureNotFound
+            }
+            return url
+        }
+        thoughtEditor.present(captureID: captureID, content: content, handlers: .init(
+            onSave: { [weak self] text in self?.saveThought(captureID, text: text) },
+            onClose: { [weak self] text in self?.thoughts.close(captureID, text: text) }))
+    }
+
+    private func saveThought(_ captureID: UUID, text: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await thoughts.save(captureID, text: text)
+            let showing = thoughtEditor.captureID == captureID
+            switch outcome {
+            case .saved:
+                if showing { thoughtEditor.dismiss() }
+                // A newer capture's confirmation stays visible.
+                if captures.pending == nil { showPreviousCaptureNotice("Thought saved") }
+            case .failed(let message):
+                if showing { thoughtEditor.saveFailed(message) }
+            }
+        }
+    }
+
+    private static func thoughtDetail(app: String?, url: String?) -> String? {
+        let host = url.flatMap { URLComponents(string: $0)?.host }
+        let parts = [app, host].compactMap { $0?.isEmpty == false ? $0 : nil }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func showToast(_ value: Toast) {
@@ -1582,7 +1665,8 @@ extension AppController: CaptureQueueHost {
         let subtitle = [capture.subtitle, previousNotice].compactMap { $0 }.joined(separator: " · ")
         let saved = Toast(style: .success,
                           title: session.map { "Added to \($0.name)" } ?? "Saved to \(Vault.inboxTitle)",
-                          subtitle: subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"))
+                          subtitle: subtitle, hint: .init(key: capture.trigger.hotkey.displayString, label: "choose note"),
+                          action: .init(title: "Add a thought") { [weak self] in self?.openThought(for: capture) })
         if previousNotice != nil { onToast?(saved) }
         toast.show(saved)
     }
