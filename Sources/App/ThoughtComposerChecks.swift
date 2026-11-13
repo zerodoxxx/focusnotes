@@ -41,4 +41,27 @@ func checkThoughtComposer() async throws {
           writes.count == 1, writes[0].0 == "for A", writes[0].1 == a, writes[0].2 == noteA else {
         throw SelfTestFailure("Thought save did not write to its own capture and clear the draft")
     }
+
+    // Reopening the same capture after closing unsaved text offers that text again.
+    let c = UUID()
+    _ = composer.begin(c, savedThought: "s", destination: { noteA })
+    composer.close(c, text: "abc")
+    guard composer.begin(c, savedThought: "s", destination: { noteA }) == "abc" else {
+        throw SelfTestFailure("Reopened capture lost its unsaved thought")
+    }
+
+    // The index answers first; the known note is only consulted when the index has none.
+    var knownCalls = 0
+    let indexedNote = try await ThoughtComposer.resolveNote(indexed: { noteB }, known: { knownCalls += 1; return noteA })
+    guard indexedNote == noteB, knownCalls == 0 else {
+        throw SelfTestFailure("Indexed note did not win over the known note")
+    }
+    let knownNote = try await ThoughtComposer.resolveNote(indexed: { nil }, known: { noteA })
+    guard knownNote == noteA else { throw SelfTestFailure("Unindexed capture did not use the known note") }
+    let commitError = CocoaError(.fileWriteNoPermission)
+    var rethrown: Error?
+    do { _ = try await ThoughtComposer.resolveNote(indexed: { nil }, known: { throw commitError }) } catch { rethrown = error }
+    guard (rethrown as? CocoaError)?.code == CocoaError.Code.fileWriteNoPermission else {
+        throw SelfTestFailure("Commit failure was not rethrown for an unindexed capture")
+    }
 }

@@ -1283,12 +1283,16 @@ final class AppController: NSObject, NSMenuDelegate {
         guard presentsUI, !isTerminating else { return }
         let pipeline = pipeline
         var content = content
+        // Preserve even when reopening the same capture: present closes the previous panel after begin.
+        if let previous = thoughtEditor.captureID, let text = thoughtEditor.currentText { thoughts.close(previous, text: text) }
         // Resolved at save time so a note renamed while the editor is open is still found.
         content.text = thoughts.begin(captureID, savedThought: savedThought) {
-            guard let url = await pipeline.noteURL(forCapture: captureID, fallback: try await knownNote()) else {
-                throw ThoughtWriteError.captureNotFound
-            }
-            return url
+            try await ThoughtComposer.resolveNote(
+                indexed: { await pipeline.noteURL(forCapture: captureID, fallback: nil) },
+                known: {
+                    guard let url = try await knownNote() else { throw ThoughtWriteError.captureNotFound }
+                    return url
+                })
         }
         thoughtEditor.present(captureID: captureID, content: content, handlers: .init(
             onSave: { [weak self] text in self?.saveThought(captureID, text: text) },

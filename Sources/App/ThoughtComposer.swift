@@ -20,6 +20,12 @@ final class ThoughtComposer {
 
     init(write: @escaping Write) { self.write = write }
 
+    /// The index is consulted first so a failed commit cannot block saving to a capture the index already places.
+    static func resolveNote(indexed: () async -> URL?, known: () async throws -> URL) async throws -> URL {
+        if let url = await indexed() { return url }
+        return try await known()
+    }
+
     /// Binds the capture to its note and returns the editor text: draft, else saved thought, else empty.
     func begin(_ captureID: UUID, savedThought: String?, destination: @escaping Destination) -> String {
         if let savedThought { savedThoughts[captureID] = savedThought }
