@@ -102,6 +102,8 @@ public sealed class ThoughtEditorPanel
     public Guid? CaptureId { get; private set; }
     public bool IsVisible => panel?.IsVisible == true;
     public string? CurrentText => view?.Editor.Text;
+    public int InstanceId => generation;
+    internal ThoughtEditorView? ViewForChecks => view;
 
     public void Present(Guid captureId, ThoughtEditorContent content, Action<string> onSave, Action<string> onClose)
     {
@@ -144,6 +146,8 @@ public sealed class ThoughtEditorPanel
         if (!alreadyDismissed) previous?.Dismiss(animated: false);
         if (notifyClose && text is not null) callback?.Invoke(text);
     }
+    // Text typed while the save was pending keeps the editor open and saveable.
+    public void SaveSucceeded(string savedText) { if (CurrentText == savedText) Finish(false); else saving = false; }
     public void SaveFailed(string message) { saving = false; view?.SaveFailed(message); }
     public void Dismiss() => Finish(false);
 

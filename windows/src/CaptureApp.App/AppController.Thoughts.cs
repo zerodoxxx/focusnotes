@@ -61,19 +61,19 @@ internal sealed partial class AppController
         // Preserve even when reopening the same capture: Present closes the previous panel after Begin.
         if (thoughtEditor.CaptureId is { } previous && thoughtEditor.CurrentText is { } text) { thoughts.Close(previous, text); }
         content = content with { Text = thoughts.Begin(id, saved, destination) };
-        thoughtEditor.Present(id, content, text => _ = SaveThoughtAsync(id, text), text => thoughts.Close(id, text));
+        thoughtEditor.Present(id, content, text => _ = SaveThoughtAsync(id, text, thoughtEditor.InstanceId), text => thoughts.Close(id, text));
     }
 
-    private async Task SaveThoughtAsync(Guid id, string text)
+    private async Task SaveThoughtAsync(Guid id, string text, int editorInstance)
     {
         var outcome = await thoughts.SaveAsync(id, text).ConfigureAwait(false);
         await dispatcher.InvokeAsync(() =>
         {
-            if (disposed || quitting || thoughtEditor.CaptureId != id) { return; }
+            if (disposed || quitting || thoughtEditor.CaptureId != id || thoughtEditor.InstanceId != editorInstance) { return; }
             switch (outcome)
             {
                 case ThoughtSaveOutcome.Saved:
-                    thoughtEditor.Dismiss();
+                    thoughtEditor.SaveSucceeded(text);
                     if (host?.StagedToastVisible != true && Coordinator.Pending is null)
                     {
                         Coordinator.ShowToast(new(AppToastStyle.Success, "Thought saved"));

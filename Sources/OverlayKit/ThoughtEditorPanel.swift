@@ -100,7 +100,7 @@ public struct ThoughtEditorContent: Sendable {
     private var panel: OverlayPanel?; private var view: ThoughtEditorView?; private var handlers: Handlers?; private var saving = false
     // Bumped on every transition so callbacks from a panel that is already closing are ignored.
     private var generation = 0
-    public private(set) var captureID: UUID?; public var isVisible: Bool { panel?.isVisible ?? false }; public var currentText: String? { view?.editor.string }; public init() {}
+    public private(set) var captureID: UUID?; public var isVisible: Bool { panel?.isVisible ?? false }; public var currentText: String? { view?.editor.string }; public var instanceID: Int { generation }; public init() {}
     public func present(captureID: UUID, content: ThoughtEditorContent, handlers: Handlers) {
         if panel != nil { finish(close: true) }
         generation += 1
@@ -132,6 +132,8 @@ public struct ThoughtEditorContent: Sendable {
         if close && !alreadyClosed { old?.dismiss() }
         callback?(text)
     }
+    // Text typed while the save was pending keeps the editor open and saveable.
+    public func saveSucceeded(_ savedText: String) { if currentText == savedText { dismiss() } else { saving = false } }
     public func saveFailed(_ message: String) { saving = false; view?.error.stringValue = message; view?.error.isHidden = false }
     public func dismiss() {
         generation += 1

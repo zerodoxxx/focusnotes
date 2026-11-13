@@ -1803,4 +1803,28 @@ private func checkThoughtEditorBehavior() async throws {
     editor.dismiss()
     try await settle()
     try require(dismissCloses == 0 && editor.captureID == nil && !editor.isVisible, "dismiss() must clear the editor without calling onClose")
+
+    // Typing while a save is pending keeps the newer text open and saveable.
+    var pendingSaves: [String] = []
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { pendingSaves.append($0) }, onClose: { _ in }))
+    try textView().string = "Saved"
+    try key(1, modifiers: .command, characters: "s")
+    try textView().string = "Saved and more"
+    editor.saveSucceeded("Saved")
+    try require(editor.isVisible && editor.currentText == "Saved and more", "A save completing after more typing must keep the editor open")
+    try key(1, modifiers: .command, characters: "s")
+    try require(pendingSaves == ["Saved", "Saved and more"], "The editor must accept another save after an outdated save completes")
+    editor.saveSucceeded("Saved and more")
+    try require(!editor.isVisible && editor.captureID == nil, "A save of the current text must dismiss the editor")
+    try await settle()
+
+    // A reopened panel for the same capture is a new instance, so an older save cannot dismiss it.
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { _ in }))
+    let staleInstance = editor.instanceID
+    editor.dismiss()
+    try await settle()
+    editor.present(captureID: first, content: content, handlers: ThoughtEditorPanel.Handlers(onSave: { _ in }, onClose: { _ in }))
+    try require(editor.captureID == first && editor.instanceID != staleInstance, "Reopening a capture must start a new editor instance")
+    editor.dismiss()
+    try await settle()
 }

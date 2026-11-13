@@ -1295,18 +1295,18 @@ final class AppController: NSObject, NSMenuDelegate {
                 })
         }
         thoughtEditor.present(captureID: captureID, content: content, handlers: .init(
-            onSave: { [weak self] text in self?.saveThought(captureID, text: text) },
+            onSave: { [weak self] text in self?.saveThought(captureID, text: text, editorInstance: self?.thoughtEditor.instanceID ?? -1) },
             onClose: { [weak self] text in self?.thoughts.close(captureID, text: text) }))
     }
 
-    private func saveThought(_ captureID: UUID, text: String) {
+    private func saveThought(_ captureID: UUID, text: String, editorInstance: Int) {
         Task { [weak self] in
             guard let self else { return }
             let outcome = await thoughts.save(captureID, text: text)
-            let showing = thoughtEditor.captureID == captureID
+            let showing = thoughtEditor.captureID == captureID && thoughtEditor.instanceID == editorInstance
             switch outcome {
             case .saved:
-                if showing { thoughtEditor.dismiss() }
+                if showing { thoughtEditor.saveSucceeded(text) }
                 // A newer capture's confirmation stays visible.
                 if captures.pending == nil { showPreviousCaptureNotice("Thought saved") }
             case .failed(let message):
