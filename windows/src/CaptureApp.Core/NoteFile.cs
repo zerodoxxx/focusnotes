@@ -414,7 +414,7 @@ public static partial class NoteFile
         {
             for (var attempt = 0; ; attempt++)
             {
-                using var original = OpenExclusive(target, FileMode.Open, FileAccess.Read);
+                using var original = OpenRenameSource(target);
                 var initial = FileMetadata.Of(original);
                 using var buffer = new MemoryStream();
                 original.CopyTo(buffer);
@@ -430,8 +430,7 @@ public static partial class NoteFile
                         named?.Validate();
                         if (named is null || !initial.SameFile(named) || FileMetadata.Of(original) != initial)
                             throw new VaultFileException(VaultFileError.Changed);
-                        // Windows replacement requires closing the exclusive read handle.
-                        original.Dispose();
+                        // The rename-source handle permits replacement while denying writers.
                     });
                     afterWrite?.Invoke(target);
                     return;

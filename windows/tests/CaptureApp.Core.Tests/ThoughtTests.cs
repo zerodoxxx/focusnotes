@@ -25,6 +25,28 @@ public sealed class ThoughtTests
     }
 
     [Fact]
+    public void RewriteDeniesExternalWritesUntilReplacement()
+    {
+        using var e = new CheckVault();
+        e.Vault.Prepare();
+        var path = e.Write("N.md", Body + "\n");
+        var blocked = false;
+        try
+        {
+            NoteFile.ReplaceHook.Value = (temporary, target) =>
+            {
+                try { using var writer = new FileStream(target, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete); }
+                catch (IOException) { blocked = true; }
+                File.Move(temporary, target, true);
+            };
+            e.Writer.SetThought("reflection", Id, path, CheckVault.Now);
+        }
+        finally { NoteFile.ReplaceHook.Value = null; }
+        Assert.True(blocked);
+        Assert.Contains("reflection", File.ReadAllText(path));
+    }
+
+    [Fact]
     public void StructuralMarkersInThoughtRoundTripWithoutPhantomCaptures()
     {
         var text = Marker + "\nreplacement\n" + Marker.Replace(Id.ToString("D"), "00000000-0000-4000-8000-000000000002", StringComparison.Ordinal)
