@@ -77,6 +77,89 @@ public actor NoteWriter {
                             beforeWrite: beforeAppend, afterWrite: afterAppend)
     }
 
+    private var beforeMoveRemoval: (@Sendable (URL) throws -> Void)?
+    private var beforeMoveSwap: (@Sendable (URL) throws -> Void)?
+
+    @_spi(Checks)
+    public func setBeforeCaptureMoveRemoval(_ hook: (@Sendable (URL) throws -> Void)?) {
+        beforeMoveRemoval = hook
+    }
+
+    /// Runs after the source's final identity check, immediately before its atomic swap.
+    @_spi(Checks)
+    public func setBeforeCaptureMoveSwap(_ hook: (@Sendable (URL) throws -> Void)?) {
+        beforeMoveSwap = hook
+    }
+
+    func moveCapture(id: UUID, from source: Destination, to destination: Destination) throws {
+        let sourceLocation: VaultManagedLocation
+        let snapshot: NoteFile.MoveSnapshot
+        do {
+            sourceLocation = try vault.managedLocation(of: source.url)
+            snapshot = try NoteFile.moveSnapshot(in: sourceLocation.anchor, relativePath: sourceLocation.relativePath)
+        } catch let error as POSIXError where error.code == .ENOENT {
+            throw CaptureMoveError.notFound(noteTitle: source.title)
+        } catch {
+            throw CaptureMoveError.writeFailed(noteTitle: source.title)
+        }
+        guard let block = CaptureMoveBlock(id: id, contents: snapshot.contents) else {
+            throw CaptureMoveError.notFound(noteTitle: source.title)
+        }
+        let text = block.rewritingImages(from: source.url, to: destination.url)
+        let target: VaultManagedLocation
+        var appended: NoteFile.AppendedBytes?
+        do {
+            target = try vault.managedLocation(of: destination.url)
+            try prepareParentDirectory(for: target)
+            // An identical copy completes an interrupted move; a different one must not cost source text.
+            func hasIdenticalCopy() throws -> Bool {
+                let existing: NoteFile.MoveSnapshot
+                do { existing = try NoteFile.moveSnapshot(in: target.anchor, relativePath: target.relativePath) }
+                catch let error as POSIXError where error.code == .ENOENT { return false }
+                guard let copy = CaptureMoveBlock(id: id, contents: existing.contents) else { return false }
+                guard Self.comparable(copy.text) == Self.comparable(text) else {
+                    throw CaptureMoveError.conflict(noteTitle: destination.title)
+                }
+                return true
+            }
+            if try !hasIdenticalCopy() {
+                let identity = CaptureFormat.markerPrefix + id.uuidString.lowercased()
+                appended = try NoteFile.append(block: text, header: headerLine(title: destination.title), root: target.anchor,
+                                               relativePath: target.relativePath, to: target.url, cache: &appendCache,
+                                               identityPrefix: identity, unlessMarkerExists: identity, markerIsIdentity: true,
+                                               sourceHeading: block.heading, calendar: calendar)
+                // The marker appeared since the check: proceed only if it is an identical copy.
+                if appended == nil, try !hasIdenticalCopy() { throw CaptureMoveError.conflict(noteTitle: destination.title) }
+            }
+        } catch let error as CaptureMoveError { throw error }
+        catch { throw CaptureMoveError.writeFailed(noteTitle: destination.title) }
+        do {
+            try beforeMoveRemoval?(source.url)
+            let swapHook = beforeMoveSwap
+            try NoteFile.replaceContents(block.remainder, matching: snapshot,
+                                         in: sourceLocation.anchor, relativePath: sourceLocation.relativePath,
+                                         beforeSwap: swapHook.map { hook in { try hook(source.url) } })
+        } catch {
+            let failure: CaptureMoveError
+            if let posix = error as? POSIXError, (posix.code == .EAGAIN || posix.code == .ENOENT) {
+                failure = .sourceChanged(noteTitle: source.title)
+            } else { failure = .writeFailed(noteTitle: source.title) }
+            if let appended {
+                // Only our exact bytes are undone; a destination edited since our append is left alone.
+                do { _ = try NoteFile.removeAppended(appended, in: target.anchor, relativePath: target.relativePath) }
+                catch { throw CaptureMoveError.writeFailed(noteTitle: destination.title) }
+            }
+            throw failure
+        }
+    }
+
+    private static func comparable(_ text: String) -> String {
+        text.components(separatedBy: "\n")
+            .map { String($0.reversed().drop(while: { $0.isWhitespace }).reversed()) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func prepareParentDirectory(for location: VaultManagedLocation) throws {
         let parent = parentPath(of: location.relativePath)
         if !parent.isEmpty {

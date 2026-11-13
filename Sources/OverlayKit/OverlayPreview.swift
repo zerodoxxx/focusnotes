@@ -22,11 +22,11 @@ public enum OverlayPreview {
     }
     public static func noteEditor(destination: String? = nil, fallbackTitle: String? = nil, text: String = "", restoredDraft: Bool = false, selection: NSRange? = nil,
                                   revealed: Bool = false, isPinned: Bool = false, overlay: NoteEditorOverlay = .none,
-                                  appendsTo existingTitle: String? = nil) -> NSView {
+                                  appendsTo existingTitle: String? = nil, saveLabel: String? = nil) -> NSView {
         let view = NoteEditorView(destination: destination, fallbackTitle: fallbackTitle, text: text, restoredDraft: restoredDraft)
         view.usesGalleryBackground = true
         if let existingTitle { view.existingTitleForText = { _ in existingTitle } } // preview: the text names this note
-        view.setDestination(destination, isPinned: isPinned)
+        view.setDestination(destination, saveLabel: saveLabel, isPinned: isPinned)
         if let selection { view.setPreviewSelection(selection); view.textView.showsGalleryCaret = true }
         switch overlay {
         case .none: break

@@ -6,6 +6,7 @@ import Foundation
 @MainActor
 func checkCaptureCommitQueue() async throws {
     try await checkStagedCapturesCommitInOrder()
+    try await checkUnannouncedCommitIsRecorded()
     try await checkFailedChoiceHoldsCapture()
     try await checkRetypedSubheadingSavesOnce()
     try await checkQuitDrainSavesHeldCapture()
@@ -20,6 +21,7 @@ private final class RecordingQueueHost: CaptureQueueHost {
 
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async { record("staged") }
     func pendingCaptureReleased() { record("released") }
+    func captureCommitted(_ saved: SavedCapture) async { record("committed") }
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async { record("saved") }
     func captureHeldForChoice(_ capture: PendingCapture, error: Error) { held.append(capture.id); record("held") }
     func previousCaptureWillRetry(destination: Destination?) { record("willRetry") }
@@ -77,6 +79,17 @@ private func checkStagedCapturesCommitInOrder() async throws {
               first.lowerBound < second.lowerBound, try await pipeline.selfCheck.journal.recordURLs().isEmpty else {
             throw SelfTestFailure("Queue: staged captures were not saved in order with a clean journal")
         }
+    }
+}
+
+@MainActor
+private func checkUnannouncedCommitIsRecorded() async throws {
+    try await withQueue("queue-unannounced") { queue, host, _, _ in
+        await queue.stage(queueCapture("unannounced capture"))
+        guard let task = queue.commitPending() else { throw SelfTestFailure("Queue: unannounced capture was not pending") }
+        _ = try await task.value
+        try await host.waitUntil("the unannounced commit to reach the host") { host.calls.contains("committed") }
+        guard !host.calls.contains("saved") else { throw SelfTestFailure("Queue: an unannounced commit was announced") }
     }
 }
 

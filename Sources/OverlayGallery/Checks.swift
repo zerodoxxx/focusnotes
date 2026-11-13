@@ -986,7 +986,7 @@ private func checkQuickNoteDesign() throws {
     let empty = OverlayPreview.noteEditor()
     try require(shown(empty) == "New note", "Empty quick note must be titled \"New note\"")
     let rest = titleLabel(empty), hover = titleLabel(OverlayPreview.noteEditor(revealed: true))
-    try require(rest.map { abs($0.alphaValue - OverlayTheme.quickTitleRestAlpha) < 0.001 } == true, "Title must be faded at rest")
+    try require(rest.map { abs($0.alphaValue - OverlayTheme.quickTitleRevealAlpha) < 0.001 } == true, "Title must stay at reveal brightness at rest")
     try require(hover.map { abs($0.alphaValue - OverlayTheme.quickTitleRevealAlpha) < 0.001 } == true, "Title must brighten on reveal")
     try require(rest?.accessibilityRole() == .staticText && rest?.accessibilityValue() as? String == "New note", "Title accessibility")
     try require(shown(OverlayPreview.noteEditor(destination: "Trip planning", text: "# Other")) == "Trip planning", "Destination wins the title")
@@ -1003,6 +1003,25 @@ private func checkQuickNoteDesign() throws {
     try require(footerLabels(OverlayPreview.noteEditor(text: "# groceries\n- milk", appendsTo: "Groceries")).contains("Add to note"), "Footer when the text names a note")
     try require(shown(OverlayPreview.noteEditor(text: "# groceries\n- milk")) == "groceries", "Text without a matching note keeps its own title")
     try require(footerLabels(OverlayPreview.noteEditor(text: "# groceries\n- milk")).contains("Create note"), "Footer when the text names no note")
+
+    // The save action stays visible at rest: its caption and every ancestor up to the editor are fully opaque.
+    func visibleToEditor(_ caption: NSTextField?, in editor: NSView) -> Bool {
+        var view: NSView? = caption
+        while let current = view {
+            guard current.alphaValue == 1, !current.isHidden else { return false }
+            if current === editor { return true }
+            view = current.superview
+        }
+        return false
+    }
+    let restEditor = OverlayPreview.noteEditor()
+    let restCaption = descendants(restEditor).compactMap { $0 as? NSTextField }.first { $0.stringValue == "Create note" }
+    try require(visibleToEditor(restCaption, in: restEditor), "Save caption must stay visible at rest")
+    let labelled = "Adding to Scheduling › Round robin"
+    try require(footerLabels(OverlayPreview.noteEditor(destination: "Scheduling", saveLabel: labelled)).contains(labelled), "Save label must replace the footer caption")
+    let creating = "Creating a note in Operating Systems"
+    try require(footerLabels(OverlayPreview.noteEditor(saveLabel: creating)).contains(creating), "Save label must show without a destination")
+    try require(footerLabels(OverlayPreview.noteEditor(text: "# groceries\n- milk", appendsTo: "Groceries", saveLabel: creating)).contains("Adding to Groceries"), "Save label must yield to an append to a named note")
 
     // Top band: five 26pt buttons; the right three are adjacent inside one capsule; the title stays clear of all of them.
     let band = OverlayPreview.noteEditor(destination: String(repeating: "Wide title ", count: 12), revealed: true)

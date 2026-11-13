@@ -373,6 +373,8 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     /// The title while no destination is set and the text is blank (a folder quick note's folder); nil uses "New note".
     let fallbackTitle: String?
     private(set) var isPinned = false
+    /// The caller's descriptive save caption; nil keeps the generic "Add to note" / "Create note".
+    private(set) var saveLabel: String?
     var holdsReveal = false { didSet { if holdsReveal != oldValue { applyReveal(animated: true) } } }
     var visibleScreenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 900 { didSet { if visibleScreenHeight != oldValue { measure() } } }
     var onChange: ((String) -> Void)?
@@ -478,15 +480,19 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         chrome.onNew = { [weak self] in self?.hideCard(); self?.perform(.newNote) }
         for view in [scroll, placeholder, title, titlePin, footer, chrome] { noteSurface.addSubview(view) }
         for view in [saveHint] + hints + [draftLabel] { footer.addSubview(view) }
-        for view in [chrome, footer] { view.wantsLayer = true; view.alphaValue = 0 }
+        for view in [chrome] + hints + [draftLabel] { view.wantsLayer = true; view.alphaValue = 0 }
+        saveHint.caption.lineBreakMode = .byTruncatingTail
+        saveHint.caption.cell?.isScrollable = false
+        saveHint.caption.setAccessibilityElement(true)
+        saveHint.caption.setAccessibilityRole(.staticText)
         titlePin.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: OverlayTheme.quickTitlePinSize, weight: .medium)
         titlePin.imageScaling = .scaleNone
         titlePin.setAccessibilityIdentifier("QuickNote.pinned")
         titlePin.isHidden = true
         titlePin.wantsLayer = true
-        titlePin.alphaValue = OverlayTheme.quickTitleRestAlpha
+        titlePin.alphaValue = OverlayTheme.quickTitleRevealAlpha
         title.wantsLayer = true
-        title.alphaValue = OverlayTheme.quickTitleRestAlpha
+        title.alphaValue = OverlayTheme.quickTitleRevealAlpha
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect], owner: self))
         setDestination(destination, isPinned: false)
         refreshText()
@@ -495,8 +501,9 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
-    func setDestination(_ title: String?, isPinned: Bool) {
+    func setDestination(_ title: String?, saveLabel: String? = nil, isPinned: Bool) {
         destination = title
+        self.saveLabel = saveLabel
         self.isPinned = isPinned
         titlePin.isHidden = !isPinned
         updateTitle()
@@ -523,12 +530,18 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
             }
         }
         appendsToExisting = destination == nil && appends
-        let caption = appends ? "Add to note" : NoteEditorView.createCaption
+        var caption = appends ? "Add to note" : NoteEditorView.createCaption
+        if let saveLabel {
+            // A typed name that appends says so; the caller's label otherwise describes the save.
+            caption = destination == nil && appends ? "Adding to \(value)" : saveLabel
+        }
         if saveHint.caption.stringValue != caption {
             saveHint.caption.stringValue = caption
             footer.needsLayout = true
             needsLayout = true
         }
+        saveHint.caption.setAccessibilityLabel(caption)
+        saveHint.caption.setAccessibilityValue(caption)
         guard title.stringValue != value else { return }
         title.stringValue = value
         title.setAccessibilityValue(value)
@@ -549,8 +562,12 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
     // MARK: Reveal
     func setRevealed(_ revealed: Bool, animated: Bool) {
         chrome.isActive = revealed
-        let titleValue = revealed ? OverlayTheme.quickTitleRevealAlpha : OverlayTheme.quickTitleRestAlpha
-        for (view, value) in [(chrome, revealed ? 1 : 0), (footer, revealed ? 1 : 0), (title, titleValue), (titlePin, titleValue)] as [(NSView, CGFloat)] {
+        // The destination and the save action must stay readable while the pointer is elsewhere, so only the
+        // chrome and the secondary footer hints fade; the footer container and save hint are always shown.
+        let hintValue: CGFloat = revealed ? 1 : 0
+        let items: [(NSView, CGFloat)] = [(chrome, revealed ? 1 : 0), (title, OverlayTheme.quickTitleRevealAlpha), (titlePin, OverlayTheme.quickTitleRevealAlpha)]
+            + ((hints as [NSView]) + [draftLabel]).map { ($0, hintValue) }
+        for (view, value) in items {
             guard let layer = view.layer else { continue }
             let from = layer.presentation()?.opacity ?? layer.opacity
             layer.removeAnimation(forKey: "reveal")
@@ -945,9 +962,13 @@ final class NoteEditorView: FlippedView, NSTextViewDelegate, @MainActor NSTextSt
         placeholder.frame = NSRect(x: inset, y: OverlayTheme.quickTopBandHeight, width: currentWidth - inset * 2, height: lineHeight)
         footer.frame = NSRect(x: 0, y: noteSurface.bounds.height - OverlayTheme.quickFooterHeight, width: bounds.width, height: OverlayTheme.quickFooterHeight)
         let hintY = (OverlayTheme.quickFooterHeight - OverlayTheme.hintHeight) / 2
+        // The save caption gives way (tail ellipsis) before the panel's width cap pushes the other hints off the edge.
+        let otherHints = hints.reduce(0) { $0 + $1.desiredWidth } + OverlayTheme.footerHintGap * CGFloat(hints.count)
+        let saveWidth = min(saveHint.desiredWidth, max(0, bounds.width - OverlayTheme.quickFooterLeadingInset * 2 - otherHints))
         var x = OverlayTheme.quickFooterLeadingInset
         for hint in [saveHint] + hints {
-            hint.frame = NSRect(x: x, y: hintY, width: hint.desiredWidth, height: OverlayTheme.hintHeight)
+            let width = hint === saveHint ? saveWidth : hint.desiredWidth
+            hint.frame = NSRect(x: x, y: hintY, width: width, height: OverlayTheme.hintHeight)
             x = hint.frame.maxX + OverlayTheme.footerHintGap
         }
         if let card {
@@ -1024,9 +1045,10 @@ public final class NoteEditorPanel {
     public init() {}
 
     /// `fallbackTitle` names a blank note without choosing its destination, so typed text still resolves the note.
-    public func present(destination: String?, fallbackTitle: String? = nil, isPinned: Bool, draft: String, handlers: NoteEditorHandlers) {
+    /// `saveLabel` replaces the generic save caption, e.g. "Adding to Scheduling › Round robin".
+    public func present(destination: String?, fallbackTitle: String? = nil, saveLabel: String? = nil, isPinned: Bool, draft: String, handlers: NoteEditorHandlers) {
         let view = NoteEditorView(destination: destination, fallbackTitle: fallbackTitle, text: draft, restoredDraft: !draft.isEmpty)
-        view.setDestination(destination, isPinned: isPinned)
+        view.setDestination(destination, saveLabel: saveLabel, isPinned: isPinned)
         let mouse = NSEvent.mouseLocation
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
             view.visibleScreenHeight = screen.visibleFrame.height
@@ -1082,7 +1104,7 @@ public final class NoteEditorPanel {
             case .saveAsNewNote: // the editor view only forwards this while saving would append
                 panel.dismissThen { handlers.onSaveAsNew(text) }
             case .pin:
-                view.setDestination(view.destination, isPinned: handlers.onTogglePin())
+                view.setDestination(view.destination, saveLabel: view.saveLabel, isPinned: handlers.onTogglePin())
             case .writeOutsideSession:
                 handlers.onWriteOutsideSession?()
             case .browse, .copyMarkdown, .discardDraft:
@@ -1096,7 +1118,7 @@ public final class NoteEditorPanel {
         view.textView.scrollRangeToVisible(view.textView.selectedRange())
     }
 
-    public func setDestination(_ title: String?, isPinned: Bool) { content?.setDestination(title, isPinned: isPinned) }
+    public func setDestination(_ title: String?, saveLabel: String? = nil, isPinned: Bool) { content?.setDestination(title, saveLabel: saveLabel, isPinned: isPinned) }
     @discardableResult
     public func dismiss() -> Bool {
         guard let panel else { return true }

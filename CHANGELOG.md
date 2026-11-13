@@ -13,6 +13,7 @@ All notable changes to focusnotes are recorded here. The format follows
 - Implemented Windows edition: a tray app for Windows 10 22H2 and Windows 11 (x64 and arm64) with the same capture, quick note, session and search features, Windows default shortcuts with rebinding, a first-launch Setup, bundled offline OCR, optional semantic search, and Velopack installs with signed-index updates. Windows x64 and arm64 installers and portable ZIPs first shipped in v0.1.5; the Mac app is unchanged.
 - Selection and area captures can include a separate Markdown `Source` link to the current HTTP(S) address from supported browsers: Safari, Chrome, and Edge on macOS; Chrome and Edge on Windows when their address bar exposes a complete URL.
 - Shared conformance fixtures (`conformance/`) that both the Swift reference and the Windows port must pass; regenerate with `swift run CoreChecks --write-conformance`.
+- On macOS, **Move Last Capture…** moves the most recently saved selection or area capture to a picked note during the current app run.
 - Folder paths in note names: a quick-note title such as `science/math/trigonometry` saves in that folder inside the notes folder, and a leading `/` (`/Desktop/ideas`) saves relative to your home folder. Missing folders are created. Notes saved in your home folder this way are tracked for search and file changes; the home folder itself is never scanned.
 - Writing outside a session: **Write outside session** in the quick note (⇧⌘N; Ctrl+Shift+N on Windows) and **Quick-note Outside Session** (⌃⇧N; Ctrl+Shift+W) save a one-off note elsewhere, and **Capture Selection/Area Outside Session…** (⌃⇧C and ⌃⇧S; Ctrl+Shift+Q and Ctrl+Shift+G) open **Add to note…** immediately, where Escape saves to Inbox. The active session keeps running, and the menu-bar and tray commands work even when these shortcuts are unavailable.
 - Folder shortcuts: up to 20 global shortcuts that open a quick note in a chosen folder or start or resume a session in `Sessions/<folder>/`. Set them up in **Folder Shortcuts…** on macOS, or in **Settings… → Folder Shortcuts**, Setup or the tray's **Folder Shortcuts** submenu on Windows.
@@ -21,8 +22,9 @@ All notable changes to focusnotes are recorded here. The format follows
 
 ### Changed
 
-- A quick note whose title names an existing note at that exact path (or `Inbox`) now appends to it instead of creating `Title 2.md`, and the toast says "Note added". **Save as New Note** (⌥⌘↩; Ctrl+Alt+Enter on Windows) still creates a numbered note, and the editor footer says **Add to note** when a save will append.
+- A quick note whose title names an existing note at that exact path (or `Inbox`) now appends to it instead of creating `Title 2.md`, and the toast says "Note added". **Save as New Note** (⌥⌘↩; Ctrl+Alt+Enter on Windows) still creates a numbered note, and the editor footer says **Adding to <note>** when a save will append.
 - The **Write a Note…** menu and tray command is now called **Quick-note**.
+- On macOS, the quick-note title and save caption stay visible; the caption says **Adding to <note>** (and the latest section when present), **Creating a note in <folder>** for folder quick notes, or **Creating a note** otherwise. These replace the old **Add to note** and **Create note** footer captions. Capture toasts name their destination and section. Windows is unchanged.
 
 ### Fixed
 

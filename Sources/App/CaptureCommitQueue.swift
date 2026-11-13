@@ -10,6 +10,8 @@ protocol CaptureQueueHost: AnyObject {
     func captureStaged(_ capture: PendingCapture, outsideSession: Bool, previousNotice: String?) async
     /// The pending capture was taken for commit: dismiss its toast and clear its UI state.
     func pendingCaptureReleased()
+    /// Every successful commit, announced or not, so the host tracks the latest save before any toast decision.
+    func captureCommitted(_ saved: SavedCapture) async
     /// An `announce: true` commit succeeded while nothing else is pending.
     func captureSaved(_ saved: SavedCapture, outsideSession: Bool) async
     /// A chosen title/destination failed to prepare; the capture is pending again and needs a retry choice.
@@ -163,6 +165,7 @@ final class CaptureCommitQueue {
         commitMonitor = Task { [weak self] in
             do {
                 let saved = try await task.value
+                await self?.host?.captureCommitted(saved)
                 self?.preparedJobs.removeValue(forKey: capture.id)
                 self?.recoveryJobs.removeValue(forKey: capture.id)
                 self?.recoveryPersistences.removeValue(forKey: capture.id)
@@ -320,8 +323,14 @@ final class CaptureCommitQueue {
         // capture, never its title or destination routing.
         for (id, preparation) in preparedJobs {
             do {
-                _ = try await Self.stageAndCommit(try await preparation.value, pipeline: pipeline) { [weak self] saved, pinFailed in
+                let job = try await preparation.value
+                let saved = try await Self.stageAndCommit(job, pipeline: pipeline) { [weak self] saved, pinFailed in
                     self?.host?.noteSaved(saved, pinFailed: pinFailed)
+                }
+                // Notes and subheadings share `preparedJobs`, but Move only finds capture blocks.
+                switch job.prepared.capture.content {
+                case .text, .image: await host?.captureCommitted(saved)
+                case .note, .subheading: break
                 }
                 preparedJobs.removeValue(forKey: id)
             } catch { logger.error("Shutdown save retained in journal (\(AppErrorLog.summary(error), privacy: .public)): \(String(describing: error), privacy: .private)") }

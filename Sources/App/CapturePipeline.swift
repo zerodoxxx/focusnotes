@@ -175,10 +175,16 @@ struct CapturePipeline: Sendable {
 
     func sessionDestination() async throws -> Destination? { try await service.sessionDestination() }
 
+    func section(of destination: Destination) async -> String? { try? await service.section(of: destination) }
+
     func defaultDestination() async throws -> Destination { try await service.defaultDestination() }
 
     func pickedDestination(noteID: String, title: String, kind: NoteKind) throws -> Destination {
         try service.pickedDestination(noteID: noteID, title: title, kind: kind)
+    }
+
+    func moveCapture(id: UUID, from source: Destination, to destination: Destination) async throws -> SavedCapture {
+        try await service.moveCapture(id: id, from: source, to: destination)
     }
 
     func existingTitle(forTypedNote markdown: String, intent: CaptureIntent) -> String? {

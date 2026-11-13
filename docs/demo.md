@@ -29,9 +29,9 @@ refresh whenever the menu opens.
    Inbox” with no session). A pending capture saves first, then `## Tradeoffs` is
    appended. Escape cancels, and empty input does nothing.
 5. Press **⌥⇧N** (or **Quick-note**, right before **Quick-note Outside Session** and **Add Subheading…**).
-   The floating editor shows only your text; hover it to reveal the buttons and a footer
-   reading **Add to note** (the faded title above names **Demo Session**), or
-   **Create note** without an active session. Try **⌘P** to open the Browse card and pick a note, **⇧⌘P** to add/remove it from Browse’s Pinned section, **⌘O** to open as a note, **⌘N** for a
+   The floating editor shows your text, the title **Demo Session** and a footer reading
+   **Adding to Demo Session**, or **Creating a note** without an active session; hover it to
+   reveal the buttons. Try **⌘P** to open the Browse card and pick a note, **⇧⌘P** to add/remove it from Browse’s Pinned section, **⌘O** to open as a note, **⌘N** for a
    fresh note. Type
    Markdown: headings, bold, italic, strike, code, lists/tasks, quotes, and links
    render in place. The caret and selection lines reveal dimmed Markdown syntax;

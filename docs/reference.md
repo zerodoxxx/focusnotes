@@ -6,7 +6,10 @@ Detailed behaviour of capture, note storage and the quick-note editor. For setup
 
 ## Capture and storage
 
-Pressing a capture shortcut again while its toast is visible chooses the destination note.
+The regular capture shortcut saves in one step. A staged toast says “Added to <session> › <section>” when the active session note has a `## ` subheading, or “Added to <session>” otherwise; without a session it says “Saved to Inbox”. The saved toast says “Saved to <note> › <section>”, or “Added to … · <session> still active” for outside-session captures. Pressing a capture shortcut again while its toast is visible chooses the destination note.
+
+**Move Last Capture…** appears in the macOS menu bar after **Capture Area Outside Session…**. It is enabled after a selection or area capture is saved during this app run and is not remembered after relaunch. It opens a “Move capture to…” picker (choose a note from its list; an unknown typed name shows “Choose a note from the list”) and moves the capture block and its following lines up to the next capture, note, subheading, or heading. The `### source` heading stays in the old note while other captures remain under it; image links are rewritten for the new note folder and the PNG remains in `assets/`. The active session continues. Success says “Moved to <note> › <section>”. If the capture or note changed so it cannot be moved, nothing moves and “Couldn’t move capture” explains what to do. While the capture toast is visible, the command opens its existing destination picker instead.
+
 To choose before saving, use **⌃⇧C** for selection or **⌃⇧S** for an area. These outside-session
 shortcuts open **Add to note…** immediately, with note suggestions. A chosen title routes to an
 existing root note, then a matching session title, then Inbox, or a new root note; nested notes
@@ -141,8 +144,7 @@ choice; closing keeps the draft text, and the next quick note or normal capture 
 The caret and selection lines show dimmed syntax; other lines render
 without the syntax. Bullets display as •, and clickable task boxes support undo.
 The stored text stays Markdown. ⌘↩ (including keypad Enter) saves and appends to
-the active session by default. With no session routing or Browse destination, the footer says “Add to note”
-for an existing path or Inbox and “Create note” otherwise. Its name comes
+the active session by default. The footer says “Adding to <note>” for a selected note, active session, or typed title that resolves to an existing note; for a selected note or the active session it appends ` › <latest section>` when that note has a `## ` subheading. A folder quick note otherwise says “Creating a note in <folder>” using the folder's last path component, and other new notes say “Creating a note”. Its name comes
 from the first non-empty line with Markdown removed, or “Note yyyy-MM-dd HH.mm”
 if nothing remains. An unqualified name keeps the 60-character display-title cap
 (then “…”). A path is parsed before display truncation: each component is cleaned
