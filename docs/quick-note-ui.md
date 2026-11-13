@@ -8,8 +8,8 @@ caret and checkboxes carry one coral accent, and the only chrome that is always 
 
 | State | What is visible |
 | --- | --- |
-| **Rest** (pointer outside the panel) | Text plus the **title line**, centred in the top band at 30% label colour. No buttons, no footer. Markdown headings are full strength. |
-| **Hover** (pointer inside the panel) | The title brightens to 60%, five icon buttons fade in (two plain on the left, three in a capsule on the right), and a footer fades in with the controls. Nothing else changes. |
+| **Rest** (pointer outside the panel) | Text plus the **title line** at 60% opacity and the save action in the footer. Markdown headings are full strength. |
+| **Hover** (pointer inside the panel) | Five icon buttons fade in (two plain on the left, three in a capsule on the right), along with the other footer hints and draft label. The title and save action remain visible. |
 | **Actions** (⌘K) | A card hanging from the top-right corner, just under the band. The note stays visible behind it; chrome stays revealed. |
 | **Browse** (⌘P) | The same kind of card, with a search field and a note list. The card has a bottom strip with its Browse hints; the note footer keeps its normal hints. |
 
@@ -22,7 +22,7 @@ Typing never reveals the chrome. Keyboard focus alone leaves the panel calm.
 │  Trip planning               │       │  Trip planning               │
 │  Book the train for Friday   │       │  Book the train for Friday   │
 │  - call Anna                 │       │  - call Anna                 │
-│                              │       │ ⌘↩ Create note  ⌘K Actions   │  footer, 38pt
+│                              │       │ ⌘↩ Creating a note  ⌘K Actions│  footer, 38pt
 └──────────────────────────────┘       └──────────────────────────────┘
 ```
 
@@ -39,11 +39,9 @@ Typing never reveals the chrome. Keyboard focus alone leaves the panel calm.
 ### Title line
 A single line, centred in the 38pt top band, 13pt medium, truncating tail, never overlapping the
 button groups (max width = band width − 2 × (widest group extent + 12)). It is visible at rest at
-`labelColor` 30% and animates to 60% on reveal with the chrome's timing (0.15s ease-out in, 0.20s
-ease-in out, instant with Reduce Motion). It does not take the mouse. Accessibility: a static text
+`labelColor` at 60% opacity. It does not take the mouse. Accessibility: a static text
 whose value is the title. When pinned, a 10pt medium `pin.fill` appears before it with a 4pt gap
-(`quickTitlePinSize`/`quickTitlePinGap`). Glyph and title are centred as one unit, share the 30%/60%
-reveal alpha, and together respect the button clusters and title truncation.
+(`quickTitlePinSize`/`quickTitlePinGap`). Glyph and title are centred as one unit, remain at 60% opacity, and together respect the button clusters and title truncation.
 
 Text rule: the destination title when a destination is set (session or chosen note); otherwise, once the text is
 non-blank, the title of the existing note it will be added to or the title it will be saved under; otherwise "New
@@ -69,9 +67,7 @@ It is recomputed on every text change (head of the note only) and on `setDestina
 
 ### Footer
 Keycap hints only (existing `KeycapView`): `⌘↩ <save caption>`, `⌘K Actions`, `esc Close`.
-Save caption: **"Add to note"** when a destination is set or the typed name resolves to an existing (or
-reserved) note by the same rule saving uses (`NoteEditorHandlers.existingTitleForText`), **"Create note"**
-otherwise (the title line already names the note, so the footer no longer repeats it).
+Save caption names the destination: **"Adding to <note>"** when a note is selected, the active session is the destination, or the typed title resolves to an existing (or reserved) note by the same rule saving uses (`NoteEditorHandlers.existingTitleForText`). If that note has a `## ` subheading, the caption appends ` › <latest section>`. A folder quick note otherwise says **"Creating a note in <folder>"**, using the folder's last path component; other new notes say **"Creating a note"**. It updates when the destination changes or Write outside session is toggled.
 Trailing, quiet: "Draft kept" when a draft was restored. Opening Browse keeps these normal note hints.
 The Browse controls appear inside the floating card so they remain visible when it covers the note footer.
 
@@ -159,7 +155,7 @@ medium glyph, 3pt apart, 12pt from the card's right edge). Two groups divided by
 Rows that do not apply are dimmed (40%) and skipped by the arrow keys. Browse lives in the top-right capsule;
 ⌘P still opens it from the editor and swaps Actions to Browse while the filter is focused.
 Write outside session keeps the text and active session. The title uses the resolved standalone
-note name and the footer uses the usual Create note/Add to note state; typed folder and `/` home
+note name and the footer names the resolved destination; typed folder and `/` home
 paths, Browse, and pin-on-save work as for a standalone note. Saving or closing clears the transient
 choice, like a Browse destination, while closing keeps the draft text. The next quick note or ordinary
 capture returns to the session. A successful outside-session toast names the destination and the

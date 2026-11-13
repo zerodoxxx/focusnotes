@@ -109,7 +109,7 @@ Folder Shortcuts…**. Repeat the cases on both platforms.
 4. **Folder quick note and active session:** Start an ordinary session, invoke the folder Quick Note shortcut,
    type a fresh title and body, and save. Confirm the note lands in `Projects/Research/`, the active session note
    is untouched, and the session remains active. The blank editor's title reads `Folder: Projects/Research`;
-   typing the existing note's name must switch the title to that note and the footer to Add to note, and
+   typing the existing note's name must switch the title to that note and the footer to Adding to <note>, and
    Save as New Note must create a numbered note in `Projects/Research/`. Repeat with Browse selecting a note
    elsewhere; that explicit destination must win. A subsequent normal capture should still use the active session.
 5. **Durable draft:** Invoke the folder shortcut, type text, toggle pin-on-save, and close with Escape. Relaunch
@@ -300,6 +300,12 @@ Ctrl+Shift+W for the outside-session quick note.
    must still open its existing destination picker.
    Repeat with a session named `Inbox` and with a separate `science/Inbox.md` note:
    Escape must always save to the vault's root `Inbox.md`, leaving those notes unchanged.
+5. **Move Last Capture… (macOS):** Capture text into a session with a `## ` subheading
+   and confirm the toast says “Added to <session> › <section>”. After it expires, move the
+   capture to another note and confirm only that block moves and the session stays active.
+   Move an area capture too and confirm its image still renders in the new note. Edit the
+   captured block away in its source, try the move, and confirm “Couldn't move capture”
+   appears with nothing changed.
 5. Occupy either new capture chord with another app or a test host before
    registration. Confirm the existing unavailable-shortcuts warning appears,
    then use **Capture Selection Outside Session…** and **Capture Area Outside Session…**
@@ -327,16 +333,14 @@ GALLERY_SHORT_NOTE=1 .build-ui/out/Products/Debug/OverlayGallery --live editor
 
 Close with esc after testing; the live fixture includes sample Browse rows.
 
-1. **Rest and hover:** At rest the panel shows your text and a faded title line
-   centred in the top band (the note's name, or "New note" when empty); no buttons
-   or footer. Moving the pointer inside brightens the title and fades in the top band
-   (close and open as note on the left; browse, new and trailing ellipsis Actions in one capsule on the
-   right) and the footer. Typing alone never reveals them. Text does not move when
-   they appear.
-2. **Footer wording:** Outside a session it reads "Create note" unless the typed
-   name resolves to an existing or reserved note; then it reads "Add to note".
-   In a session, or after choosing a note in Browse, it reads "Add to note". The footer never repeats the
-   note's name; the title line shows it.
+1. **Rest and hover:** At rest the panel shows your text, the title line at 60% opacity,
+   and the always-visible save action with its shortcut and destination caption. Other
+   buttons, footer hints and the draft label appear on pointer entry or held reveal. Typing
+   alone does not reveal them. Text does not move when they appear.
+2. **Footer wording:** In a session confirm “Adding to <session>” (plus the latest `## `
+   section when present); with a folder quick note confirm “Creating a note in <folder>”.
+   Toggle Write outside session and confirm the caption updates. Browse and New Note should
+   also update the named destination.
 3. **Size:** Width grows with the longest line (400 to 600pt) and never shrinks
    while open. Height grows with the text up to 60% of the screen or 680pt, then
    scrolls. Type Tasks, Enter, - , a, Enter, - b: height must follow 1, 2, 2, 2, 3, 3
