@@ -27,8 +27,8 @@ final class ThoughtComposer {
     }
 
     /// Binds the capture to its note and returns the editor text: draft, else saved thought, else empty.
-    func begin(_ captureID: UUID, savedThought: String?, destination: @escaping Destination) -> String {
-        if let savedThought { savedThoughts[captureID] = savedThought }
+    func begin(_ captureID: UUID, savedThought: String?, savedStateLoaded: Bool = false, destination: @escaping Destination) -> String {
+        if savedStateLoaded || savedThought != nil { savedThoughts[captureID] = savedThought }
         destinations[captureID] = destination
         return drafts[captureID] ?? savedThoughts[captureID] ?? ""
     }

@@ -18,11 +18,12 @@ public sealed class ThoughtComposer(Func<string?, Guid, string, Task> write)
     private readonly Dictionary<Guid, Func<Task<string>>> destinations = [];
     public IReadOnlyDictionary<Guid, string> Drafts { get { lock (gate) { return new Dictionary<Guid, string>(drafts); } } }
 
-    public string Begin(Guid captureId, string? savedThought, Func<Task<string>> destination)
+    public string Begin(Guid captureId, string? savedThought, Func<Task<string>> destination, bool savedStateLoaded = false)
     {
         lock (gate)
         {
             if (savedThought is not null) saved[captureId] = savedThought;
+            else if (savedStateLoaded) saved.Remove(captureId);
             destinations[captureId] = destination;
             return drafts.GetValueOrDefault(captureId) ?? saved.GetValueOrDefault(captureId) ?? "";
         }

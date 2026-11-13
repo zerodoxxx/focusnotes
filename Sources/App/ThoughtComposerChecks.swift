@@ -14,6 +14,19 @@ func checkThoughtComposer() async throws {
         writes.append((text, id, note))
     }
 
+    let deleted = UUID()
+    _ = composer.begin(deleted, savedThought: "saved", destination: { noteA })
+    guard await composer.save(deleted, text: "saved") == .saved,
+          composer.begin(deleted, savedThought: nil, destination: { noteA }) == "saved",
+          composer.begin(deleted, savedThought: nil, savedStateLoaded: true, destination: { noteA }) == "" else {
+        throw SelfTestFailure("Confirmed disk absence restored a deleted thought from cache")
+    }
+    composer.close(deleted, text: "draft")
+    guard composer.begin(deleted, savedThought: nil, savedStateLoaded: true, destination: { noteA }) == "draft" else {
+        throw SelfTestFailure("Confirmed disk absence discarded an unsaved draft")
+    }
+    writes.removeAll()
+
     // Escape keeps a draft; reopening prefers it over the saved thought.
     guard composer.begin(a, savedThought: "saved", destination: { noteA }) == "saved" else {
         throw SelfTestFailure("Thought editor did not start from the saved thought")

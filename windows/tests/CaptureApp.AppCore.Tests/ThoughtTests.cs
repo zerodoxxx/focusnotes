@@ -7,6 +7,20 @@ namespace CaptureApp.AppCore.Tests;
 public sealed class ThoughtTests
 {
     [Fact]
+    public async Task ConfirmedDiskAbsenceClearsSavedCacheButPreservesDrafts()
+    {
+        var composer = new ThoughtComposer((_, _, _) => Task.CompletedTask);
+        var id = Guid.NewGuid();
+        Func<Task<string>> destination = () => Task.FromResult("a.md");
+        composer.Begin(id, "saved", destination);
+        Assert.IsType<ThoughtSaveOutcome.Saved>(await composer.SaveAsync(id, "saved"));
+        Assert.Equal("saved", composer.Begin(id, null, destination));
+        Assert.Equal("", composer.Begin(id, null, destination, savedStateLoaded: true));
+        composer.Close(id, "draft");
+        Assert.Equal("draft", composer.Begin(id, null, destination, savedStateLoaded: true));
+    }
+
+    [Fact]
     public async Task ThoughtSaveRecoversRenameBeforeResolvingDestination()
     {
         using var temp = new TempDirectory();
