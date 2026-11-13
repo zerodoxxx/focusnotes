@@ -53,15 +53,15 @@ internal sealed partial class AppController
             ? () => LoadThoughtImage(() => pipeline.AssetData(asset)) : null;
         PresentThought(id, new(title, string.IsNullOrWhiteSpace(hit.SourceApp) ? null : hit.SourceApp,
             hit.BlockKind == BlockKind.Image ? null : hit.Body, image), saved,
-            () => Task.FromResult(pipeline.Vault.NoteLocation(pipeline.NotePathFor(id) ?? hit.NotePath).Url));
+            () => Task.FromResult(pipeline.Vault.NoteLocation(pipeline.NotePathFor(id) ?? hit.NotePath).Url), savedStateLoaded: true);
     }
 
-    private void PresentThought(Guid id, ThoughtEditorContent content, string? saved, Func<Task<string>> destination)
+    private void PresentThought(Guid id, ThoughtEditorContent content, string? saved, Func<Task<string>> destination, bool savedStateLoaded = false)
     {
         if (disposed || quitting || Coordinator.IsTerminating) { return; }
         // Preserve even when reopening the same capture: Present closes the previous panel after Begin.
         if (thoughtEditor.CaptureId is { } previous && thoughtEditor.CurrentText is { } text) { thoughts.Close(previous, text); }
-        content = content with { Text = thoughts.Begin(id, saved, destination) };
+        content = content with { Text = thoughts.Begin(id, saved, destination, savedStateLoaded) };
         thoughtEditor.Present(id, content, text => _ = SaveThoughtAsync(id, text, thoughtEditor.InstanceId), text => thoughts.Close(id, text));
     }
 

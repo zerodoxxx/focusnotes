@@ -1274,11 +1274,12 @@ final class AppController: NSObject, NSMenuDelegate {
             } else { excerpt = .text(hit.body) }
             let content = ThoughtEditorContent(sourceTitle: CaptureFormat.sourceHeading(CaptureSource(appName: hit.sourceApp, windowTitle: hit.windowTitle)),
                                                sourceDetail: Self.thoughtDetail(app: hit.sourceApp, url: nil), excerpt: excerpt)
-            self?.presentThought(captureID, content: content, savedThought: saved) { found }
+            // Reaching here means the note was read, so a missing thought is confirmed deleted.
+            self?.presentThought(captureID, content: content, savedThought: saved, savedStateLoaded: true) { found }
         }
     }
 
-    private func presentThought(_ captureID: UUID, content: ThoughtEditorContent, savedThought: String?,
+    private func presentThought(_ captureID: UUID, content: ThoughtEditorContent, savedThought: String?, savedStateLoaded: Bool = false,
                                 knownNote: @escaping () async throws -> URL?) {
         guard presentsUI, !isTerminating else { return }
         let pipeline = pipeline
@@ -1286,7 +1287,7 @@ final class AppController: NSObject, NSMenuDelegate {
         // Preserve even when reopening the same capture: present closes the previous panel after begin.
         if let previous = thoughtEditor.captureID, let text = thoughtEditor.currentText { thoughts.close(previous, text: text) }
         // Resolved at save time so a note renamed while the editor is open is still found.
-        content.text = thoughts.begin(captureID, savedThought: savedThought) {
+        content.text = thoughts.begin(captureID, savedThought: savedThought, savedStateLoaded: savedStateLoaded) {
             try await ThoughtComposer.resolveNote(
                 indexed: { await pipeline.noteURL(forCapture: captureID, fallback: nil) },
                 known: {
