@@ -1,6 +1,6 @@
 # Changelog
 
-Last Updated: 2026-11-09 (previous commit: `92a3184`)
+Last Updated: 2026-11-13 (previous commit: `be29ca5`)
 
 All notable changes to focusnotes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
@@ -18,6 +18,8 @@ All notable changes to focusnotes are recorded here. The format follows
 - Folder shortcuts: up to 20 global shortcuts that open a quick note in a chosen folder or start or resume a session in `Sessions/<folder>/`. Set them up in **Folder Shortcuts…** on macOS, or in **Settings… → Folder Shortcuts**, Setup or the tray's **Folder Shortcuts** submenu on Windows.
 - **Choose Notes Folder…** in the menu-bar and tray menus, at first launch on macOS, and in Setup and **Settings… → General** on Windows. The folder must be writable, and a change applies after a restart (a folder chosen at first launch on macOS is used immediately). Each notes folder keeps its own sessions, drafts, pending saves, pins, folder shortcuts and search index; settings and downloaded models are shared. Existing notes are not moved.
 - Renaming a session from the duplicate-session picker: ⌘↩ (Ctrl+Enter on Windows) renames the highlighted session's file and title heading in place and resumes it. Pins, pending captures and search follow the new path.
+- Personal thoughts on captures: attach a thought to a capture from its success toast (**Add a thought**) or from search with ⇧Return (Shift+Enter on Windows). Thoughts can be edited later, and closing the editor keeps an unsaved draft until you quit.
+- A thought is stored in the capture's block after the excerpt, as a `<!-- thought:… -->` marker followed by **My thought**.
 
 ### Changed
 
