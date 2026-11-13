@@ -7,6 +7,17 @@ namespace CaptureApp.AppCore.Tests;
 public sealed class ThoughtTests
 {
     [Fact]
+    public async Task PipelineSavesThoughtWhenSearchIndexUnavailable()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var saved = pipeline.Commit(pipeline.PrepareText("capture", new()));
+        pipeline.Index.Dispose();
+        await pipeline.SetThoughtAsync("persisted", saved.CaptureId, saved.Destination.Url);
+        Assert.Equal("persisted", await pipeline.SavedThoughtAsync(saved.CaptureId, saved.Destination.Url));
+    }
+
+    [Fact]
     public async Task ConfirmedDiskAbsenceClearsSavedCacheButPreservesDrafts()
     {
         var composer = new ThoughtComposer((_, _, _) => Task.CompletedTask);

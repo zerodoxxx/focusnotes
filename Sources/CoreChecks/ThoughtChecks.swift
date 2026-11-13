@@ -59,6 +59,9 @@ func checkThoughts() async throws {
         try exact(set(nil, set("reflection", original)!), original, "marker example round trip")
     }
 
+    let legacyThought = last + "\n<!-- thought:\(id.uuidString.lowercased()) at=old -->\n**My thought**\n\n\\# literal\n\\\\server\n"
+    try require(NoteParser.parse(contents: legacyThought, notePath: "N.md", titleFallback: "N", calendar: calendar).blocks.first?.thought == "\\# literal\n\\\\server",
+                "legacy thought backslashes must remain literal")
     let structuralText = marker + "\nreplacement\n" + marker.replacingOccurrences(of: id.uuidString.lowercased(), with: unknown.uuidString.lowercased())
         + "\nphantom\n<!-- note:\(id.uuidString.lowercased()) at=old -->\n\\<!-- capture:literal -->"
     let structuralNote = set(structuralText, last)!

@@ -197,12 +197,13 @@ public static class CaptureFormat
     /// <summary>An unclosed fence in the text is closed so it cannot hide the blocks after the thought.</summary>
     public static string ThoughtBlock(Guid captureId, string text, DateTimeOffset createdAt, TimeZoneInfo timeZone)
     {
-        var body = string.Join('\n', NoteBody(text).Split('\n').Select(line =>
+        var original = NoteBody(text);
+        var body = string.Join('\n', original.Split('\n').Select(line =>
             line.StartsWith("<!--", StringComparison.Ordinal) || line.StartsWith('\\') || line.StartsWith('#') ? "\\" + line : line));
         var fence = new FenceState();
         foreach (var line in body.Split('\n')) fence.Advance(line);
         var closing = fence.OpenFence is { } open ? "\n" + open : "";
-        return $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)} -->\n{ThoughtLabel}\n\n{body}{closing}\n";
+        return $"{ThoughtMarkerPrefix}{captureId:D} at={LocalStamp(createdAt, IsoStampPattern, timeZone)}{(body == original ? "" : " escaped=1")} -->\n{ThoughtLabel}\n\n{body}{closing}\n";
     }
 
     internal static string UnescapeThoughtLine(string line)
@@ -216,11 +217,12 @@ public static class CaptureFormat
     {
         var prefix = ThoughtMarkerPrefix + captureId.ToString("D") + " at=";
         var fence = new FenceState();
-        for (var index = 0; index < end; index++)
+        for (var index = start; index < end; index++)
         {
             var line = lines[index];
-            if (!fence.Advance(line) || index < start || !line.StartsWith(prefix, StringComparison.Ordinal) || !line.EndsWith(MarkerSuffix, StringComparison.Ordinal)) continue;
+            if (!fence.Advance(line) || !line.StartsWith(prefix, StringComparison.Ordinal) || !line.EndsWith(MarkerSuffix, StringComparison.Ordinal)) continue;
             var stamp = line[prefix.Length..^MarkerSuffix.Length];
+            if (stamp.EndsWith(" escaped=1", StringComparison.Ordinal)) stamp = stamp[..^" escaped=1".Length];
             if (stamp.Length > 0 && !stamp.Any(c => char.IsWhiteSpace(c) || c is '<' or '>')) return index;
         }
         return -1;

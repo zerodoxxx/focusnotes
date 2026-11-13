@@ -25,6 +25,13 @@ public sealed class ThoughtTests
     }
 
     [Fact]
+    public void LegacyThoughtBackslashesRemainLiteral()
+    {
+        var original = Body + "\n\n<!-- thought:" + Id.ToString("D") + " at=old -->\n**My thought**\n\n\\# literal\n\\\\server\n";
+        Assert.Equal("\\# literal\n\\\\server", Assert.Single(NoteParser.Parse(original, "N.md", "N", CheckVault.Zone).Blocks).Thought);
+    }
+
+    [Fact]
     public void RewriteDeniesExternalWritesUntilReplacement()
     {
         using var e = new CheckVault();

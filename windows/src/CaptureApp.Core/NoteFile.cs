@@ -416,6 +416,7 @@ public static partial class NoteFile
             {
                 using var original = OpenRenameSource(target);
                 var initial = FileMetadata.Of(original);
+                initial.Validate();
                 using var buffer = new MemoryStream();
                 original.CopyTo(buffer);
                 var bytes = buffer.ToArray();

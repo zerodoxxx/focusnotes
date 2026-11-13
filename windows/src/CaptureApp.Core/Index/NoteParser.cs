@@ -66,7 +66,7 @@ public static class NoteParser
                     var thoughtLines = lines[(thoughtLine + 1)..end].SkipWhile(string.IsNullOrWhiteSpace).ToList();
                     if (thoughtLines.FirstOrDefault() == CaptureFormat.ThoughtLabel) thoughtLines.RemoveAt(0);
                     var text = thoughtLines.SkipWhile(string.IsNullOrWhiteSpace).Reverse().SkipWhile(string.IsNullOrWhiteSpace).Reverse().ToArray();
-                    thought = text.Length == 0 ? null : string.Join('\n', text.Select(CaptureFormat.UnescapeThoughtLine));
+                    thought = text.Length == 0 ? null : string.Join('\n', text.Select(line => lines[thoughtLine].EndsWith(" escaped=1 -->", StringComparison.Ordinal) ? CaptureFormat.UnescapeThoughtLine(line) : line));
                     end = thoughtLine;
                     while (end > from && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
                 }

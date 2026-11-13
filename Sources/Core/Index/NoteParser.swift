@@ -48,7 +48,7 @@ public enum NoteParser {
             var thought: String?
             if let id = boundary.id, !boundary.isNote,
                let thoughtLine = CaptureFormat.thoughtMarker(in: lines, range: bodyStart..<bodyEnd, captureID: id) {
-                thought = thoughtText(lines[(thoughtLine + 1)..<bodyEnd])
+                thought = thoughtText(lines[(thoughtLine + 1)..<bodyEnd], escaped: lines[thoughtLine].hasSuffix(" escaped=1 -->"))
                 bodyEnd = thoughtLine
                 while bodyEnd > bodyStart, isBlankLine(lines[bodyEnd - 1]) { bodyEnd -= 1 }
             }
@@ -309,12 +309,12 @@ public enum NoteParser {
     private static func isBlankLine(_ line: String) -> Bool { line.allSatisfy(\.isWhitespace) }
 
     /// The lines after a thought marker, without its label and surrounding blank lines.
-    private static func thoughtText(_ lines: ArraySlice<String>) -> String? {
+    private static func thoughtText(_ lines: ArraySlice<String>, escaped: Bool) -> String? {
         var text = lines.drop(while: { isBlankLine($0) })
         if text.first == CaptureFormat.thoughtLabel { text = text.dropFirst() }
         text = text.drop(while: { isBlankLine($0) })
         while let last = text.last, isBlankLine(last) { text = text.dropLast() }
-        return text.isEmpty ? nil : text.map(CaptureFormat.unescapeThoughtLine).joined(separator: "\n")
+        return text.isEmpty ? nil : text.map { escaped ? CaptureFormat.unescapeThoughtLine($0) : $0 }.joined(separator: "\n")
     }
 
     private static func looseBlocks(_ lines: ArraySlice<String>) -> [ParsedBlock] {

@@ -90,7 +90,9 @@ public sealed class CapturePipeline : IDisposable
     {
         Locked(() =>
         {
-            var current = Index.Capture(captureId)?.NotePath;
+            string? current = null;
+            try { current = Index.Capture(captureId)?.NotePath; }
+            catch (Exception error) { logger.Error($"Thought destination index lookup failed: {error}"); }
             var destination = current is null ? notePath : Vault.NoteLocation(current).Url;
             writer.SetThought(text, captureId, destination, DateTimeOffset.Now);
             // The thought is saved; a stale index must not report the save as failed.
