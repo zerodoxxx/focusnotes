@@ -10,9 +10,7 @@ struct CaptureMoveBlock {
         guard let contents = String(data: contents, encoding: .utf8) else { return nil }
         var lines = contents.components(separatedBy: "\n")
         let identity = CaptureFormat.markerPrefix + id.uuidString.lowercased()
-        guard let start = lines.firstIndex(where: {
-            $0.hasPrefix(identity + " ") || $0 == identity
-        }) else { return nil }
+        let visible = Set(CaptureFormat.unfencedLines(lines))
         func blank(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         func headingLevel(_ line: String) -> Int? {
             let count = line.prefix(while: { $0 == "#" }).count
@@ -21,13 +19,23 @@ struct CaptureMoveBlock {
         func marker(_ line: String) -> Bool {
             ["<!-- capture:", "<!-- note:", "<!-- subheading:"].contains { line.hasPrefix($0) }
         }
-        let end = ((start + 1)..<lines.count).first { marker(lines[$0]) || headingLevel(lines[$0]) != nil } ?? lines.count
+        func blockEnd(_ start: Int) -> Int {
+            ((start + 1)..<lines.count).first { visible.contains($0) && (marker(lines[$0]) || headingLevel(lines[$0]) != nil) } ?? lines.count
+        }
+        // Matches the parser's dedupe (NoteParser.swift:61-68): a fragment without the closing suffix is not an occurrence, and a bodiless one is a failed append.
+        let occurrences = lines.indices.filter {
+            visible.contains($0) && lines[$0].hasPrefix(identity + " ") && lines[$0].hasSuffix(CaptureFormat.markerSuffix)
+        }
+        guard let start = occurrences.last(where: { candidate in
+            lines[(candidate + 1)..<blockEnd(candidate)].contains { !blank($0) }
+        }) ?? occurrences.last else { return nil }
+        let end = blockEnd(start)
         var textEnd = end
         while textEnd > start && blank(lines[textEnd - 1]) { textEnd -= 1 }
         text = lines[start..<textEnd].joined(separator: "\n") + "\n"
         var headingIndex: Int?
         if start > 0 {
-            for i in (0..<start).reversed() {
+            for i in (0..<start).reversed() where visible.contains(i) {
                 if let level = headingLevel(lines[i]) {
                     if level == 3 { headingIndex = i; break }
                     if level <= 2 { break }
@@ -38,8 +46,8 @@ struct CaptureMoveBlock {
         var lower = start
         if let h = headingIndex, lines[(h + 1)..<start].allSatisfy(blank) {
             // Later captures under the same heading may sit past note blocks or user text.
-            let sectionEnd = (end..<lines.count).first { headingLevel(lines[$0]) != nil } ?? lines.count
-            if !lines[end..<sectionEnd].contains(where: { $0.hasPrefix(CaptureFormat.markerPrefix) }) { lower = h }
+            let sectionEnd = (end..<lines.count).first { visible.contains($0) && headingLevel(lines[$0]) != nil } ?? lines.count
+            if !(end..<sectionEnd).contains(where: { visible.contains($0) && lines[$0].hasPrefix(CaptureFormat.markerPrefix) }) { lower = h }
         }
         var upper = end
         while lower > 0 && blank(lines[lower - 1]) { lower -= 1 }
@@ -75,12 +83,35 @@ struct CaptureMoveBlock {
                     else if character == ")" {
                         if depth == 0 { end = cursor; break }
                         depth -= 1
-                    } else if character.isWhitespace { break }
+                    } else if character.isWhitespace {
+                        if cursor > linkStart { end = cursor }
+                        break
+                    }
                 }
                 cursor = result.index(after: cursor)
             }
             guard let end else { continue }
-            let close = angle ? result.index(after: end) : end
+            var close = angle ? result.index(after: end) : end
+            while close < result.endIndex, result[close] == " " || result[close] == "\t" {
+                close = result.index(after: close)
+            }
+            if close < result.endIndex, result[close] == "\"" || result[close] == "'" || result[close] == "(" {
+                let titleCloser: Character = result[close] == "(" ? ")" : result[close]
+                close = result.index(after: close)
+                var titleEscaped = false
+                var titleClosed = false
+                while close < result.endIndex, result[close] != "\n", !titleClosed {
+                    let character = result[close]
+                    close = result.index(after: close)
+                    if titleEscaped { titleEscaped = false }
+                    else if character == "\\" { titleEscaped = true }
+                    else if character == titleCloser { titleClosed = true }
+                }
+                guard titleClosed else { continue }
+                while close < result.endIndex, result[close] == " " || result[close] == "\t" {
+                    close = result.index(after: close)
+                }
+            }
             guard close < result.endIndex, result[close] == ")" else { continue }
             let link = String(result[linkStart..<end])
             guard !link.hasPrefix("/"), URLComponents(string: link)?.scheme == nil else { continue }

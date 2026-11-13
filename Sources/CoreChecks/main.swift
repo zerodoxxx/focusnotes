@@ -79,6 +79,7 @@ do {
     try await checkSessionRename()
     try await checkCaptureService()
     try await checkCaptureMoves()
+    try await checkCaptureMoveParsing()
     try checkNoteParser()
     try await checkTypedNotes()
     try await checkFolderRoutes()
