@@ -77,6 +77,66 @@ public actor NoteWriter {
                             beforeWrite: beforeAppend, afterWrite: afterAppend)
     }
 
+    private var beforeMoveRemoval: (@Sendable (URL) throws -> Void)?
+
+    @_spi(Checks)
+    public func setBeforeCaptureMoveRemoval(_ hook: (@Sendable (URL) throws -> Void)?) {
+        beforeMoveRemoval = hook
+    }
+
+    func moveCapture(id: UUID, from source: Destination, to destination: Destination) throws {
+        let sourceLocation: VaultManagedLocation
+        let snapshot: NoteFile.MoveSnapshot
+        do {
+            sourceLocation = try vault.managedLocation(of: source.url)
+            snapshot = try NoteFile.moveSnapshot(in: sourceLocation.anchor, relativePath: sourceLocation.relativePath)
+        } catch let error as POSIXError where error.code == .ENOENT {
+            throw CaptureMoveError.notFound(noteTitle: source.title)
+        } catch {
+            throw CaptureMoveError.writeFailed(noteTitle: source.title)
+        }
+        guard let block = CaptureMoveBlock(id: id, contents: snapshot.contents) else {
+            throw CaptureMoveError.notFound(noteTitle: source.title)
+        }
+        let target: VaultManagedLocation
+        var alreadyPresent = false
+        do {
+            target = try vault.managedLocation(of: destination.url)
+            try prepareParentDirectory(for: target)
+            do {
+                let existing = try NoteFile.moveSnapshot(in: target.anchor, relativePath: target.relativePath)
+                alreadyPresent = CaptureMoveBlock(id: id, contents: existing.contents) != nil
+            } catch let error as POSIXError where error.code == .ENOENT { }
+            let identity = CaptureFormat.markerPrefix + id.uuidString.lowercased()
+            try NoteFile.append(block: block.rewritingImages(from: source.url, to: destination.url),
+                                header: headerLine(title: destination.title), root: target.anchor,
+                                relativePath: target.relativePath, to: target.url, cache: &appendCache,
+                                identityPrefix: identity, unlessMarkerExists: identity, markerIsIdentity: true,
+                                sourceHeading: block.heading, calendar: calendar)
+        } catch { throw CaptureMoveError.writeFailed(noteTitle: destination.title) }
+        do {
+            try beforeMoveRemoval?(source.url)
+            try NoteFile.replaceContents(block.remainder, matching: snapshot,
+                                         in: sourceLocation.anchor, relativePath: sourceLocation.relativePath)
+        } catch {
+            let failure: CaptureMoveError
+            if let posix = error as? POSIXError, (posix.code == .EAGAIN || posix.code == .ENOENT) {
+                failure = .sourceChanged(noteTitle: source.title)
+            } else { failure = .writeFailed(noteTitle: source.title) }
+            if !alreadyPresent {
+                // Re-read so intervening destination edits outside the block survive rollback.
+                do {
+                    let current = try NoteFile.moveSnapshot(in: target.anchor, relativePath: target.relativePath)
+                    if let rollback = CaptureMoveBlock(id: id, contents: current.contents) {
+                        try NoteFile.replaceContents(rollback.remainder, matching: current,
+                                                     in: target.anchor, relativePath: target.relativePath)
+                    }
+                } catch { throw CaptureMoveError.writeFailed(noteTitle: destination.title) }
+            }
+            throw failure
+        }
+    }
+
     private func prepareParentDirectory(for location: VaultManagedLocation) throws {
         let parent = parentPath(of: location.relativePath)
         if !parent.isEmpty {

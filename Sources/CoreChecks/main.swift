@@ -78,6 +78,7 @@ do {
     try await checkSessionStore()
     try await checkSessionRename()
     try await checkCaptureService()
+    try await checkCaptureMoves()
     try checkNoteParser()
     try await checkTypedNotes()
     try await checkFolderRoutes()

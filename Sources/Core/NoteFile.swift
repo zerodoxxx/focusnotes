@@ -509,6 +509,56 @@ enum NoteFile {
         }
     }
 
+    struct MoveSnapshot {
+        let contents: Data
+        let fingerprint: Fingerprint
+    }
+
+    static func moveSnapshot(in root: VaultDirectoryAnchor, relativePath: String) throws -> MoveSnapshot {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+        return try withLockedDescriptor(descriptor) {
+            _ = try validateManagedFile(descriptor)
+            let initial = try fingerprint(descriptor)
+            let contents = try readAll(descriptor)
+            guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == initial else {
+                throw POSIXError(.EAGAIN)
+            }
+            return MoveSnapshot(contents: contents, fingerprint: initial)
+        }
+    }
+
+    /// Same locked, staged swap used by session rewrites; never truncate the original inode.
+    static func replaceContents(_ contents: Data, matching snapshot: MoveSnapshot,
+                                in root: VaultDirectoryAnchor, relativePath: String) throws {
+        let location = try openLocation(root: root, relativePath: relativePath)
+        let descriptor = openat(location.parentDescriptor, location.name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw posixError() }
+        try withLockedDescriptor(descriptor) {
+            _ = try validateManagedFile(descriptor)
+            guard try isCurrent(descriptor, at: location), try fingerprint(descriptor) == snapshot.fingerprint,
+                  try readAll(descriptor) == snapshot.contents else { throw POSIXError(.EAGAIN) }
+            let name = ".note-\(UUID().uuidString).pending"
+            let temporary = FileLocation(directories: location.directories, name: name)
+            let staged = openat(location.parentDescriptor, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard staged >= 0 else { throw posixError() }
+            defer { _ = unlinkat(location.parentDescriptor, name, 0) }
+            try withLockedDescriptor(staged) {
+                try writeAll(contents, to: staged)
+                guard fsync(staged) == 0 else { throw posixError() }
+                _ = try validateManagedFile(staged)
+                _ = try validateManagedFile(descriptor)
+                guard try isCurrent(staged, at: temporary), try isCurrent(descriptor, at: location),
+                      try isCurrent(location.directories), try fingerprint(descriptor) == snapshot.fingerprint,
+                      try readAll(descriptor) == snapshot.contents else { throw POSIXError(.EAGAIN) }
+                guard renameatx_np(location.parentDescriptor, name, location.parentDescriptor, location.name,
+                                   UInt32(RENAME_SWAP)) == 0 else { throw posixError() }
+                _ = fsync(location.parentDescriptor)
+            }
+        }
+    }
+
     /// Rewrites a session heading without truncating the original inode, then
     /// moves it within its existing directory without replacing another name.
     /// Keep the old inode at the temporary name until the exclusive move succeeds
@@ -636,7 +686,7 @@ enum NoteFile {
     }
 
     static func append(block: String, header: String, root: VaultDirectoryAnchor, relativePath: String, to url: URL, cache: inout AppendCache, identityPrefix: String,
-                       unlessMarkerExists marker: String? = nil,
+                       unlessMarkerExists marker: String? = nil, markerIsIdentity: Bool = false,
                        savedNoteMarker: String? = nil, sourceHeading: String? = nil, equivalentBlocks: [String] = [], calendar: Calendar = .current,
                        beforeWrite: (@Sendable (URL) -> Void)? = nil,
                        afterWrite: (@Sendable (URL) -> Void)? = nil) throws {
@@ -691,11 +741,11 @@ enum NoteFile {
                     }
                     let alreadySaved: Bool
                     if let state {
-                        alreadySaved = try matches(state: state, identity: identityPrefix, savedNoteMarker: savedNoteMarker,
+                        alreadySaved = try matches(state: state, identity: identityPrefix, savedNoteMarker: markerIsIdentity ? identityPrefix + " " : savedNoteMarker,
                                                    blocks: [blockData] + equivalentBlocks.map { Data($0.utf8) }, descriptor: descriptor)
                     } else {
                         let contents = contents ?? Data()
-                        alreadySaved = (savedNoteMarker.map { contents.range(of: Data($0.utf8)) != nil } ?? false) ||
+                        alreadySaved = (markerIsIdentity && contents.range(of: Data((identityPrefix + " ").utf8)) != nil) || (savedNoteMarker.map { contents.range(of: Data($0.utf8)) != nil } ?? false) ||
                             contents.range(of: blockData) != nil || equivalentBlocks.contains { contents.range(of: Data($0.utf8)) != nil }
                     }
                     // An independently created note keeps its identity even when

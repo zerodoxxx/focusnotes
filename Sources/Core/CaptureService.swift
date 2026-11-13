@@ -20,10 +20,26 @@ public struct PreparedCapture: Codable, Sendable, Equatable {
 public struct SavedCapture: Sendable, Equatable {
     public var captureID: UUID
     public var destination: Destination
+    public let section: String?
 
-    public init(captureID: UUID, destination: Destination) {
+    public init(captureID: UUID, destination: Destination, section: String? = nil) {
         self.captureID = captureID
         self.destination = destination
+        self.section = section
+    }
+}
+
+public enum CaptureMoveError: Error, LocalizedError, Equatable {
+    case notFound(noteTitle: String)
+    case sourceChanged(noteTitle: String)
+    case writeFailed(noteTitle: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notFound(let title): return "This capture is no longer in \(title). It may have been edited or moved. Nothing was changed."
+        case .sourceChanged(let title): return "\(title) changed while moving. Nothing was moved; try again."
+        case .writeFailed(let title): return "Could not update \(title). Nothing was changed; try again."
+        }
     }
 }
 
@@ -75,7 +91,7 @@ public actor CaptureService {
         try registerExternalLocation(for: destination)
         let capture = Capture(id: makeID(), createdAt: now(), content: .text(text), source: source)
         try await writer.append(capture, to: destination.url, title: destination.title)
-        return SavedCapture(captureID: capture.id, destination: destination)
+        return SavedCapture(captureID: capture.id, destination: destination, section: try? await section(of: destination))
     }
 
     public func saveImage(png: Data, source: CaptureSource, noteTitle: String?) async throws -> SavedCapture {
@@ -85,7 +101,7 @@ public actor CaptureService {
         let assetPath = try await writer.saveImage(png: png, createdAt: createdAt)
         let capture = Capture(id: makeID(), createdAt: createdAt, content: .image(assetPath: assetPath), source: source)
         try await writer.append(capture, to: destination.url, title: destination.title)
-        return SavedCapture(captureID: capture.id, destination: destination)
+        return SavedCapture(captureID: capture.id, destination: destination, section: try? await section(of: destination))
     }
 
     /// Resolve once, before writing. A detached or unreadable vault volume must
@@ -138,6 +154,41 @@ public actor CaptureService {
     public func sessionDestination() async throws -> Destination? {
         guard let active = await sessions.current() else { return nil }
         return try Router.destination(noteTitle: nil, activeSession: active, notes: [], vault: vault)
+    }
+
+    public func moveCapture(id: UUID, from source: Destination, to destination: Destination) async throws -> SavedCapture {
+        if source.url.standardizedFileURL != destination.url.standardizedFileURL {
+            try await writer.moveCapture(id: id, from: source, to: destination)
+        }
+        return SavedCapture(captureID: id, destination: destination, section: try? await section(of: destination))
+    }
+
+    /// Returns the last level-two heading outside fenced code blocks.
+    public nonisolated func section(of destination: Destination) async throws -> String? {
+        guard FileManager.default.fileExists(atPath: destination.url.path) else { return nil }
+        let text = try String(contentsOf: destination.url, encoding: .utf8)
+        var fence: (marker: Character, length: Int)?
+        var latest: String?
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let marker = trimmed.first, marker == "`" || marker == "~" {
+                let length = trimmed.prefix(while: { $0 == marker }).count
+                if length >= 3 {
+                    let rest = trimmed.dropFirst(length)
+                    if let active = fence {
+                        if marker == active.marker, length >= active.length,
+                           rest.trimmingCharacters(in: .whitespaces).isEmpty { fence = nil }
+                    } else if marker != "`" || !rest.contains("`") {
+                        fence = (marker, length)
+                    }
+                    continue
+                }
+            }
+            if fence == nil, line.hasPrefix("## ") {
+                latest = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return latest
     }
 
     /// Where an untitled capture goes: the session note, else Inbox.
@@ -276,7 +327,8 @@ public actor CaptureService {
         try await writer.appendIfMissing(prepared.capture, to: prepared.destination, png: png,
                                          noteMarkerIsIdentity: prepared.noteMarkerIsIdentity == true || prepared.createsNote == true)
         preparedNoteURLs.remove(prepared.destination.url)
-        return SavedCapture(captureID: prepared.capture.id, destination: prepared.destination)
+        return SavedCapture(captureID: prepared.capture.id, destination: prepared.destination,
+                            section: try? await section(of: prepared.destination))
     }
 
     private func route(noteTitle: String?) async throws -> Destination {
