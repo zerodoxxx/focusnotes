@@ -180,6 +180,18 @@ func checkNoteParser() throws {
     try require(pdfBlock.sourceURL == "file:///Users/me/Papers/Paper.pdf" && pdfBlock.sourcePage == 12
                 && pdfBlock.kind == .image && pdfBlock.assetPath == "assets/paper shot.png",
                 "a PDF page capture must expose its file URL and page while staying an image")
+    let pdfNoPage = Capture(id: id, createdAt: minute, content: .image(assetPath: "assets/shot.png"),
+                            source: CaptureSource(documentURL: "file:///Users/me/Papers/Paper.pdf"))
+    let pdfNoPageBlock = sourceBlock(CaptureFormat.block(for: pdfNoPage, noteRelativeDir: "", calendar: calendar))
+    try require(pdfNoPageBlock.kind == .image && pdfNoPageBlock.assetPath == "assets/shot.png"
+                && pdfNoPageBlock.sourceURL == "file:///Users/me/Papers/Paper.pdf" && pdfNoPageBlock.sourcePage == nil,
+                "a PDF capture without a page must stay an image and keep its file URL")
+    let textFileLink = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\n[Source](<file:///Users/me/Papers/Notes.txt>)\n\n![](assets/shot.png)\n")
+    try require(textFileLink.kind == .text && textFileLink.assetPath == nil,
+                "a non-PDF file source line must not classify the following image")
+    let webWithPageSuffix = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\n[Source](<https://example.test/a>) · page 3\n\n![](assets/x.png)\n")
+    try require(webWithPageSuffix.kind == .text && webWithPageSuffix.assetPath == nil,
+                "a web source line with a page suffix must not classify the following image")
     let legacyLinked = sourceBlock("### 2026-10-13 10:04 · Safari · Page\n\(checkMarker(id))\n\n[Source](<https://example.test/a>)\n\ntext\n")
     try require(legacyLinked.sourceURL == "https://example.test/a" && legacyLinked.sourcePage == nil,
                 "a legacy source line after the marker must be recognized")

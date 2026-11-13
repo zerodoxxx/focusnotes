@@ -256,6 +256,11 @@ public enum NoteParser {
         return page
     }
 
+    private static func isPDFFileURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value), components.scheme?.lowercased() == "file" else { return false }
+        return components.path.lowercased().hasSuffix(".pdf")
+    }
+
     private static func imagePath(_ body: String, notePath: String, assetRootURL: URL?) -> String? {
         var imageBody = body
         let sourcePrefix = CaptureFormat.sourceLinkPrefix
@@ -263,7 +268,8 @@ public enum NoteParser {
             let sourceLine = String(body[..<separator.lowerBound])
             let candidate = body[separator.upperBound...]
             if !sourceLine.contains("\n"), !candidate.contains("\n"), let source = sourceLink(in: [sourceLine][...]) {
-                let canonicalSource = source.page.map { CaptureSource(documentURL: source.url, page: $0) } ?? CaptureSource(url: source.url)
+                // The formatter writes file links only for PDF documents, so only those rebuild as document sources.
+                let canonicalSource = isPDFFileURL(source.url) ? CaptureSource(documentURL: source.url, page: source.page) : CaptureSource(url: source.url)
                 if let canonicalSourceLine = CaptureFormat.sourceLink(for: canonicalSource), canonicalSourceLine == sourceLine {
                     imageBody = String(candidate)
                 }
