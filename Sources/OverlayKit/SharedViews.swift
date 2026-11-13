@@ -133,8 +133,10 @@ final class KeycapView: FlippedView {
                                width: width, height: OverlayTheme.hintHeight)
         key.frame = NSRect(x: OverlayTheme.hintPadding - cellInset, y: (OverlayTheme.hintHeight - keySize.height) / 2,
                            width: keySize.width, height: keySize.height)
+        // A caption given less room than its text truncates; at its desired width this is the full text.
+        let captionWidth = min(captionSize.width, max(0, bounds.width - (width + OverlayTheme.hintLabelGap)))
         caption.frame = NSRect(x: width + OverlayTheme.hintLabelGap, y: (bounds.height - captionSize.height) / 2,
-                               width: captionSize.width, height: captionSize.height)
+                               width: captionWidth, height: captionSize.height)
         effectiveAppearance.performAsCurrentDrawingAppearance { capsule.layer?.backgroundColor = OverlayTheme.hintFill.cgColor }
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsLayout = true }
