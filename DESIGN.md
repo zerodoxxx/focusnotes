@@ -1,6 +1,6 @@
 # Design
 
-Last Updated: 2026-11-09 (previous commit: `92a3184`)
+Last Updated: 2026-11-13 (previous commit: `0610cb0`)
 
 ## Product surfaces
 
@@ -59,6 +59,9 @@ Input panels use a 480-point-wide text field with optional context labels and up
 ### Toast feedback
 
 Toasts are passive panels with a 56-point height and content-based width between 240 and 380 points; their icons distinguish success, warning, session, and copied feedback. ([Sources/OverlayKit/Toast.swift](Sources/OverlayKit/Toast.swift#L28-L50), [Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L138-L177)) The default display time is two seconds and warnings last three seconds unless a call site overrides the duration; showing a new toast immediately replaces the previous toast, and the panel announces the toast title to accessibility clients. ([Sources/OverlayKit/Toast.swift](Sources/OverlayKit/Toast.swift#L15-L18), [Sources/OverlayKit/Toast.swift](Sources/OverlayKit/Toast.swift#L79-L103), [Sources/OverlayKit/Theme.swift](Sources/OverlayKit/Theme.swift#L176-L177))
+
+
+A capture success toast offers **Add a thought**. Its button can be clicked without activating the app; hovering pauses toast expiry. Choosing it commits the pending capture to its default note and opens the thought editor. The editor shows the source, detail and capture excerpt, then a **My thought** field. ⌘S or ⌘Return saves; Escape closes and keeps an in-memory draft for that capture, which is lost when the app quits. Saving writes back to the capture’s original note. A failed save keeps the text in the editor; a successful save shows **Thought saved** only when no capture is pending. The editor remains open through new captures and session changes. In search, ⇧Return opens it for a text or image capture with its saved thought. Windows uses Ctrl+S or Ctrl+Enter, and its search footer wraps to two rows when the Thought hint appears. ([Sources/App/AppController.swift](Sources/App/AppController.swift), [Sources/App/ThoughtComposer.swift](Sources/App/ThoughtComposer.swift), [windows/src/CaptureApp.Overlay/ThoughtEditorPanel.cs](windows/src/CaptureApp.Overlay/ThoughtEditorPanel.cs), [windows/src/CaptureApp.Overlay/SearchPanel.cs](windows/src/CaptureApp.Overlay/SearchPanel.cs))
 
 ## Visual system and accessibility
 

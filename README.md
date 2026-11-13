@@ -31,7 +31,7 @@ quick note in a floating panel. Everything lands in plain Markdown files you own
   where ⌘↩ (Ctrl+Enter on Windows) renames and resumes the selected session. A slash-qualified name picks a
   path under `Sessions/`. Add subheadings to start new sections. Use **Write outside session** in a quick note,
   or an outside-session capture shortcut, to save a one-off note elsewhere while the session stays active.
-- **Search.** Keyword search across all notes, plus optional on-device semantic search.
+- **Search.** Keyword search across all notes, plus optional on-device semantic search. Add a personal thought to a text or image capture from its save toast; thoughts are searchable with the capture.
 - **No focus stealing.** focusnotes never activates itself; every action has a global shortcut and a toast confirms
   the save.
 - **Plain Markdown, on-device.** Notes are ordinary `.md` files that work with Obsidian or any editor. Note content,
@@ -59,6 +59,8 @@ Save as New Note still work. Press it again, or <kbd>⌘N</kbd> on a blank edito
 <kbd>⌃⇧N</kbd> (**Quick-note Outside Session** in the menu) opens the quick note with **Write outside session**
 already on; <kbd>⇧⌘N</kbd> still switches it back to the session, and <kbd>⌘N</kbd> on a blank editor keeps it outside.
 Saving or closing resets that destination; the next quick note or normal capture uses the session again.
+
+In search, press <kbd>⇧↩</kbd> (Shift+Enter on Windows) on a text or image capture to open its thought editor. <kbd>⌘S</kbd> or <kbd>⌘↩</kbd> saves on macOS; Ctrl+S or Ctrl+Enter saves on Windows. Escape closes the editor and keeps a draft until quit.
 
 Outside-session capture shortcuts open **Add to note…** immediately, even without a session; <kbd>esc</kbd>
 saves to Inbox. For a normal capture, pressing the same shortcut again while its save toast is visible
