@@ -69,6 +69,7 @@ internal sealed partial class AppController : IDisposable
         pipeline = testPipeline;
         Coordinator = new(testPipeline, new HeadlessCaptureHost());
         WireChooseNote();
+        WireThoughts();
     }
 
     public string SettingsPath { get; }
@@ -129,6 +130,7 @@ internal sealed partial class AppController : IDisposable
             () => BindingText(HotkeyAction.ToggleSession), RefreshMenu);
         Coordinator = new CaptureCoordinator(pipeline, host);
         WireChooseNote();
+        WireThoughts();
         host.OnExpire = Coordinator.ToastExpired;
         LoadBindings();
         LoadFolderBindings();
@@ -232,6 +234,7 @@ internal sealed partial class AppController : IDisposable
     private void PrepareTermination()
     {
         lifetime.Cancel();
+        thoughtEditor.Dismiss();
         hotkeys?.UnregisterAll();
         input?.Dismiss(DismissReason.Quit);
         search?.Dismiss(DismissReason.Quit);
@@ -265,6 +268,8 @@ internal sealed partial class AppController : IDisposable
         if (disposed) { return; }
         disposed = true;
         lifetime.Cancel();
+        if (Coordinator is not null) { Coordinator.ThoughtRequested -= OnThoughtRequested; }
+        thoughtEditor.Dismiss();
         hotkeys?.Dispose();
         tray?.Dispose();
         power?.Dispose();

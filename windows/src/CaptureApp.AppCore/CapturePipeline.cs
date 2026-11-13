@@ -83,6 +83,7 @@ public sealed class CapturePipeline : IDisposable
         return pipeline;
     }
 
+    /// <summary>Vault-relative note id (like SearchHit.NotePath); resolve with Vault.NoteLocation before writing.</summary>
     public string? NotePathFor(Guid captureId) => Index.Capture(captureId)?.NotePath;
 
     public Task SetThoughtAsync(string? text, Guid captureId, string notePath) => Task.Run(() =>
