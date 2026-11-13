@@ -7,6 +7,20 @@ namespace CaptureApp.AppCore.Tests;
 public sealed class ThoughtTests
 {
     [Fact]
+    public async Task PipelineRejectsThoughtReadOutsideManagedVault()
+    {
+        using var temp = new TempDirectory();
+        using var pipeline = TestPipeline.Open(temp);
+        var id = Guid.NewGuid();
+        var outside = Path.Combine(temp.Path, "outside.md");
+        File.WriteAllText(outside, "<!-- capture:" + id.ToString("D") + " at=2026-10-13T14:30:00Z app=\"\" -->\n\nbody\n\n"
+            + CaptureFormat.ThoughtBlock(id, "private", DateTimeOffset.Now, TimeZoneInfo.Utc));
+        var link = Path.Combine(pipeline.Vault.Root, "Swapped.md");
+        File.CreateSymbolicLink(link, outside);
+        await Assert.ThrowsAnyAsync<Exception>(() => pipeline.SavedThoughtAsync(id, link));
+    }
+
+    [Fact]
     public async Task OnlyStagedSuccessToastsOfferThoughts()
     {
         using var temp = new TempDirectory();
@@ -183,6 +197,6 @@ public sealed class ThoughtTests
         Assert.Null(await pipeline.SavedThoughtAsync(saved.CaptureId, saved.Destination.Url));
         Assert.DoesNotContain("<!-- thought:", File.ReadAllText(saved.Destination.Url));
         Assert.Empty(pipeline.Index.Search("thoughtuniqueneedle"));
-        await Assert.ThrowsAsync<FileNotFoundException>(() => pipeline.SavedThoughtAsync(saved.CaptureId, Path.Combine(temp.Path, "missing.md")));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => pipeline.SavedThoughtAsync(saved.CaptureId, Path.Combine(pipeline.Vault.Root, "missing.md")));
     }
 }

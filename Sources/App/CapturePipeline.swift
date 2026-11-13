@@ -323,7 +323,9 @@ struct CapturePipeline: Sendable {
 
     @concurrent
     func savedThought(forCapture id: UUID, inNoteAt url: URL) async throws -> String? {
-        let contents = try String(contentsOf: url, encoding: .utf8)
+        let noteID = try vault.noteID(for: url)
+        guard let data = try vault.fileSnapshot(noteID: noteID)?.contents else { throw CocoaError(.fileReadNoSuchFile) }
+        guard let contents = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         let note = NoteParser.parse(contents: contents, notePath: url.path, titleFallback: "", calendar: calendar)
         return note.blocks.first { $0.captureID == id }?.thought
     }

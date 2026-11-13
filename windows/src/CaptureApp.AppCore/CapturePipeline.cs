@@ -96,7 +96,8 @@ public sealed class CapturePipeline : IDisposable
 
     public Task<string?> SavedThoughtAsync(Guid captureId, string notePath) => Task.Run(() =>
     {
-        var contents = File.ReadAllText(notePath);
+        var bytes = Vault.FileSnapshotForNoteId(Vault.NoteId(notePath))?.Contents ?? throw new FileNotFoundException(notePath);
+        var contents = new System.Text.UTF8Encoding(false, true).GetString(bytes);
         var parsed = NoteParser.Parse(contents, notePath, "", TimeZone);
         return parsed.Blocks.FirstOrDefault(block => block.CaptureId == captureId)?.Thought;
     });

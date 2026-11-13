@@ -3,6 +3,7 @@ import Foundation
 
 @MainActor
 func checkThoughtComposer() async throws {
+    try await checkThoughtReadScope()
     let a = UUID(), b = UUID()
     let noteA = URL(fileURLWithPath: "/vault/A.md"), noteB = URL(fileURLWithPath: "/vault/B.md")
     var writes: [(String, UUID, URL)] = []
@@ -64,4 +65,18 @@ func checkThoughtComposer() async throws {
     guard (rethrown as? CocoaError)?.code == CocoaError.Code.fileWriteNoPermission else {
         throw SelfTestFailure("Commit failure was not rethrown for an unindexed capture")
     }
+}
+
+@MainActor
+private func checkThoughtReadScope() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("thought-scope-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pipeline = try await CapturePipeline.open(vaultRoot: root.appendingPathComponent("Vault"), stateDirectory: root.appendingPathComponent("State"), calendar: .current)
+    let outside = root.appendingPathComponent("outside.md")
+    try Data("private".utf8).write(to: outside)
+    let link = pipeline.vault.root.appendingPathComponent("Swapped.md")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+    var rejected = false
+    do { _ = try await pipeline.savedThought(forCapture: UUID(), inNoteAt: link) } catch { rejected = true }
+    guard rejected else { throw SelfTestFailure("Thought read followed a link outside the vault") }
 }
